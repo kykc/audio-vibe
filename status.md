@@ -1,7 +1,8 @@
 # Project status
 
-**Updated:** 2026-08-21, after the Engine milestone plus the first real third-party plugin
-(ZL Equalizer 2), which found and fixed a side-chain bus defect.
+**Updated:** 2026-08-21, after the Engine milestone, the first real third-party plugin
+(ZL Equalizer 2, which found and fixed a side-chain bus defect), and the sec. 5.1 editor-hosting
+spike.
 
 **Purpose of this file.** To let a work session be thrown away and a fresh one started without
 losing the plot. It records *where we stand* -- what is built, what is proven, what is next, and
@@ -119,6 +120,9 @@ tools/      valet_probe -- console client against the real APO, with --plugin an
             (--inspect loads, instantiates and prepares plugins and reports bus layout,
             parameter count, latency and split-vs-single, without attaching to anything;
             it is the shape `scanner/` needs, one process further out)
+            editor_spike -- the sec. 5.1 de-risking spike: loads a plugin, embeds its editor in
+            a Qt window, and can capture the result two ways. The embedding code here is what
+            `ui/` should start from
 ```
 
 Thread split, which is the load-bearing structural decision:
@@ -183,6 +187,15 @@ Proven, and re-checkable by running the suite:
   auxiliary bus it keeps reporting as connected is backed with a zeroed buffer rather than null
   pointers. Covered by a named test whose negative control was checked: removing the silence
   backing makes the fixture stamp `-12345.0f` through the output.
+- **A real plugin editor is hosted in a Qt window (sec. 5.1).** ZL Equalizer 2's editor attaches
+  to an HWND we supply, creates its child window, reports 1180 x 752, declares itself resizable,
+  and calls back through our `IPlugFrame`. A `PrintWindow` capture shows the whole UI rendered.
+  This is the last frozen decision that could have been wrong; it is now measured.
+  Both embedding routes work -- `QWindow::fromWinId()` -> `createWindowContainer()` and a
+  `QWidget` under `WA_NativeWindow` -- and the first stays the recommendation (sec. 10).
+- **Sec. 6.5 is confirmed in both directions.** The same window captured through `QWidget::grab()`
+  yields 1 distinct colour and through `PrintWindow` 104. The failure and the remedy are both
+  now evidence.
 - MMCSS "Pro Audio" promotion succeeds on the valet thread (sec. 4.6).
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run.
 
@@ -241,14 +254,18 @@ Proven against the real deployed APO on the development machine:
 
 ## 5. Next actions, in order
 
-1. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
+The two de-risking steps that used to head this list -- a real third-party plugin, and editor
+hosting -- are both done, and both held. What remains is ordinary construction.
+
+1. **`ui/` -- the Qt 6 Widgets shell (sec. 5.1).** The plugin rack and editor hosting. Start from
+   `tools/editor_spike`, which already has the embedding, the `IPlugFrame` and the content-scale
+   handling working against a real plugin; what it does not have is more than one editor at a
+   time, teardown while audio is running, or any connection to `engine::Engine`.
+2. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
    that enumerates `Module::getModulePaths()`, loads each candidate, records class info, and
    reports it back; crash isolation is the whole point, so a plugin that faults must cost one
-   scan entry, not the session. `engine::PluginModule` already does the loading half.
-2. **`ui/` -- the Qt 6 Widgets shell (sec. 5.1).** The plugin rack, and editor hosting via
-   `QWindow::fromWinId()` -> `QWidget::createWindowContainer()`. This is where the deciding
-   constraint of the whole stack decision finally gets exercised, so it is worth doing before
-   anything else large.
+   scan entry, not the session. `valet_probe --inspect` is already most of the child process --
+   promoting it means giving it a machine-readable output and a parent that survives its death.
 
 Engine work that the increment above deliberately left out, roughly in order of how much it will
 be missed:

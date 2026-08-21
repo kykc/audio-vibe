@@ -607,6 +607,11 @@ Qt to the official installer or a vcpkg source build.
 appears blank. Irrelevant for normal operation, but it means editor thumbnails or automated
 visual tests over plugin GUIs require `PrintWindow`/`BitBlt` instead.
 
+Measured on a real plugin editor (sec. 10, editor spike): the same window captured both ways
+gave **1** distinct colour through `grab()` and **104** through `PrintWindow` with
+`PW_RENDERFULLCONTENT`. Both halves of this section are therefore evidence rather than
+expectation -- the failure and its remedy.
+
 ### 6.6 Source and documentation files are ASCII-only
 
 **Every tracked text file in this repository -- source, headers, CMake, TOML, JSON, Markdown,
@@ -967,6 +972,32 @@ A screenshot confirmed native Windows 11 dark chrome with the correct system acc
 applied to checkbox and slider, rendering crisply at 125% scaling, with nothing hand-styled.
 The embedded foreign HWND region was blank in the capture, which is the expected behaviour
 described in sec. 6.5.
+
+**Editor hosting, against a real plugin.** The integration probe above embedded a *dummy* foreign
+HWND, which proves the Qt mechanism but not that a plugin will accept it. `tools/editor_spike`
+closes that gap: it loads a plugin, calls `createView(kEditor)`, supplies an `IPlugFrame`, and
+embeds the view. Run against **ZL Equalizer 2 1.3.1** (JUCE-wrapped, split component/controller):
+
+```
+Embedding  : QWindow::fromWinId -> createWindowContainer
+  scale      : told the plugin 1.00
+  requested  : 1180 x 752
+  resizeView : plugin asked for 1180 x 752
+  attached   : plugin reports 1180 x 752
+  resizable  : yes
+  children   : 1 HWND(s) under our parent
+  grab       : 1 distinct colours
+  PrintWindow: 104 distinct colours
+```
+
+A `PrintWindow` capture shows the plugin's complete UI -- EQ curve, band controls, analyzer,
+frequency axis -- rendered inside the Qt window. **Sec. 5.1 is therefore verified rather than
+assumed**: the deciding constraint of the whole stack decision holds.
+
+The spike also implements the alternative, handing the plugin a `QWidget`'s own `winId()` under
+`WA_NativeWindow`. Both routes work identically here. `QWindow::fromWinId()` ->
+`createWindowContainer()` stays the recommendation, because the plugin then owns a plain HWND
+that Qt never paints into, which is one less way for the two toolkits to fight.
 
 **Traps sec. 6.3.1 through sec. 6.3.5 were each hit and resolved during this exercise**, which is why
 they are documented as prerequisites rather than left to be discovered during implementation.
