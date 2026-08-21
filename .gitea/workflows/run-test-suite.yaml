@@ -3,6 +3,7 @@
 # The runner is a bare Windows host (labels: windows-amd64, pixi) with no Node.js, so no
 # JavaScript action can run here -- `actions/checkout` included. Every step is a plain
 # `run:` script and the checkout is done by hand with git.
+# CAUTION: this relies on presence junction of Build tools (18) -> (2022) of VS because of vs2022 activation quirk.
 name: run-test-suite
 
 on:
