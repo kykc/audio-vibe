@@ -7,9 +7,10 @@
 //
 // The fixture's contract, restated so the expected numbers below can be read without opening it:
 //
-//   Gain  (id 0)  output = input * (normalized * 2); the 0.5 default is unity
-//   Edits (id 1)  performEdit calls per process(), from the audio thread = round(normalized * 8)
-//   it refuses any bus arrangement above 8 channels
+//   Gain   (id 0)  output = input * (normalized * 2); the 0.5 default is unity
+//   Edits  (id 1)  performEdit calls per process(), from the audio thread = round(normalized * 8)
+//   Offset (id 3)  a constant added after the gain, so two instances do not commute
+//   it refuses any bus arrangement above 8 channels, and carries a default-active side-chain
 
 #include "harness/synthetic_king.h"
 #include "harness/wait_for.h"
@@ -36,6 +37,7 @@ const std::string kTestPluginPath = AIP_TEST_PLUGIN_PATH;
 
 constexpr Steinberg::Vst::ParamID kGainParam = 0;
 constexpr Steinberg::Vst::ParamID kEditsParam = 1;
+constexpr Steinberg::Vst::ParamID kOffsetParam = 3;
 
 engine::StreamFormat stereoFormat(std::uint32_t sampleRate = 48000) {
     return engine::StreamFormat{sampleRate, 2, engine::kDefaultMaxFrames};
@@ -90,14 +92,23 @@ std::vector<float> signedRamp(std::int32_t frames) {
     return samples;
 }
 
+/// Reaches the plugin through the *rack*, not through the published chain. That is the whole
+/// point of the split: a rack position is stable across rebuilds, and a chain index is not.
 void setParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vst::ParamID id,
                   double normalized) {
-    engine::PluginChain* chain = host.chainProcessor().current();
-    REQUIRE(chain != nullptr);
-    REQUIRE(chain->size() > pluginIndex);
-    Steinberg::Vst::IEditController* controller = chain->at(pluginIndex).controller();
+    engine::PluginInstance* plugin = host.pluginAt(pluginIndex);
+    REQUIRE(plugin != nullptr);
+    Steinberg::Vst::IEditController* controller = plugin->controller();
     REQUIRE(controller != nullptr);
     REQUIRE(controller->setParamNormalized(id, normalized) == Steinberg::kResultOk);
+}
+
+double getParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vst::ParamID id) {
+    engine::PluginInstance* plugin = host.pluginAt(pluginIndex);
+    REQUIRE(plugin != nullptr);
+    Steinberg::Vst::IEditController* controller = plugin->controller();
+    REQUIRE(controller != nullptr);
+    return controller->getParamNormalized(id);
 }
 
 } // namespace
@@ -171,14 +182,13 @@ TEST_CASE("a side-chain bus is negotiated away and backed with silence", "[engin
     REQUIRE(host.rebuild(stereoFormat(), error));
     INFO("rebuild error: " << error);
 
-    engine::PluginChain* chain = host.chainProcessor().current();
-    REQUIRE(chain != nullptr);
-    engine::PluginInstance& plugin = chain->at(0);
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
 
     // The plugin accepted a description of all its busses, side-chain included.
-    CHECK(plugin.fullBusNegotiation());
+    CHECK(plugin->fullBusNegotiation());
 
-    Steinberg::Vst::IComponent* component = plugin.component();
+    Steinberg::Vst::IComponent* component = plugin->component();
     REQUIRE(component->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput) == 2);
 
     Steinberg::Vst::BusInfo aux{};
@@ -220,6 +230,120 @@ TEST_CASE("two plugins compose in order", "[engine][chain]") {
 
     for (std::size_t i = 0; i < in.size(); ++i) {
         REQUIRE(out[i] == Approx(in[i] * 4.f));
+    }
+}
+
+TEST_CASE("rack mutation preserves the plugins it does not touch", "[engine][rack]") {
+    // The property the whole rack/chain split exists for. A chain that owned its plugins would
+    // reconstruct every one of them on each of these operations, so the first plugin's gain would
+    // quietly revert the moment a second was added -- indistinguishable, from the outside, from a
+    // UI bug.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    setParameter(host, 0, kGainParam, 1.0); // 2x
+
+    Rig rig(host.blockProcessor(), L"engine-rack");
+    const std::vector<float> in = signedRamp(kFrames);
+
+    SECTION("adding a second plugin leaves the first alone") {
+        REQUIRE(host.appendPlugin(kTestPluginPath, error));
+        REQUIRE(host.pluginCount() == 2);
+
+        // Plugin 0 is still at 2x; plugin 1 is new and therefore at its unity default.
+        CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
+        CHECK(getParameter(host, 1, kGainParam) == Approx(0.5));
+
+        const std::vector<float> out = rig.run(in);
+        for (std::size_t i = 0; i < in.size(); ++i) {
+            REQUIRE(out[i] == Approx(in[i] * 2.f));
+        }
+    }
+
+    SECTION("inserting before the existing plugin keeps rack positions meaningful") {
+        REQUIRE(host.insertPlugin(0, kTestPluginPath, error));
+        REQUIRE(host.pluginCount() == 2);
+
+        // The plugin that was at 0 moved to 1 and kept its gain; the newcomer took position 0.
+        CHECK(getParameter(host, 0, kGainParam) == Approx(0.5));
+        CHECK(getParameter(host, 1, kGainParam) == Approx(1.0));
+    }
+
+    SECTION("removing a plugin destroys only that one") {
+        REQUIRE(host.appendPlugin(kTestPluginPath, error));
+        setParameter(host, 1, kGainParam, 1.0);
+        REQUIRE(host.removePlugin(0));
+
+        REQUIRE(host.pluginCount() == 1);
+        CHECK(host.strandedPlugins() == 0);
+        CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
+
+        const std::vector<float> out = rig.run(in);
+        for (std::size_t i = 0; i < in.size(); ++i) {
+            REQUIRE(out[i] == Approx(in[i] * 2.f));
+        }
+    }
+
+    SECTION("bypass takes the plugin out of the signal path and puts it back") {
+        REQUIRE(host.setBypass(0, true));
+        CHECK(host.bypassed(0));
+        CHECK(host.pluginCount() == 1); // still in the rack, just not in the chain
+        CHECK(host.chainProcessor().current()->size() == 0);
+
+        const std::vector<float> bypassed = rig.run(in);
+        CHECK(bypassed == in);
+
+        REQUIRE(host.setBypass(0, false));
+        CHECK_FALSE(host.bypassed(0));
+
+        // Un-bypassing restores the plugin *and* the gain it had, because it was never destroyed.
+        const std::vector<float> restored = rig.run(in);
+        for (std::size_t i = 0; i < in.size(); ++i) {
+            REQUIRE(restored[i] == Approx(in[i] * 2.f));
+        }
+    }
+}
+
+TEST_CASE("reordering the rack reorders processing", "[engine][rack]") {
+    // Two gains would not do: multiplication commutes, so a rack that ran them backwards would
+    // produce byte-identical output and this test would pass while proving nothing. The fixture's
+    // Offset is applied after its Gain, which makes the pair non-commutative:
+    //
+    //   gain-then-offset : (x * 2) + 0.25
+    //   offset-then-gain : (x + 0.25) * 2  =  2x + 0.5
+    constexpr std::int32_t kFrames = 32;
+    constexpr float kOffset = 0.25f;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error)); // rack 0: the gain
+    REQUIRE(host.appendPlugin(kTestPluginPath, error)); // rack 1: the offset
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    setParameter(host, 0, kGainParam, 1.0);                            // 2x, no offset
+    setParameter(host, 1, kOffsetParam, static_cast<double>(kOffset)); // unity, +0.25
+
+    Rig rig(host.blockProcessor(), L"engine-reorder");
+    const std::vector<float> in = signedRamp(kFrames);
+
+    const std::vector<float> gainFirst = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(gainFirst[i] == Approx(in[i] * 2.f + kOffset));
+    }
+
+    REQUIRE(host.movePlugin(0, 1));
+
+    // The parameters travelled with their plugins rather than staying at their rack positions.
+    CHECK(getParameter(host, 0, kOffsetParam) == Approx(kOffset));
+    CHECK(getParameter(host, 1, kGainParam) == Approx(1.0));
+    CHECK(host.chainProcessor().current()->size() == 2);
+
+    const std::vector<float> offsetFirst = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(offsetFirst[i] == Approx((in[i] + kOffset) * 2.f));
     }
 }
 
@@ -266,8 +390,10 @@ TEST_CASE("a format the chain was not built for is passed through and reported",
     INFO("service error: " << error);
     CHECK(host.builtFormat().sampleRate == 48000);
 
-    // The rebuilt chain is a fresh instance, so the gain is back at its default.
-    setParameter(host, 0, kGainParam, 1.0);
+    // The gain set before the rebuild is still set: the rack owns the instance, so re-preparing
+    // it for a new sample rate does not construct a new one. This is the behaviour a UI depends
+    // on and the reason PluginChain does not own its plugins.
+    CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
     const std::vector<float> processed = rig.run(in);
     for (std::size_t i = 0; i < in.size(); ++i) {
         REQUIRE(processed[i] == Approx(in[i] * 2.f));
@@ -343,9 +469,9 @@ TEST_CASE("performEdit from the processing thread is queued, not executed", "[en
     Rig rig(host.blockProcessor(), L"engine-edits");
     const std::vector<float> in = signedRamp(kFrames);
 
-    engine::PluginChain* chain = host.chainProcessor().current();
-    REQUIRE(chain != nullptr);
-    engine::ComponentHandler* handler = chain->at(0).handler();
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    engine::ComponentHandler* handler = plugin->handler();
     REQUIRE(handler != nullptr);
 
     std::size_t serviced = 0;

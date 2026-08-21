@@ -18,8 +18,7 @@ void PluginChain::Bank::allocate(std::uint32_t channelCount, std::int32_t maxFra
     }
 }
 
-PluginChain::PluginChain(StreamFormat format,
-                         std::vector<std::unique_ptr<PluginInstance>> plugins)
+PluginChain::PluginChain(StreamFormat format, std::vector<PluginInstance*> plugins)
     : format_(format), plugins_(std::move(plugins)) {
     if (!format_.valid()) {
         return;
@@ -33,10 +32,9 @@ bool PluginChain::runnable() const noexcept {
     if (!format_.valid() || sharedChannels_.size() != format_.channelCount) {
         return false;
     }
-    return std::all_of(plugins_.begin(), plugins_.end(),
-                       [this](const std::unique_ptr<PluginInstance>& plugin) {
-                           return plugin && plugin->prepared() && plugin->format() == format_;
-                       });
+    return std::all_of(plugins_.begin(), plugins_.end(), [this](const PluginInstance* plugin) {
+        return plugin != nullptr && plugin->prepared() && plugin->format() == format_;
+    });
 }
 
 void PluginChain::process(protocol::PlanarView& audio,

@@ -6,9 +6,16 @@
 //
 // The division mirrors sec. 7.4.3 exactly:
 //
-//   Engine (control thread)     load, instantiate, prepare, build a PluginChain, publish it,
-//                               destroy the chain it replaced, drain plugin callbacks
+//   Engine (control thread)     load, instantiate, prepare, publish a chain view, destroy what
+//                               it replaced, drain plugin callbacks
 //   ChainProcessor (audio)      read one pointer, dispatch
+//
+// **The rack, not the chain, owns the plugins.** Engine holds an ordered rack of instances that
+// outlives any number of published chains; a PluginChain is a borrowed view over the subset of
+// them that is currently processing. Every mutation below -- insert, remove, move, bypass, and a
+// re-prepare for a new stream format -- keeps the instances alive and republishes a view. That is
+// what makes a parameter the user set survive the next thing they do; a chain that owned its
+// plugins would silently reset the whole rack every time one plugin was added to it.
 //
 // Engine is not thread-safe against itself. It expects one control thread, which is the same
 // assumption ValetSupervisor already makes.
@@ -44,30 +51,60 @@ public:
 
     [[nodiscard]] ChainProcessor& chainProcessor() noexcept { return processor_; }
 
-    // ------------------------------------------------------------- the desired chain ---------
-    // Edits here are inert until `rebuild` runs. Describing the chain and building it are
-    // separate steps so that a failure to load or prepare is reported before anything reaches
-    // the audio thread.
+    // ------------------------------------------------------------------------- the rack -------
+    // Positions are rack positions, bypassed entries included, and stay stable across a rebuild.
+
+    [[nodiscard]] std::size_t pluginCount() const noexcept { return rack_.size(); }
+
+    /// Null when `index` is out of range. The instance stays valid until it is removed or the
+    /// Engine is destroyed -- notably, it survives every format change.
+    [[nodiscard]] PluginInstance* pluginAt(std::size_t index) const noexcept;
+
+    [[nodiscard]] bool bypassed(std::size_t index) const noexcept;
+
+    // ------------------------------------------------------------------ mutating the rack -----
+    // Each of these takes effect immediately: the rack is edited and a fresh view published, so
+    // there is no separate commit step. Sec. 7.4.3 permits these transitions to be audible; what
+    // it does not permit is any of the work happening on the audio thread, and none of it does.
 
     /// Appends the module's first audio-effect class.
     [[nodiscard]] bool appendPlugin(const std::string& path, std::string& error);
 
-    /// Appends a specific class from the module.
-    [[nodiscard]] bool appendPlugin(const std::string& path, const VST3::UID& classId,
+    /// Inserts at `index` (clamped to the end). When a stream format is already known the new
+    /// plugin is prepared for it here, so a failure is reported before anything is published.
+    [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path,
                                     std::string& error);
 
-    void clearPlugins() noexcept { desired_.clear(); }
+    [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path,
+                                    const VST3::UID& classId, std::string& error);
 
-    [[nodiscard]] std::size_t desiredPluginCount() const noexcept { return desired_.size(); }
+    /// Removes the plugin at `index` and destroys it, once the audio thread has provably let go.
+    [[nodiscard]] bool removePlugin(std::size_t index);
 
-    // ------------------------------------------------------------------- publication ---------
+    /// Moves the plugin at `from` so that it ends up at `to`.
+    [[nodiscard]] bool movePlugin(std::size_t from, std::size_t to);
 
-    /// Instantiates and prepares a fresh chain for `format`, then publishes it and destroys the
-    /// one it replaced. On failure nothing is published and the running chain keeps running --
-    /// a half-built chain must never reach the audio thread.
+    /// A bypassed plugin is left out of the published view entirely -- not asked to bypass
+    /// itself. With no latency compensation to preserve (sec. 3.7.1 makes the whole design
+    /// zero-latency), skipping it is both simpler and more honest than trusting each plugin's
+    /// own bypass parameter.
+    [[nodiscard]] bool setBypass(std::size_t index, bool bypass);
+
+    void clearPlugins();
+
+    // ------------------------------------------------------------------------ publication -----
+
+    /// Prepares every rack entry for `format` and publishes a view over the enabled ones. The
+    /// instances are re-prepared in place, so their parameters survive; that is the whole reason
+    /// the rack outlives the chain.
+    ///
+    /// On failure nothing is published and audio passes through. It does *not* leave the previous
+    /// chain running: re-preparing mutates objects the audio thread could be reading, so the
+    /// chain is retracted first.
     [[nodiscard]] bool rebuild(const StreamFormat& format, std::string& error);
 
-    /// Unpublishes the chain and destroys it. Blocks pass through afterwards.
+    /// Unpublishes the chain. The rack is untouched, so a later `rebuild` brings it back with
+    /// every parameter still set.
     void teardown();
 
     /// Builds or rebuilds when the audio thread has reported a block geometry the published
@@ -81,7 +118,7 @@ public:
 
     [[nodiscard]] const StreamFormat& builtFormat() const noexcept { return builtFormat_; }
 
-    // ---------------------------------------------------------------- plugin callbacks -------
+    // ------------------------------------------------------------------ plugin callbacks ------
 
     /// Drains what the plugins queued through IComponentHandler and applies it: a `PerformEdit`
     /// is pushed into the controller so its notion of the value follows the processor's.
@@ -89,22 +126,38 @@ public:
     /// Returns the number of edits consumed.
     std::size_t serviceParameterEdits(std::size_t maxPerPlugin = 64);
 
-    /// Edits dropped across every plugin in the published chain because the audio-thread ring
-    /// filled up. Nonzero means `serviceParameterEdits` is not being called often enough.
+    /// Edits dropped across the whole rack because an audio-thread ring filled up. Nonzero means
+    /// `serviceParameterEdits` is not being called often enough.
     [[nodiscard]] std::uint64_t droppedParameterEdits() const;
 
+    /// Instances that could not be destroyed when they were removed, because the audio thread had
+    /// not left the chain naming them within the grace period. They are freed at teardown. A
+    /// nonzero count means the valet thread was wedged, not that anything leaked silently.
+    [[nodiscard]] std::size_t strandedPlugins() const noexcept { return stranded_.size(); }
+
 private:
-    struct PluginSpec {
-        PluginModule::Ptr module;
-        VST3::UID classId;
+    struct RackEntry {
+        std::unique_ptr<PluginInstance> instance;
+        bool bypassed = false;
     };
 
     [[nodiscard]] PluginModule::Ptr moduleFor(const std::string& path, std::string& error);
 
+    /// Publishes a view over every prepared, non-bypassed rack entry. Publishes nothing when no
+    /// format is known yet. Returns false only if the audio thread failed to release the chain
+    /// it replaced, which is reported rather than waited on forever.
+    bool publishRack();
+
+    /// Retracts the chain so that rack instances can be mutated safely.
+    bool retract();
+
+    // Declaration order is load-bearing -- members are destroyed in reverse, and that reverse
+    // order is the only safe one. See the note in ~Engine before changing any of it.
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
-    /// Keyed by path, so rebuilding a chain does not reload the same DLL over and over.
+    /// Keyed by path, so adding a second instance of a plugin does not reload the same DLL.
     std::map<std::string, PluginModule::Ptr> modules_;
-    std::vector<PluginSpec> desired_;
+    std::vector<RackEntry> rack_;
+    std::vector<std::unique_ptr<PluginInstance>> stranded_;
 
     ChainProcessor processor_;
     StreamFormat builtFormat_;

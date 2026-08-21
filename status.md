@@ -1,8 +1,8 @@
 # Project status
 
 **Updated:** 2026-08-21, after the Engine milestone, the first real third-party plugin
-(ZL Equalizer 2, which found and fixed a side-chain bus defect), and the sec. 5.1 editor-hosting
-spike.
+(ZL Equalizer 2, which found and fixed a side-chain bus defect), the sec. 5.1 editor-hosting
+spike, and the rack/chain split that makes chain mutation non-destructive.
 
 **Purpose of this file.** To let a work session be thrown away and a fresh one started without
 losing the plot. It records *where we stand* -- what is built, what is proven, what is next, and
@@ -41,7 +41,7 @@ Nothing of the plugin scanner or the UI exists yet.
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 39, ~3 s
+pixi run test          # expect: 100% tests passed out of 41, ~4 s
 ```
 
 Then, on a machine with the old APO installed, prove interop against real hardware:
@@ -81,15 +81,16 @@ components rather than numbered, so the two schemes cannot be confused.
 |---|---|---|
 | Design | Analysis, stack, toolchain, protocol v1 frozen | Done: `design_doc.md` sec. 2-6, and sec. 4 is frozen |
 | IPC foundation | `protocol/`, `rt/`, `ipc/`, conformance harness, probe tool | Done and verified |
-| **Engine** | **`engine/` -- VST3 host: module loading, plugin chain, preallocated process data, atomic publication** | **Done for a single linear chain; verified against the real APO** |
+| **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
 | Scanner | `scanner/` -- out-of-process plugin probing | Not started. Next up; see section 5 |
 | UI | `ui/` -- Qt 6 Widgets shell, plugin rack, editor hosting | Not started |
 | Installer | `installer/` -- WiX v7 | Not started |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
-"Done for a single linear chain" is deliberate: the engine builds and runs an ordered list of
-plugins for one format, and rebuilds when the format changes. What it does *not* yet do is listed
-in section 5.
+"Done for a single linear chain, mutable while running" is deliberate: the engine holds an
+ordered rack, publishes a view over it, and lets the rack be inserted into, removed from,
+reordered and bypassed while audio flows -- without disturbing the plugins not being touched.
+What it does *not* yet do is listed in section 5.
 
 ---
 
@@ -108,11 +109,12 @@ ipc/        buffer_valet (attach/acquire/release/reclaim), valet_thread (the pro
 engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vst3, enumerate
             audio-effect classes), plugin_instance (one prepared plugin + its HostProcessData),
             component_handler (IComponentHandler, lock-free from the audio thread),
-            plugin_chain (ordered plugins + ping-pong scratch banks), chain_processor (the
-            BlockProcessor: atomic pointer, format check, epoch-based retirement),
-            engine (control-thread facade: load, rebuild, publish, service)
+            plugin_chain (a *borrowed* ordered view + ping-pong scratch banks),
+            chain_processor (the BlockProcessor: atomic pointer, format check, epoch-based
+            retirement), engine (owns the rack; insert/remove/move/bypass, rebuild, publish,
+            service)
 cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
-tests/      39 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
+tests/      41 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
             built from the SDK). conformance, engine, planar, protocol_layout,
             realtime_safety, source_hygiene, spsc_queue
@@ -136,13 +138,17 @@ Thread split, which is the load-bearing structural decision:
 
 How a chain gets published, end to end (sec. 7.4.3):
 
-1. `Engine::appendPlugin(path)` loads the module (cached by path) and records the class id.
-   Nothing is instantiated yet.
+1. `Engine::insertPlugin(index, path)` loads the module (cached by path), instantiates the plugin
+   and puts it in the **rack**, which Engine owns. If a format is already known it is prepared
+   here, so a plugin that cannot take the current format is rejected without disturbing what is
+   already running.
 2. The audio thread records the geometry of every block it sees into one packed atomic, whether
    or not a chain is running. That is the *only* place a format comes from -- protocol v1
    announces it nowhere else (sec. 4.5).
-3. `Engine::serviceFormatChange` notices a geometry it has not built for, instantiates and
-   prepares every plugin, and constructs a `PluginChain` with its scratch banks page-touched.
+3. `Engine::serviceFormatChange` notices a geometry it has not built for, retracts the chain,
+   re-prepares every rack entry **in place** for the new geometry, and constructs a
+   `PluginChain` -- a borrowed, ordered view over the enabled entries -- with its scratch banks
+   page-touched.
 4. `ChainProcessor::publish` stores the new pointer, waits for the audio thread to leave the old
    chain (epoch counter, not a guessed grace period), and destroys it on the control thread.
 
@@ -196,6 +202,14 @@ Proven, and re-checkable by running the suite:
 - **Sec. 6.5 is confirmed in both directions.** The same window captured through `QWidget::grab()`
   yields 1 distinct colour and through `PrintWindow` 104. The failure and the remedy are both
   now evidence.
+- **Rack mutation while audio is running does not disturb the plugins it is not touching.**
+  Adding a second plugin, inserting before an existing one, removing a neighbour, bypassing and
+  un-bypassing, and a full re-prepare for a different sample rate all leave every other plugin's
+  parameters exactly as they were. Negative control run: making `rebuild` reinstantiate -- the
+  old behaviour -- fails the state-survival assertions.
+- **Reordering the rack reorders processing.** Checked with a non-commutative pair (a gain and a
+  post-gain offset), because two gains would produce identical output either way round and the
+  test would prove nothing. Negative control run: making `movePlugin` a no-op fails it.
 - MMCSS "Pro Audio" promotion succeeds on the valet thread (sec. 4.6).
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run.
 
@@ -257,24 +271,25 @@ Proven against the real deployed APO on the development machine:
 The two de-risking steps that used to head this list -- a real third-party plugin, and editor
 hosting -- are both done, and both held. What remains is ordinary construction.
 
-1. **`ui/` -- the Qt 6 Widgets shell (sec. 5.1).** The plugin rack and editor hosting. Start from
-   `tools/editor_spike`, which already has the embedding, the `IPlugFrame` and the content-scale
-   handling working against a real plugin; what it does not have is more than one editor at a
-   time, teardown while audio is running, or any connection to `engine::Engine`.
+1. **`ui/` -- the Qt 6 Widgets shell (sec. 5.1).** The plugin rack and editor hosting.
+   `engine::Engine` is now an API a UI can drive directly: `insertPlugin`, `removePlugin`,
+   `movePlugin`, `setBypass`, and `pluginAt` for the editor to bind to. Start the embedding from
+   `tools/editor_spike`, which already has the `IPlugFrame` and content-scale handling working
+   against a real plugin; what it does not have is more than one editor at a time, teardown while
+   audio is running, or any connection to the engine.
 2. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
    that enumerates `Module::getModulePaths()`, loads each candidate, records class info, and
    reports it back; crash isolation is the whole point, so a plugin that faults must cost one
    scan entry, not the session. `valet_probe --inspect` is already most of the child process --
    promoting it means giving it a machine-readable output and a parent that survives its death.
 
-Engine work that the increment above deliberately left out, roughly in order of how much it will
-be missed:
+Engine work still outstanding, roughly in order of how much it will be missed:
 
-- **Plugin state persistence.** `IComponent::getState` on teardown and `setState` on rebuild, so
-  a format change does not silently reset every plugin to defaults. This is the most user-visible
-  gap.
-- **Send automation into a plugin.** `inputParameterChanges` is preallocated but never filled;
-  wiring the UI's parameter edits into it is what makes the queue earn its place.
+- **Plugin state serialization.** `IComponent::getState` / `setState`, for saving and restoring a
+  rack between sessions. Note that this is *not* what makes a parameter survive a format change --
+  the rack owning the instances is (sec. 7 item 23) -- so it is a feature rather than a fix.
+- **Send automation into a plugin.** `inputParameterChanges` is preallocated and warmed but never
+  filled; wiring the UI's parameter edits into it is what makes the queue earn its place.
 - **Act on `restartComponent`.** At minimum honour `kParamValuesChanged` and
   `kLatencyChanged`; currently every flag is drained and discarded.
 - Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
@@ -441,6 +456,32 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     unchanged output is positive evidence that the host supplied real zeroed memory. The negative
     control was run: removing the silence backing makes the assertion fail with `-12345.0f`
     rather than passing quietly.
+
+23. **The rack owns the plugins; a chain only borrows them.** `Engine` holds an ordered rack of
+    `PluginInstance`s that outlives any number of published chains, and `PluginChain` is a view of
+    raw pointers over the enabled subset. The first version had the chain own its plugins, which
+    meant every mutation went through `rebuild` and `rebuild` reconstructed everything -- so
+    adding a second plugin silently reset the first one to its defaults, and so did a sample-rate
+    change. That is indistinguishable from a UI bug and would have made `ui/` unbuildable on top.
+
+    The fix is ownership, not serialization. A format change now re-prepares each instance in
+    place (`setActive(false)` -> `setupProcessing` -> `setActive(true)`, which is what every DAW
+    does), so parameters survive because the component survives. `getState`/`setState` is still
+    wanted for sessions, but it was never the right remedy for this.
+
+24. **Bypass removes the plugin from the published view rather than asking it to bypass itself.**
+    There is no latency to preserve -- sec. 3.7.1 makes the whole design zero-latency -- so
+    skipping it is simpler than trusting each plugin's own bypass parameter to be implemented
+    well. The instance stays in the rack, keeps its parameters, and keeps its editor alive.
+
+25. **Mutations that touch an instance retract the chain first; mutations that only reorder do
+    not.** Re-preparing writes to an object the audio thread may be inside, so `rebuild` publishes
+    null and waits for quiescence before touching anything. Insert, move and bypass only change
+    *which* instances a view names, so an ordinary atomic swap is enough. `removePlugin` publishes
+    the view without the instance and only then destroys it -- and if the audio thread failed to
+    let go within the grace period, the instance is *stranded* rather than freed. Stranded
+    instances are reported by `Engine::strandedPlugins()` and released at teardown: leaking one is
+    strictly better than freeing memory the audio thread is reading.
 
 ---
 

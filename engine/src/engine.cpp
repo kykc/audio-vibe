@@ -9,9 +9,17 @@ namespace aip::engine {
 Engine::Engine() : host_(Steinberg::owned(new Vst::HostApplication())) {}
 
 Engine::~Engine() {
+    // Only the chain is retracted here. Everything else is left to member destruction, which
+    // already unwinds in the one order that is safe -- and which clearing by hand would get
+    // wrong, because the members are destroyed after this body runs:
+    //
+    //   processor_  first, so no chain (published or parked) still names an instance
+    //   stranded_, rack_  the instances themselves
+    //   modules_    last but one: unloading a DLL under a live component is a use-after-free
+    //   host_       last, because the instances were initialised against it
+    //
+    // The declaration order in engine.h encodes that. Do not reorder it.
     teardown();
-    desired_.clear();
-    modules_.clear();
 }
 
 PluginModule::Ptr Engine::moduleFor(const std::string& path, std::string& error) {
@@ -31,32 +39,39 @@ PluginModule::Ptr Engine::moduleFor(const std::string& path, std::string& error)
     return module;
 }
 
-bool Engine::appendPlugin(const std::string& path, std::string& error) {
-    PluginModule::Ptr module = moduleFor(path, error);
-    if (!module) {
-        return false;
-    }
-    return appendPlugin(path, module->audioEffects().front().id, error);
+PluginInstance* Engine::pluginAt(std::size_t index) const noexcept {
+    return index < rack_.size() ? rack_[index].instance.get() : nullptr;
 }
 
-bool Engine::appendPlugin(const std::string& path, const VST3::UID& classId, std::string& error) {
-    error.clear();
-    PluginModule::Ptr module = moduleFor(path, error);
-    if (!module) {
-        return false;
-    }
-
-    const auto& classes = module->audioEffects();
-    const bool known = std::any_of(classes.begin(), classes.end(),
-                                   [&](const PluginClass& c) { return c.id == classId; });
-    if (!known) {
-        error = path + " exposes no audio effect with that class id";
-        return false;
-    }
-
-    desired_.push_back(PluginSpec{std::move(module), classId});
-    return true;
+bool Engine::bypassed(std::size_t index) const noexcept {
+    return index < rack_.size() && rack_[index].bypassed;
 }
+
+// --------------------------------------------------------------------------------- publication
+
+bool Engine::publishRack() {
+    if (!builtFormat_.valid()) {
+        return processor_.publish(nullptr);
+    }
+
+    std::vector<PluginInstance*> view;
+    view.reserve(rack_.size());
+    for (const RackEntry& entry : rack_) {
+        if (!entry.bypassed && entry.instance && entry.instance->prepared()) {
+            view.push_back(entry.instance.get());
+        }
+    }
+
+    auto chain = std::make_unique<PluginChain>(builtFormat_, std::move(view));
+    if (!chain->runnable()) {
+        // Only reachable if a rack entry disagrees with builtFormat_, which would be a bug here
+        // rather than a plugin's fault. Publish nothing rather than something inconsistent.
+        return processor_.publish(nullptr);
+    }
+    return processor_.publish(std::move(chain));
+}
+
+bool Engine::retract() { return processor_.publish(nullptr); }
 
 bool Engine::rebuild(const StreamFormat& format, std::string& error) {
     error.clear();
@@ -65,29 +80,27 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
         return false;
     }
 
-    std::vector<std::unique_ptr<PluginInstance>> plugins;
-    plugins.reserve(desired_.size());
-
-    for (const PluginSpec& spec : desired_) {
-        std::unique_ptr<PluginInstance> instance =
-            PluginInstance::create(spec.module, spec.classId, host_, error);
-        if (!instance) {
-            return false;
-        }
-        if (!instance->prepare(format, error)) {
-            return false;
-        }
-        plugins.push_back(std::move(instance));
-    }
-
-    auto chain = std::make_unique<PluginChain>(format, std::move(plugins));
-    if (!chain->runnable()) {
-        error = "the assembled chain is not runnable";
+    // Re-preparing mutates objects the audio thread may be inside, so the chain comes down first
+    // and stays down until every instance is ready again (sec. 7.4.3).
+    if (!retract()) {
+        error = "the audio thread did not release the running chain";
         return false;
     }
 
-    processor_.publish(std::move(chain));
+    for (RackEntry& entry : rack_) {
+        // prepare() re-prepares in place -- same component, same parameters, new geometry. That
+        // is the whole point of the rack outliving the chain.
+        if (!entry.instance->prepare(format, error)) {
+            builtFormat_ = StreamFormat{};
+            return false;
+        }
+    }
+
     builtFormat_ = format;
+    if (!publishRack()) {
+        error = "the audio thread did not release the previous chain";
+        return false;
+    }
     return true;
 }
 
@@ -136,17 +149,120 @@ bool Engine::serviceFormatChange(std::string& error) {
     return rebuild(target, error);
 }
 
-std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
-    PluginChain* chain = processor_.current();
-    if (chain == nullptr) {
-        return 0;
+// ------------------------------------------------------------------------------ rack mutation
+
+bool Engine::appendPlugin(const std::string& path, std::string& error) {
+    return insertPlugin(rack_.size(), path, error);
+}
+
+bool Engine::insertPlugin(std::size_t index, const std::string& path, std::string& error) {
+    PluginModule::Ptr module = moduleFor(path, error);
+    if (!module) {
+        return false;
+    }
+    return insertPlugin(index, path, module->audioEffects().front().id, error);
+}
+
+bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId,
+                          std::string& error) {
+    error.clear();
+    PluginModule::Ptr module = moduleFor(path, error);
+    if (!module) {
+        return false;
     }
 
+    const auto& classes = module->audioEffects();
+    if (std::none_of(classes.begin(), classes.end(),
+                     [&](const PluginClass& c) { return c.id == classId; })) {
+        error = path + " exposes no audio effect with that class id";
+        return false;
+    }
+
+    std::unique_ptr<PluginInstance> instance =
+        PluginInstance::create(module, classId, host_, error);
+    if (!instance) {
+        return false;
+    }
+
+    // Prepared before it is inserted, and inserted before anything is published: a plugin that
+    // cannot take the current format is reported without disturbing what is already running.
+    if (builtFormat_.valid() && !instance->prepare(builtFormat_, error)) {
+        return false;
+    }
+
+    rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),
+                 RackEntry{std::move(instance), false});
+    return publishRack();
+}
+
+bool Engine::removePlugin(std::size_t index) {
+    if (index >= rack_.size()) {
+        return false;
+    }
+
+    std::unique_ptr<PluginInstance> removed = std::move(rack_[index].instance);
+    rack_.erase(rack_.begin() + static_cast<std::ptrdiff_t>(index));
+
+    // publishRack() waits for the audio thread to leave the chain that still named this instance,
+    // so by the time it returns true the instance is provably unreferenced.
+    if (publishRack()) {
+        removed.reset();
+        return true;
+    }
+
+    // It did not leave in time. Destroying now would be a use-after-free on the audio thread;
+    // holding the instance costs memory until teardown and is reported by strandedPlugins().
+    stranded_.push_back(std::move(removed));
+    return true;
+}
+
+bool Engine::movePlugin(std::size_t from, std::size_t to) {
+    if (from >= rack_.size() || to >= rack_.size()) {
+        return false;
+    }
+    if (from == to) {
+        return true;
+    }
+
+    RackEntry moved = std::move(rack_[from]);
+    rack_.erase(rack_.begin() + static_cast<std::ptrdiff_t>(from));
+    rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+
+    // No instance was touched -- only the order they are named in -- so there is nothing to wait
+    // for beyond the ordinary chain swap.
+    return publishRack();
+}
+
+bool Engine::setBypass(std::size_t index, bool bypass) {
+    if (index >= rack_.size()) {
+        return false;
+    }
+    if (rack_[index].bypassed == bypass) {
+        return true;
+    }
+    rack_[index].bypassed = bypass;
+    return publishRack();
+}
+
+void Engine::clearPlugins() {
+    processor_.publish(nullptr);
+    // The chain is down and publish() waited for the audio thread to leave it, so the instances
+    // are unreferenced and can go.
+    rack_.clear();
+}
+
+// --------------------------------------------------------------------------- plugin callbacks
+
+std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
     std::size_t consumed = 0;
-    for (std::size_t i = 0; i < chain->size(); ++i) {
-        PluginInstance& plugin = chain->at(i);
-        Vst::IEditController* controller = plugin.controller();
-        ComponentHandler* handler = plugin.handler();
+    // The whole rack, not just what is published: a bypassed plugin's editor is still live, and
+    // its queue would otherwise fill up and start dropping.
+    for (const RackEntry& entry : rack_) {
+        if (!entry.instance) {
+            continue;
+        }
+        Vst::IEditController* controller = entry.instance->controller();
+        ComponentHandler* handler = entry.instance->handler();
         if (controller == nullptr || handler == nullptr) {
             continue;
         }
@@ -162,14 +278,12 @@ std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
 }
 
 std::uint64_t Engine::droppedParameterEdits() const {
-    PluginChain* chain = processor_.current();
-    if (chain == nullptr) {
-        return 0;
-    }
     std::uint64_t dropped = 0;
-    for (std::size_t i = 0; i < chain->size(); ++i) {
-        if (const ComponentHandler* handler = chain->at(i).handler()) {
-            dropped += handler->droppedEdits();
+    for (const RackEntry& entry : rack_) {
+        if (entry.instance) {
+            if (const ComponentHandler* handler = entry.instance->handler()) {
+                dropped += handler->droppedEdits();
+            }
         }
     }
     return dropped;

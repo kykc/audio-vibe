@@ -1,10 +1,16 @@
 // A finished, ready-to-run plugin chain (design_doc.md sec. 7.4.3).
 //
 // This is the "hand over a finished object" half of sec. 7.4.3. A chain is built entirely on the
-// control thread -- modules loaded, components instantiated and activated, scratch memory
-// allocated and every page touched -- and is *immutable* thereafter. The audio thread never
-// adds, removes or reorders anything; it reads one atomic pointer (see ChainProcessor) and
-// calls `process`.
+// control thread -- scratch memory allocated and every page touched -- and is *immutable*
+// thereafter. The audio thread never adds, removes or reorders anything; it reads one atomic
+// pointer (see ChainProcessor) and calls `process`.
+//
+// A chain does **not** own its plugins; Engine does, and a chain is an ordered view over them.
+// That split is what makes chain mutation non-destructive: adding, removing, reordering or
+// bypassing a plugin, or re-preparing the rack for a new sample rate, publishes a fresh view
+// while the instances themselves survive -- and with them every parameter the user has set.
+// An owning chain gets this wrong in a way that looks like a UI bug: add a second plugin, and
+// the first one silently reverts to its defaults.
 //
 // Buffering. The king shares its payload in place: the same planar memory is both our input and
 // our output (sec. 4.3). VST3 makes no promise that a plugin tolerates in-place processing, so
@@ -26,17 +32,17 @@
 #include "pluginterfaces/vst/ivstprocesscontext.h"
 
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 namespace aip::engine {
 
 class PluginChain {
 public:
-    /// Control thread. Takes ownership of `plugins`, each of which must already be prepared for
-    /// `format` -- the chain does not prepare them, because a failure to prepare has to be
-    /// reportable before anything is published.
-    PluginChain(StreamFormat format, std::vector<std::unique_ptr<PluginInstance>> plugins);
+    /// Control thread. `plugins` are borrowed, in processing order, and must outlive the chain
+    /// -- Engine guarantees that by never destroying an instance a published or parked chain
+    /// still names. Each must already be prepared for `format`; the chain does not prepare them,
+    /// because a failure to prepare has to be reportable before anything is published.
+    PluginChain(StreamFormat format, std::vector<PluginInstance*> plugins);
 
     PluginChain(const PluginChain&) = delete;
     PluginChain& operator=(const PluginChain&) = delete;
@@ -45,7 +51,9 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return plugins_.size(); }
 
-    [[nodiscard]] PluginInstance& at(std::size_t index) noexcept { return *plugins_[index]; }
+    [[nodiscard]] PluginInstance& at(std::size_t index) const noexcept {
+        return *plugins_[index];
+    }
 
     /// True when every plugin is prepared for this chain's format and the scratch banks are
     /// allocated. A chain that is not runnable must not be published.
@@ -72,7 +80,7 @@ private:
     };
 
     StreamFormat format_;
-    std::vector<std::unique_ptr<PluginInstance>> plugins_;
+    std::vector<PluginInstance*> plugins_;
     Bank banks_[2];
     /// Refilled per block with pointers into the king's mapping. Preallocated so the audio
     /// thread only ever stores into it.

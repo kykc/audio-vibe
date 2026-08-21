@@ -16,6 +16,12 @@
 //   Gain   (id 0)  output = input * (normalized * 2), so the 0.5 default is unity
 //   Edits  (id 1)  performEdit calls per process() = round(normalized * 8), from the audio thread
 //   Meter  (id 2)  the parameter those callbacks report; its value is the block's first sample
+//   Offset (id 3)  a constant added *after* the gain; 0 by default
+//
+// Offset exists so that two instances do not commute: gain-then-offset and offset-then-gain give
+// different numbers, which is what lets a test tell a correctly ordered chain from a reversed
+// one. Two gains alone cannot -- multiplication does not care about order, so a rack that ran
+// them backwards would produce byte-identical output and the test would pass anyway.
 //
 // It also carries a default-active stereo side-chain input it never asks the host to disable,
 // copying what a JUCE-wrapped plugin does (ZL Equalizer 2 was the specimen). That combination --
@@ -46,6 +52,7 @@ enum ParamIds : ParamID {
     kGainId = 0,
     kEditsId = 1,
     kMeterId = 2,
+    kOffsetId = 3,
 };
 
 /// The gain a normalized value of 1.0 maps to. 0.5 is therefore unity, which keeps "did the host
@@ -88,6 +95,8 @@ public:
                                 ParameterInfo::kCanAutomate, kEditsId);
         parameters.addParameter(STR16("Meter"), nullptr, 0, 0.0,
                                 ParameterInfo::kIsReadOnly, kMeterId);
+        parameters.addParameter(STR16("Offset"), nullptr, 0, 0.0,
+                                ParameterInfo::kCanAutomate, kOffsetId);
         return kResultOk;
     }
 
@@ -128,6 +137,8 @@ public:
             gainNormalized.store(value, std::memory_order_relaxed);
         } else if (tag == kEditsId) {
             editsNormalized.store(value, std::memory_order_relaxed);
+        } else if (tag == kOffsetId) {
+            offsetNormalized.store(value, std::memory_order_relaxed);
         }
         return result;
     }
@@ -141,6 +152,8 @@ public:
 
         const auto gain =
             static_cast<float>(gainNormalized.load(std::memory_order_relaxed) * kMaxGain);
+        const auto offset =
+            static_cast<float>(offsetNormalized.load(std::memory_order_relaxed));
         const int32 channels = data.inputs[0].numChannels < data.outputs[0].numChannels
                                    ? data.inputs[0].numChannels
                                    : data.outputs[0].numChannels;
@@ -150,7 +163,7 @@ public:
             const Sample32* in = data.inputs[0].channelBuffers32[c];
             Sample32* out = data.outputs[0].channelBuffers32[c];
             for (int32 s = 0; s < data.numSamples; ++s) {
-                out[s] = in[s] * gain;
+                out[s] = in[s] * gain + offset;
             }
             if (c == 0 && data.numSamples > 0) {
                 first = out[0];
@@ -209,6 +222,9 @@ private:
             case kEditsId:
                 editsNormalized.store(value, std::memory_order_relaxed);
                 break;
+            case kOffsetId:
+                offsetNormalized.store(value, std::memory_order_relaxed);
+                break;
             default:
                 break;
             }
@@ -229,6 +245,7 @@ private:
 
     std::atomic<ParamValue> gainNormalized{0.5};
     std::atomic<ParamValue> editsNormalized{0.0};
+    std::atomic<ParamValue> offsetNormalized{0.0};
     bool processing = false;
 };
 
