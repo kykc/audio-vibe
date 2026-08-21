@@ -1,0 +1,19 @@
+# Build output
+/build/
+/out/
+/.cache/
+
+# pixi
+/.pixi/
+
+# Editors / IDEs
+/.vs/
+/.vscode/
+/.idea/
+*.user
+
+# MSVC artefacts
+*.pdb
+*.ilk
+*.obj
+*.exp

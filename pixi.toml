@@ -1,0 +1,26 @@
+[workspace]
+name = "audio-ipc2"
+description = "System-wide audio processing utility -- client (valet) side"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+# MSVC is not redistributable; vs2022_win-64 only *activates* a local install, so
+# Visual Studio 2022+ with the Desktop C++ workload stays a machine prerequisite (sec. 6.1).
+[dependencies]
+vs2022_win-64 = "*"
+cmake = ">=3.28"
+ninja = "*"
+catch2 = "3.*"
+qt6-main = "6.*"
+
+# `vs2022_win-64` activates MSVC for the *Visual Studio* generator: besides the compiler
+# environment we want, it exports CMAKE_GENERATOR_PLATFORM=x64 and CMAKE_GENERATOR_TOOLSET=v143.
+# Ninja Multi-Config (sec. 6.1) rejects a platform specification outright, and blanking the variables
+# is not enough -- CMake treats "defined but empty" as specified -- so they have to be removed from
+# the environment. That cannot be expressed in CMakePresets.json or in pixi's `env` tables, both
+# of which can only *set* variables, hence the `unset` prefix on every task that runs CMake.
+[tasks]
+configure = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --preset default"
+build = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --build --preset dev", depends-on = ["configure"] }
+test = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && ctest --preset dev", depends-on = ["build"] }
+probe = { cmd = "build/tools/valet_probe/RelWithDebInfo/valet_probe.exe", depends-on = ["build"] }

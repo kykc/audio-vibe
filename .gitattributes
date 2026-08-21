@@ -1,0 +1,9 @@
+# Line endings are normalised to LF everywhere, in the repository and in the working tree.
+# MSVC, CMake, Ninja and clang-format are all indifferent to this, and pinning it keeps a
+# tool that happens to write CRLF from producing whole-file diffs.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.zip binary
+*.pdb binary

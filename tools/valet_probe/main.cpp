@@ -1,0 +1,247 @@
+// valet_probe -- a console client that attaches to the *deployed, unmodified* APO as a protocol
+// v1 valet (design_doc.md sec. 7.3) and reports what it sees.
+//
+// This is the bridge between the conformance harness and real hardware. The harness proves the
+// client against a synthetic king; this proves it against `audiodg.exe`, which is the only thing
+// that can confirm the object names, the endpoint GUID form and the block geometry are right.
+//
+// Everything here is control-plane code: enumeration, console output, argument parsing. The
+// audio path is entirely inside ipc/ and is never touched from this file.
+//
+//   valet_probe                 attach to the default render endpoint
+//   valet_probe --list          list active render endpoints and exit
+//   valet_probe --endpoint N    attach to the Nth endpoint from --list
+//   valet_probe --gain 0.5      apply a gain instead of passing through
+//   valet_probe --seconds 10    run for a fixed time instead of until Ctrl+C
+
+#include "aip/ipc/endpoints.h"
+#include "aip/ipc/valet_supervisor.h"
+#include "aip/ipc/valet_thread.h"
+#include "aip/protocol/layout.h"
+
+#include <windows.h>
+
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
+
+using namespace aip;
+
+namespace {
+
+std::atomic<bool> gStopRequested{false};
+
+BOOL WINAPI consoleHandler(DWORD type) {
+    if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT) {
+        gStopRequested.store(true, std::memory_order_release);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/// Scales every sample by a gain the control thread publishes. Real-time safe (sec. 7.4.1): one
+/// relaxed atomic load and a loop over preallocated shared memory, no heap, no locks.
+class GainProcessor final : public ipc::BlockProcessor {
+public:
+    explicit GainProcessor(float gain) : gain_(gain) {}
+
+    void processBlock(ipc::BlockInfo& block) noexcept override {
+        const float gain = gain_.load(std::memory_order_relaxed);
+        if (gain == 1.0f) {
+            return; // pass-through: leave the payload exactly as the king wrote it
+        }
+        const std::int32_t frames = block.audio.frameCount();
+        for (std::uint32_t ch = 0; ch < block.channelCount; ++ch) {
+            float* samples = block.audio.channel(ch);
+            for (std::int32_t s = 0; s < frames; ++s) {
+                samples[s] *= gain;
+            }
+        }
+    }
+
+private:
+    std::atomic<float> gain_;
+};
+
+const char* stateName(ipc::LinkState state) {
+    switch (state) {
+    case ipc::LinkState::Detached:
+        return "detached";
+    case ipc::LinkState::Attached:
+        return "attached";
+    case ipc::LinkState::Relinquished:
+        return "relinquished";
+    }
+    return "?";
+}
+
+const char* exitReasonName(ipc::ValetExitReason reason) {
+    switch (reason) {
+    case ipc::ValetExitReason::None:
+        return "none";
+    case ipc::ValetExitReason::Stopped:
+        return "stopped";
+    case ipc::ValetExitReason::Stolen:
+        return "stolen by another client";
+    case ipc::ValetExitReason::Failed:
+        return "wait failed (king went away)";
+    }
+    return "?";
+}
+
+void printEndpoints(const std::vector<ipc::RenderEndpoint>& endpoints) {
+    if (endpoints.empty()) {
+        std::puts("No active render endpoints found.");
+        return;
+    }
+    std::printf("Active render endpoints:\n");
+    for (std::size_t i = 0; i < endpoints.size(); ++i) {
+        const ipc::RenderEndpoint& endpoint = endpoints[i];
+        std::printf("  [%zu]%s %ls\n", i, endpoint.isDefault ? " (default)" : "",
+                    endpoint.friendlyName.c_str());
+        std::printf("        guid: %ls\n", endpoint.guid.c_str());
+        std::printf("        base: %ls\n", protocol::objectBaseName(endpoint.guid).c_str());
+    }
+}
+
+struct Options {
+    bool list = false;
+    int endpointIndex = -1; // -1 means "the default endpoint"
+    float gain = 1.0f;
+    int seconds = 0; // 0 means "until Ctrl+C"
+};
+
+bool parseOptions(int argc, char** argv, Options& out) {
+    for (int i = 1; i < argc; ++i) {
+        const char* arg = argv[i];
+        const bool hasValue = i + 1 < argc;
+
+        if (std::strcmp(arg, "--list") == 0) {
+            out.list = true;
+        } else if (std::strcmp(arg, "--endpoint") == 0 && hasValue) {
+            out.endpointIndex = std::atoi(argv[++i]);
+        } else if (std::strcmp(arg, "--gain") == 0 && hasValue) {
+            out.gain = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(arg, "--seconds") == 0 && hasValue) {
+            out.seconds = std::atoi(argv[++i]);
+        } else {
+            std::printf("Unrecognised argument: %s\n", arg);
+            std::puts("Usage: valet_probe [--list] [--endpoint N] [--gain G] [--seconds S]");
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    Options options;
+    if (!parseOptions(argc, argv, options)) {
+        return 2;
+    }
+
+    // COM for MMDevice enumeration. Control thread only -- COM activation is forbidden on the
+    // audio thread (sec. 7.4.1).
+    ipc::ComApartment com;
+    if (!com.ok()) {
+        std::puts("Failed to initialise COM.");
+        return 1;
+    }
+
+    const std::vector<ipc::RenderEndpoint> endpoints = ipc::enumerateRenderEndpoints();
+
+    if (options.list) {
+        printEndpoints(endpoints);
+        return 0;
+    }
+
+    ipc::RenderEndpoint target;
+    if (options.endpointIndex >= 0) {
+        if (static_cast<std::size_t>(options.endpointIndex) >= endpoints.size()) {
+            std::printf("No endpoint at index %d.\n", options.endpointIndex);
+            printEndpoints(endpoints);
+            return 1;
+        }
+        target = endpoints[static_cast<std::size_t>(options.endpointIndex)];
+    } else {
+        const auto defaultEndpoint = ipc::defaultRenderEndpoint();
+        if (!defaultEndpoint) {
+            std::puts("No default render endpoint.");
+            return 1;
+        }
+        target = *defaultEndpoint;
+    }
+
+    std::printf("Endpoint : %ls\n", target.friendlyName.c_str());
+    std::printf("GUID     : %ls\n", target.guid.c_str());
+    std::printf("Objects  : %ls\n", protocol::objectBaseName(target.guid).c_str());
+    std::printf("Gain     : %.3f\n", static_cast<double>(options.gain));
+    std::puts("");
+    std::puts("Waiting for the APO. If nothing attaches, the APO is not registered for this");
+    std::puts("endpoint, or the endpoint has no active stream (sec. 4.4 step 1).");
+    std::puts("Press Ctrl+C to stop.");
+    std::puts("");
+
+    ::SetConsoleCtrlHandler(consoleHandler, TRUE);
+
+    GainProcessor processor(options.gain);
+    ipc::ValetSupervisor supervisor(target.guid, processor);
+
+    supervisor.setStateCallback([](ipc::LinkState state, ipc::ValetExitReason reason) {
+        std::printf("[link] %s (%s)\n", stateName(state), exitReasonName(reason));
+        std::fflush(stdout);
+    });
+
+    supervisor.start();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(options.seconds);
+    ipc::ValetCounters::Snapshot previous{};
+
+    while (!gStopRequested.load(std::memory_order_acquire)) {
+        if (options.seconds > 0 && std::chrono::steady_clock::now() >= deadline) {
+            break;
+        }
+        if (supervisor.state() == ipc::LinkState::Relinquished) {
+            std::puts("Another client took the stream over; nothing left to do.");
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        const ipc::ValetCounters::Snapshot now = supervisor.counters().snapshot();
+        std::printf("blocks %llu (+%llu/s)  timeouts %llu  malformed %llu  reclaims %llu  "
+                    "%u Hz x%u ch, %d frames\n",
+                    static_cast<unsigned long long>(now.blocks),
+                    static_cast<unsigned long long>(now.blocks - previous.blocks),
+                    static_cast<unsigned long long>(now.timeouts),
+                    static_cast<unsigned long long>(now.malformedBlocks),
+                    static_cast<unsigned long long>(now.reclaims), now.lastSampleRate,
+                    now.lastChannelCount, now.lastFrameCount);
+        std::fflush(stdout);
+        previous = now;
+    }
+
+    supervisor.stop();
+
+    const ipc::ValetCounters::Snapshot final = supervisor.counters().snapshot();
+    std::puts("");
+    std::printf("Total blocks    : %llu\n", static_cast<unsigned long long>(final.blocks));
+    std::printf("Timeouts        : %llu\n", static_cast<unsigned long long>(final.timeouts));
+    std::printf("Malformed       : %llu\n", static_cast<unsigned long long>(final.malformedBlocks));
+    std::printf("Reclaims        : %llu\n", static_cast<unsigned long long>(final.reclaims));
+    std::printf("Format changes  : %u\n", final.formatChanges);
+    std::printf("Attach cycles   : %u\n", supervisor.attachCount());
+
+    if (final.blocks == 0) {
+        std::puts("");
+        std::puts("No blocks were received. Either the APO is not loaded for this endpoint or no");
+        std::puts("audio was playing through it.");
+        return 1;
+    }
+    return 0;
+}
