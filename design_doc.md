@@ -44,6 +44,9 @@ Carried over from the predecessor, verified in §3:
   Stated as a preference, treated as a decision (see §5.4).
 - **Modern UX expectations are mandatory:** per-monitor DPI (including mixed-DPI multi-monitor),
   dark theme, accessible native controls.
+- **The audio processing thread is always real-time safe.** No heap allocation, no locking, no
+  I/O, no unbounded operations — in *our* code, without exception. This is a hard rule, not a
+  goal. See §7.4 for the normative list and the single sanctioned exception.
 
 ### 1.3 Rewrite order
 
@@ -356,6 +359,10 @@ Both sides promote their audio thread. The reference implementation
 The new client must do the same on its valet thread. This is behavioural, not wire-level, but
 it is required for glitch-free operation.
 
+A thread promoted to `AVRT_PRIORITY_CRITICAL` will starve normal-priority threads if it blocks
+on anything they hold. This makes the real-time safety rules in §7.4 a correctness requirement,
+not merely a performance preference.
+
 ### 4.7 Conformance testing
 
 A protocol conformance harness is a first-class deliverable, replacing the manual
@@ -604,6 +611,150 @@ For the first stage the **existing, unmodified APO stays deployed**. The new cli
 a protocol v1 valet. Registration, installation and the APO itself are untouched, which means
 the entire kernel-adjacent half of the system is out of scope until the client is working.
 
+### 7.4 Real-time safety rules (normative)
+
+**The audio processing thread must remain real-time safe at all times.** This applies to the
+valet thread in the client, to `APOProcess` in the future APO, and to every function either
+one calls. It is a hard rule. Code that violates it is defective even if it appears to work.
+
+The threads in scope are:
+
+- the client's **valet thread** — protocol rendezvous, plugin chain dispatch, any DSP of our own;
+- the future APO's **`APOProcess`** and anything it calls;
+- any callback either of the above invokes, including our implementations of VST3 host
+  interfaces (§7.4.5).
+
+#### 7.4.1 Prohibited on the audio thread
+
+| Category | Specifically forbidden |
+|---|---|
+| Heap | `malloc`, `free`, `new`, `delete`, `realloc`, and anything that may allocate: `std::vector`/`std::string`/`std::map` growth or construction, `std::function` construction with a non-inlinable capture, `std::shared_ptr` creation, `std::any` |
+| Locking | `std::mutex`, `std::shared_mutex`, `std::condition_variable`, `EnterCriticalSection`, SRW locks, `WaitForSingleObject` on a mutex or semaphore, spin locks shared with a non-real-time thread, and any other construct that can invert priority against a normal-priority thread |
+| I/O | Filesystem access, registry access, console or file logging, `printf`, iostreams, `OutputDebugString` |
+| OS / loader | `LoadLibrary`, `GetProcAddress`, `CoCreateInstance` or any COM activation, thread or process creation, `Sleep`, timer waits |
+| Control flow | Throwing exceptions (unwinding can allocate), unbounded loops, recursion without a static depth bound |
+| Memory behaviour | First-touch page faults; any buffer not already committed and touched before the stream starts |
+
+#### 7.4.2 Required patterns
+
+- **Preallocate everything** at stream open (`LockForProcess` on the APO side, valet attach on
+  the client side), sized from `sampleRate`, `channelCount` and the maximum block size implied
+  by §4.3. Touch every page before the first block.
+- **Fixed-capacity buffers only** on the audio path. No growth, no reallocation.
+- **Control-plane → audio-thread messaging via a lock-free single-producer/single-consumer
+  queue.** The predecessor already did this correctly (`TomatlVst/spsc_queue.h`); keep the
+  pattern. Commands (add/remove/reorder/bypass a plugin, gain changes) are enqueued by the UI
+  thread and drained by the audio thread with bounded work per block.
+- **Audio-thread → control-plane messaging** likewise: enqueue, never block, never allocate.
+  The UI thread polls.
+- **Plugin chain mutation never happens on the audio thread.** Build the new chain on the
+  control thread, publish it by a single atomic pointer store, and retire the old one on the
+  control thread after a safe grace period. The audio thread only ever reads the current
+  pointer. This is the most important instance of the general principle in §7.4.3.
+- **Bounded work per block.** If a control-plane queue is backlogged, drain a fixed maximum per
+  block rather than catching up in one go.
+
+#### 7.4.3 When a violation is unavoidable — minimise the surface
+
+Some operations cannot be made allocation-free end to end. Adding a VST3 plugin to a chain that
+is actively processing is the canonical case: the plugin's own `setupProcessing` and
+`setActive` will allocate, and we do not control that.
+
+The rule in these cases is **not** "give up on §7.4.1" — it is **push the violation as far off
+the audio thread as it will go, and shrink what remains to the smallest possible surface**:
+
+1. **Do everything possible on the control thread.** Load the module, instantiate the
+   component, `setupProcessing`, `setActive`, restore state, allocate every buffer and touch
+   every page — all before the audio thread learns the object exists.
+2. **Hand over a finished, ready-to-run object** through a non-blocking primitive. An SPSC
+   queue was used previously and remains a fine choice; atomic pointer publication is another.
+   The specific mechanism is not prescribed — the properties are: no blocking, no allocation,
+   no unbounded work on the consumer side.
+3. **What executes on the audio thread must be O(1) and allocation-free** — ideally a pointer
+   read and a splice into the chain, nothing more.
+4. **Destroy the replaced object on the control thread**, never on the audio thread. Frees are
+   as forbidden as allocations (§7.4.1).
+
+If step 3 amounts to more than a pointer swap, the work has not been pushed far enough upstream.
+That is a design defect, not a necessary cost.
+
+**Acceptance criterion.** The distinction that governs how much disruption is tolerable:
+
+- **User-initiated transitions** — adding, removing or reordering a plugin, loading a preset —
+  **may produce audible artifacts, and that is acceptable.** The user acted and expects a
+  transition; the plugin's own DSP may click or fade while it warms up, which is outside our
+  control anyway. We are not obliged to make these sample-accurate or click-free. We *are*
+  obliged to keep our own contribution to the disruption minimal and bounded.
+- **Steady state** — no user interaction — **must be completely inert.** Zero allocations, zero
+  frees, no growth in memory footprint, no lock acquisition, no syscalls beyond §7.4.4. A chain
+  that has been running untouched for hours must show the same audio-thread allocation count and
+  the same resident set as it did one second after it started.
+
+The second bullet is directly testable and should be enforced as such: the detector in §7.4.6
+counts audio-thread allocations, and steady-state must be **exactly zero**. A soak test
+asserting a flat allocation count and flat RSS over a long idle run is the regression guard.
+
+#### 7.4.4 The sanctioned exception — protocol synchronisation primitives
+
+The Win32 primitives used by `BufferKing` / `BufferValet` are **deliberately permitted on the
+audio thread**. They were selected and vetted for this purpose and are the one carve-out from
+§7.4.1:
+
+- `SetEvent` / `ResetEvent` on the `KING` and `VALET` manual-reset events — non-allocating
+  syscalls with bounded cost, no priority inversion against a lock holder.
+- `WaitForSingleObject` on those two events — this rendezvous *is* the protocol (§4.4) and
+  cannot be removed without a v2.
+- Reads and writes through the mapped view of the shared section, provided the view was mapped
+  and touched at stream open.
+
+Two qualifications:
+
+1. This exception is **exhaustive**. It covers exactly these operations on exactly these
+   objects. It is not a general licence to call blocking Win32 APIs, and in particular it does
+   **not** extend to `SimpleMutex` / `ThreadSafeContainer` from the predecessor's `AudioIpc.h`
+   — those are dead legacy, are not part of protocol v1 (§4.2), and must not appear on the
+   audio path.
+2. The king-side `WaitForSingleObject(KING, 1000)` is the **known weak point of v1**, not an
+   endorsement of long blocking waits. It is the reason §9.1 exists. Until v2, it stays as
+   specified.
+
+#### 7.4.5 Third-party plugin code
+
+We do not control what a VST3 plugin does inside `IAudioProcessor::process`. Plugins allocate,
+lock and occasionally touch the filesystem, and no host can prevent it.
+
+Our obligation is that **our half of the call stack is clean**, which means specifically:
+
+- Call `process` directly. Do not wrap it in anything that allocates, locks, or copies through
+  a dynamically sized buffer.
+- Preallocate and reuse all `ProcessData`, `AudioBusBuffers`, `IParameterChanges` and
+  `IEventList` structures. The SDK's `HostProcessData` supports this — set it up once at stream
+  open.
+- **Our implementations of VST3 host interfaces called from the audio thread must themselves be
+  real-time safe.** `IComponentHandler::performEdit` in particular may legitimately be invoked
+  by a plugin from the processing thread: our implementation must enqueue to the UI thread
+  lock-free and return, never touch a lock or the heap. Anything that must not run on the audio
+  thread — `restartComponent`, editor notifications, state persistence — is deferred to the
+  control thread through the same queue.
+- A misbehaving plugin degrades that plugin. It must not be able to make *our* code violate
+  §7.4.1.
+
+#### 7.4.6 Enforcement
+
+`clang`'s `RealtimeSanitizer` (`-fsanitize=realtime`) is the natural tool here but is
+unavailable to us, as we build with MSVC (§6.1). Substitutes, in order of value:
+
+1. **A debug-only real-time violation detector.** A thread-local "inside real-time section"
+   flag set by an RAII guard at the top of the valet callback, checked by a global
+   `operator new` / `operator delete` override and by thin assert-only wrappers around the
+   locking primitives we might accidentally reach for. Compiled into `RelWithDebInfo`, compiled
+   out of release. This catches the overwhelming majority of real violations cheaply.
+2. **The conformance harness (§4.7)** asserting round-trip latency bounds — catches gross
+   violations and regressions, though not rare ones.
+3. **Code review against §7.4.1**, treated as a merge gate for anything touching the audio path.
+4. Keeping the audio path physically small and reviewable: `protocol/` and `ipc/` are the only
+   places these rules are hard to see at a glance, so keep them minimal (§7.1).
+
 ---
 
 ## 8. Deferred decisions
@@ -657,6 +808,11 @@ A v2 should:
 - consider decoupling entirely — a lock-free ring buffer with an explicit, declared latency
   budget — trading v1's zero added latency for the audio engine no longer being hostage to a
   userspace process. This is a real trade-off, not a free win, and deserves its own decision.
+
+Note that the 1000 ms wait is the only part of the audio path that §7.4 tolerates rather than
+endorses (§7.4.4, qualification 2). Everything else on that path is required to be
+unconditionally real-time safe, so this is the single remaining unbounded operation and the
+main reason to pursue v2.
 
 ### 9.2 Tighten shared object security
 
