@@ -27,7 +27,7 @@
   "buildPresets": [
     {
       "name": "dev",
-      "displayName": "RelWithDebInfo (primary development configuration, see design_doc.md \u0412\u00a76.4)",
+      "displayName": "RelWithDebInfo (primary development configuration, see design_doc.md sec. 6.4)",
       "configurePreset": "default",
       "configuration": "RelWithDebInfo"
     },

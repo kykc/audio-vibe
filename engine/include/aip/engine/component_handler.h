@@ -12,6 +12,12 @@
 // is it; a UI thread pushing to the same ring would corrupt it. Splitting by caller is what
 // keeps the ring single-producer while still accepting edits from the editor.
 //
+// Which caller it was is *recorded*, not just used for routing, because it decides where the edit
+// has to go afterwards. An edit the processor made is news to the controller; an edit the editor
+// made is news to the processor. Sending each one back where it came from is at best redundant
+// and at worst a feedback loop that makes a knob fight the mouse -- see `ParameterEdit::Origin`
+// and `Engine::serviceParameterEdits`.
+//
 // `restartComponent` is never acted on here. It can demand a full reconfiguration -- exactly the
 // work sec. 7.4.3 says must happen on the control thread -- so it is queued like everything else.
 
@@ -40,7 +46,19 @@ struct ParameterEdit {
         RestartComponent,
     };
 
+    /// Which side of the plugin the call came from, decided by the thread that made it. The
+    /// contract says every one of these is a UI-thread call, so `Audio` is the case the contract
+    /// says cannot happen and sec. 7.4.5 says we must expect anyway.
+    enum class Origin : std::uint8_t {
+        /// Called from the plugin's processing thread: the processor moved the parameter itself.
+        Audio,
+        /// Called from anywhere else -- in practice the plugin's editor, which is the case that
+        /// makes a user's mouse gesture something the processor has to be told about.
+        Control,
+    };
+
     Kind kind = Kind::PerformEdit;
+    Origin origin = Origin::Control;
     Steinberg::Vst::ParamID paramId = 0;
     Steinberg::Vst::ParamValue value = 0.0;
     /// RestartFlags, for `RestartComponent`. Unused otherwise.
@@ -104,7 +122,9 @@ public:
     REFCOUNT_METHODS(Steinberg::FObject)
 
 private:
-    Steinberg::tresult submit(const ParameterEdit& edit) noexcept;
+    /// By value: `submit` stamps the origin from the thread it is running on, which is the one
+    /// piece of information the caller cannot supply.
+    Steinberg::tresult submit(ParameterEdit edit) noexcept;
 
     rt::SpscQueue<ParameterEdit, kAudioQueueSlots> audioQueue_;
     rt::Mutex controlMutex_;

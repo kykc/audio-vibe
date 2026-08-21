@@ -2,6 +2,8 @@
 
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 
+#include <algorithm>
+
 namespace aip::engine {
 
 PluginModule::PluginModule(VST3::Hosting::Module::Ptr module) : module_(std::move(module)) {
@@ -32,6 +34,23 @@ PluginModule::Ptr PluginModule::load(const std::string& path, std::string& error
         return nullptr;
     }
     return wrapper;
+}
+
+std::vector<std::string> PluginModule::installedModulePaths() {
+    std::vector<std::string> paths = VST3::Hosting::Module::getModulePaths();
+    // The SDK returns them in directory-walk order, which is neither stable nor meaningful to a
+    // person. Sorted by the bundle's own name rather than by the whole path, so that plugins from
+    // different install locations still interleave alphabetically.
+    std::sort(paths.begin(), paths.end(), [](const std::string& a, const std::string& b) {
+        const auto name = [](const std::string& path) {
+            const std::size_t slash = path.find_last_of("/\\");
+            return slash == std::string::npos ? path : path.substr(slash + 1);
+        };
+        const std::string left = name(a);
+        const std::string right = name(b);
+        return left == right ? a < b : left < right;
+    });
+    return paths;
 }
 
 void PluginModule::setHostContext(Steinberg::FUnknown* context) const noexcept {

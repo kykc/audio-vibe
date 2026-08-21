@@ -1,8 +1,11 @@
 # Project status
 
-**Updated:** 2026-08-21, after the Engine milestone, the first real third-party plugin
-(ZL Equalizer 2, which found and fixed a side-chain bus defect), the sec. 5.1 editor-hosting
-spike, and the rack/chain split that makes chain mutation non-destructive.
+**Updated:** 2026-08-21, after the UI milestone: the Qt 6 Widgets shell (`ui/`), parameter
+delivery from a plugin's editor into its processor, and two real third-party plugin editors hosted
+side by side while the chain processes system audio. Before that, the same day: the Engine
+milestone, the first real third-party plugin (ZL Equalizer 2, which found and fixed a side-chain
+bus defect), the sec. 5.1 editor-hosting spike, and the rack/chain split that makes chain
+mutation non-destructive.
 
 **Purpose of this file.** To let a work session be thrown away and a fresh one started without
 losing the plot. It records *where we stand* -- what is built, what is proven, what is next, and
@@ -34,22 +37,44 @@ userspace client is the **valet** (consumer). See `AGENTS.md` for the full summa
 untouched; the new client attaches to it as a protocol v1 valet. Every APO-side decision is
 deferred and blocks nothing.
 
-**Where we are:** the IPC foundation and a first VST3 host are both finished and verified against
-the real deployed APO. A real VST3 plugin chain now runs inside the `audiodg.exe` block loop.
-Nothing of the plugin scanner or the UI exists yet.
+**Where we are:** the IPC foundation, the VST3 host and a working GUI are all finished and verified
+against the real deployed APO. A real VST3 plugin chain runs inside the `audiodg.exe` block loop,
+driven from a window, with the plugins' own editors on screen. Nothing of the plugin scanner
+exists yet.
 
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 41, ~4 s
+pixi run test          # expect: 100% tests passed out of 44, ~4 s, and NOTHING skipped
 ```
+
+**Read the skip count, not just the pass line.** `pixi run test` (RelWithDebInfo) must skip
+nothing. The `release` configuration exists too and skips exactly five -- the ones that need the
+sec. 7.4.6 violation detector, which is compiled out of Release by design:
+
+```
+pixi run -- cmake --build --preset release && pixi run -- ctest --preset release
+```
+
+Both configurations build and both suites pass as of 2026-08-21. See section 8 items 17, 19 and 20
+for why that sentence is worth a check rather than an assumption -- twice now, this suite has
+reported green while the most important test in it did not run.
 
 Then, on a machine with the old APO installed, prove interop against real hardware:
 
 ```
-pixi run probe                              # pass-through
+pixi run ui                                 # the shell; pick an endpoint and press Attach
+pixi run probe                              # pass-through, console
 valet_probe --inspect --plugin <path.vst3>  # load and prepare only; never attaches
 valet_probe --plugin <path.vst3> --seconds 30
+```
+
+The shell also takes a command line, for checking a state without clicking through to it. Note
+that the option is `--vst3` and not `--plugin`, because `-plugin` is a reserved Qt option --
+see section 8 item 15:
+
+```
+aip_ui --vst3 <path.vst3> --editors --attach
 ```
 
 Expect a line per second reading `blocks N (+~101/s) timeouts 0 malformed 0 reclaims 0
@@ -82,8 +107,8 @@ components rather than numbered, so the two schemes cannot be confused.
 | Design | Analysis, stack, toolchain, protocol v1 frozen | Done: `design_doc.md` sec. 2-6, and sec. 4 is frozen |
 | IPC foundation | `protocol/`, `rt/`, `ipc/`, conformance harness, probe tool | Done and verified |
 | **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
+| **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
 | Scanner | `scanner/` -- out-of-process plugin probing | Not started. Next up; see section 5 |
-| UI | `ui/` -- Qt 6 Widgets shell, plugin rack, editor hosting | Not started |
 | Installer | `installer/` -- WiX v7 | Not started |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
@@ -91,6 +116,11 @@ components rather than numbered, so the two schemes cannot be confused.
 ordered rack, publishes a view over it, and lets the rack be inserted into, removed from,
 reordered and bypassed while audio flows -- without disturbing the plugins not being touched.
 What it does *not* yet do is listed in section 5.
+
+"Done for a first cut" for the UI means: it attaches, it drives the rack, it hosts editors, and it
+puts every counter that matters on screen. What it has no notion of is a session (nothing is
+saved), a plugin list that survives a crash (no scanner yet), or any control of its own -- the only
+way to change a parameter is the plugin's own editor.
 
 ---
 
@@ -112,9 +142,17 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             plugin_chain (a *borrowed* ordered view + ping-pong scratch banks),
             chain_processor (the BlockProcessor: atomic pointer, format check, epoch-based
             retirement), engine (owns the rack; insert/remove/move/bypass, rebuild, publish,
-            service)
+            service). plugin_instance also carries the parameter ring that delivers an editor's
+            edits to the processor (item 26)
+ui/         src/ only -- an executable, nothing links it. main (OLE apartment, command line),
+            main_window (the shell: endpoint attach, counters, log), rack_panel (a direct view of
+            the engine's rack; no second model), plugin_picker (installed .vst3s, from the SDK's
+            own search paths), engine_host (names the GUI thread as *the* control thread; the
+            100 ms servicing tick), editor_manager (which editors are open, and the guarantee
+            none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
+            plug_frame (IPlugFrame)
 cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
-tests/      41 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
+tests/      44 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
             built from the SDK). conformance, engine, planar, protocol_layout,
             realtime_safety, source_hygiene, spsc_queue
@@ -131,7 +169,8 @@ Thread split, which is the load-bearing structural decision:
 
 - **Control thread** (`ValetSupervisor`, `engine::Engine`): opens handles, generates the valet id,
   claims the stream, faults in every page, loads modules, activates plugins, builds and publishes
-  chains, destroys retired ones, drains plugin callbacks. Allowed to allocate, log and lock.
+  chains, destroys retired ones, drains plugin callbacks. Allowed to allocate, log and lock. In the
+  shell this thread *is the Qt GUI thread* -- see section 7 item 27.
 - **Audio thread** (`ValetThread` -> `engine::ChainProcessor`): the sec. 4.4 rendezvous, one
   atomic pointer read, a geometry comparison, and `IAudioProcessor::process` per plugin. Nothing
   else. Real-time safe under sec. 7.4.1.
@@ -210,8 +249,32 @@ Proven, and re-checkable by running the suite:
 - **Reordering the rack reorders processing.** Checked with a non-commutative pair (a gain and a
   post-gain offset), because two gains would produce identical output either way round and the
   test would prove nothing. Negative control run: making `movePlugin` a no-op fails it.
+- **An edit made in a plugin's editor reaches its processor.** The exact call an editor makes --
+  `IComponentHandler::performEdit` from a thread that is not the audio thread -- is queued, carried
+  across by `serviceParameterEdits`, delivered into `inputParameterChanges` at the top of the next
+  block, and changes the output. Asserted with a named test that deliberately never touches the
+  fixture's own `setParamNormalized`, because that would move the processor's value directly and
+  prove nothing about the host. Negative control run: restoring the old
+  everything-goes-to-the-controller routing fails it.
+- The same test asserts the edit is **not** echoed back at the controller that made it (item 26).
+- Repeated values for one parameter within a block collapse to the last one, so a dragged knob
+  costs one queue slot per parameter per block however hard it is dragged.
+- **Parameter delivery is allocation-free on the audio thread.** 3,000 blocks with 24 edits pushed
+  per block -- more than the drain bound, so the drain hits its limit every block -- report exactly
+  zero allocations, frees and locks. This is its own test rather than a rider on the chain soak,
+  because delivery put new work *on* the audio thread and the hazard is specific: `addParameterData`
+  past the warmed queue count, or `addPoint` past the warmed point count, both allocate inside the
+  SDK. Negative control: the same routing revert fails this one too.
+- **Both configurations build, and both suites pass.** `RelWithDebInfo` skipping nothing, `Release`
+  skipping exactly the five tests that need the violation detector. Release had never been built
+  before 2026-08-21 and did not build when first tried (section 8 item 17). Note what this does and
+  does not establish: the Release binaries link and pass the suite. Nobody has run the Release
+  shell against the real APO, and its allocation behaviour is *unobservable* by construction --
+  `AIP_RT_CHECKS` off means the global `operator new`/`delete` replacements are gone, so the
+  counters that make the sec. 7.4.3 criterion checkable exist only in RelWithDebInfo.
 - MMCSS "Pro Audio" promotion succeeds on the valet thread (sec. 4.6).
-- Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run.
+- Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`
+  included.
 
 Proven against the real deployed APO on the development machine:
 
@@ -224,6 +287,19 @@ Proven against the real deployed APO on the development machine:
 - **A real third-party plugin runs in that loop.** ZL Equalizer 2 processed 2,991 of 3,003 blocks
   over 30 s with zero timeouts, zero malformed headers, zero format misses and zero dropped
   parameter edits.
+- **The shell does all of it, from a window.** `aip_ui` enumerated 8 render endpoints, attached to
+  the default one, built a chain for 48000 Hz x2 ch on first observation, and ran ~94 blocks/s
+  through a two-plugin rack (ZL Equalizer 2 -> NeuralAmpModeler) with zero timeouts, zero malformed
+  headers, zero format misses, zero dropped edits, zero stranded plugins and zero audio-thread
+  allocations, frees or locks. Both plugins' editors were open the whole time.
+- **Two real plugin editors are hosted at once, and both fill their windows.** ZL Equalizer 2 at
+  1180 x 752 and NeuralAmpModeler at 600 x 400, each with one child HWND under the handle we gave
+  it, both reporting `IPlugViewContentScaleSupport`. ZL Equalizer 2's analyser was drawing the live
+  spectrum of the machine's own audio, which is the first evidence in this project that a plugin is
+  *receiving* the system stream rather than merely being called with it.
+- **A graceful shutdown with editors open while attached exits 0.** WM_CLOSE to the shell with two
+  editors on screen and the valet thread processing: no fault, no hang. This is the ordering
+  `~MainWindow` exists for -- editors released before the engine that owns the plugins behind them.
 - **Zero audio-thread allocations against the real producer**, which the soak test could only
   show against the synthetic king. 1,004 blocks pass-through and 3,003 blocks with ZL Equalizer 2
   both report exactly zero allocations, frees and lock acquisitions. Note what the second figure
@@ -235,8 +311,29 @@ Proven against the real deployed APO on the development machine:
 
 - Audible processing on real hardware. Everything against the real APO has been at unity gain or
   a flat EQ, on purpose: a real change would alter the machine's actual audio output.
-- More than one third-party plugin. ZL Equalizer 2 is proven end to end; it is one JUCE-wrapped
-  plugin, and the population it stands for is not obviously well represented by it.
+- **A parameter gesture on a *real* plugin.** The path is proven by test against the fixture and
+  the counter for it is on screen, but nobody has yet dragged a control in ZL Equalizer 2's own
+  editor and watched `parameters delivered` climb. That is a five-second manual check and it is the
+  first thing to do next session: attach, open an editor, move something, read the Counters group.
+  It was skipped deliberately rather than forgotten -- moving an EQ band changes the machine's real
+  audio output, which is the same line everything else here has stayed on the safe side of.
+- More than two third-party plugins. ZL Equalizer 2 and NeuralAmpModeler are proven end to end;
+  they are one JUCE-wrapped and one iPlug2-wrapped plugin, and the population they stand for is not
+  obviously well represented by two.
+- Any rack mutation *from the shell* while attached. Insert, remove, move and bypass are proven by
+  test at the engine level and the buttons are wired to exactly those calls, but no one has clicked
+  them with audio flowing. Removing a plugin whose editor is open is the interesting one, because it
+  is the one case where the UI carries an ordering obligation the engine cannot enforce (item 28).
+- A plugin that has no editor, or whose editor refuses our HWND. Both are handled and reported
+  through the log rather than assumed away, and neither has been seen.
+- A plugin that does not implement `IPlugViewContentScaleSupport`. Both plugins tried do, so the
+  unit conversion written for the other case is from the specification and has never run.
+- Endpoint switching from the shell. `Refresh` and the combo box are disabled while attached, which
+  makes the question "detach, then attach elsewhere" -- untried, and no reason to think it fails.
+- Two shells at once, which is the real `Stolen` test (see below).
+- Anything about how the shell behaves on a high-DPI monitor other than this machine's, or across a
+  monitor change while an editor is open. `setContentScaleFactor` is sent once, at embed time, and
+  nothing listens for a screen change.
 - The split component/controller path in a **test**. It is proven against a real plugin, which is
   a manual step; the automated suite still only sees our single-component fixture. Covering it
   hermetically needs a second plugin fixture.
@@ -251,8 +348,11 @@ Proven against the real deployed APO on the development machine:
 - Latency compensation. `IAudioProcessor::getLatencySamples` is not read, and protocol v1 has
   nowhere to report it even if it were (sec. 3.7.1 -- the design is zero added latency).
 - MIDI/event input. The `IEventList`s are preallocated and always empty.
-- Sending automation *into* a plugin. `inputParameterChanges` is preallocated and warmed but
-  nothing ever fills it; the tests set values through `IEditController::setParamNormalized`.
+- *Host-originated* automation. `inputParameterChanges` is now filled -- by the plugin's own editor,
+  through `performEdit` -- but nothing in this project writes a parameter of its own accord. There
+  is no host automation lane, no preset recall, no generic parameter list.
+- `beginEdit`/`endEdit` are drained and discarded. They bracket a gesture, which only matters to a
+  host that keeps its own automation state.
 - `restartComponent` is queued and then ignored. A plugin that asks for a reconfiguration does
   not get one.
 - More than one endpoint at a time, and endpoint switching while attached.
@@ -260,40 +360,108 @@ Proven against the real deployed APO on the development machine:
   harness.
 - Takeover between two real client processes. The `Stolen` path is covered only by the harness
   forging a foreign valet id.
-- A long soak (hours) against the real APO. The longest so far is 30 s.
+- A long soak (hours) against the real APO. The longest so far is a few minutes, from the shell.
+  The shell is the natural place to run one now, because it shows the allocation counters live.
 - ARM64. Declared supported in sec. 6.1, never built. Note that
   `tests/fixtures/aip_test_plugin` hard-codes `x86_64-win` in its bundle layout.
 
 ---
 
+## 4a. How to assess stability, and why in RelWithDebInfo
+
+`pixi run ui`, left attached with plugins loaded, is the right primary instrument -- and
+RelWithDebInfo is the right configuration to do it in. That is not a compromise forced by
+sec. 6.4; it is the better choice on the merits:
+
+- `assert` is live (the root `CMakeLists.txt` strips `/DNDEBUG` from RelWithDebInfo), so a broken
+  invariant aborts loudly instead of continuing quietly into something worse.
+- `AIP_RT_CHECKS` is on, so the global `operator new`/`delete` replacements are in the image and
+  the audio-thread allocation, free and lock counters are live -- and on screen in the Counters
+  group. In Release those numbers do not exist. **A stability run in Release can tell you it did
+  not crash; only RelWithDebInfo can tell you it stayed real-time safe.**
+- Full PDBs, so when a plugin faults there is a usable stack rather than a hex address. The plugins
+  are third-party and outside our control (sec. 7.4.5); being able to tell "their frame" from
+  "our frame" is the whole difference between a bug report and a shrug.
+- `/O2` is on, so it is not a slow build pretending to be a fast one. The one thing it is *not* is
+  the shipping configuration -- see the caveat below.
+
+What the shell shows continuously, and what each number means when it moves:
+
+| Reading | Healthy | If it moves |
+|---|---|---|
+| `audio thread: allocations / frees / locks` | exactly 0, forever | a sec. 7.4.1 violation; the run is a failure however smooth it sounded |
+| `timeouts` | 0 | the valet missed the king's 1000 ms window -- a system-wide dropout (sec. 3.7.1) |
+| `malformed` | 0 | a header we rejected; benign for us, but says something changed upstream |
+| `format misses` | 0 in steady state | a geometry the chain was not built for; audio passed through unprocessed |
+| `passed through` | small and constant | grows only across a rebuild; growing steadily means no chain is running |
+| `plugin edits dropped` | 0 | the control thread is not draining often enough |
+| `stranded plugins` | 0 | the audio thread failed to release a chain within the grace bound |
+| `reclaims` | 0, or rare | the king evicted us and we re-claimed; recoverable, but note it |
+
+What `pixi run ui` does **not** cover, and so must not be mistaken for a clean bill of health:
+
+- **Resident set.** The sec. 7.4.3 criterion is zero allocations *and* flat RSS. The shell shows
+  the first and not the second, so a long soak still needs an external watch on the process's
+  working set. Making the shell show it is the obvious small improvement and is not done.
+- **Anything but steady state on one endpoint at one format.** Everything in the "not proven" list
+  above stays unproven no matter how long the window is left open: no format change, no endpoint
+  switch, no takeover, no rack mutation while attached.
+- **Release behaviour.** Nothing about a RelWithDebInfo run transfers to Release automatically:
+  removing the allocation hooks changes allocator behaviour and timing, and `assert` going away
+  changes what happens after a violated invariant rather than preventing it. Build and run Release
+  before believing anything about it -- and remember that the instrument that would have caught a
+  real-time defect is exactly what is missing there.
+- **An ungraceful exit is not a neutral event.** Killing the process while attached leaves the king
+  waiting out its full 1000 ms, which is an audible system-wide dropout before it recovers. Close
+  the window, or press Detach; reach for the task manager only when testing that path deliberately.
+
+---
+
 ## 5. Next actions, in order
 
-The two de-risking steps that used to head this list -- a real third-party plugin, and editor
-hosting -- are both done, and both held. What remains is ordinary construction.
+The de-risking steps that used to head this list -- a real third-party plugin, editor hosting, and
+a UI to drive them -- are all done, and all held. What remains is ordinary construction.
 
-1. **`ui/` -- the Qt 6 Widgets shell (sec. 5.1).** The plugin rack and editor hosting.
-   `engine::Engine` is now an API a UI can drive directly: `insertPlugin`, `removePlugin`,
-   `movePlugin`, `setBypass`, and `pluginAt` for the editor to bind to. Start the embedding from
-   `tools/editor_spike`, which already has the `IPlugFrame` and content-scale handling working
-   against a real plugin; what it does not have is more than one editor at a time, teardown while
-   audio is running, or any connection to the engine.
-2. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
+0. **Five seconds of manual checking, first.** Attach, open a plugin's editor, drag a control, and
+   watch `parameters delivered` in the Counters group climb. The mechanism is tested against the
+   fixture but no human has moved a real knob yet; see section 4. If it does *not* climb, the
+   suspect is `ParameterEdit::Origin` -- a plugin whose editor edits arrive from a thread we
+   classify as the audio thread would be routed the wrong way.
+1. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
    that enumerates `Module::getModulePaths()`, loads each candidate, records class info, and
    reports it back; crash isolation is the whole point, so a plugin that faults must cost one
    scan entry, not the session. `valet_probe --inspect` is already most of the child process --
    promoting it means giving it a machine-readable output and a parent that survives its death.
+   The shell wants it: `ui/src/plugin_picker.cpp` lists the paths the SDK finds but loads each one
+   in-process when the user picks it, so a plugin that faults on load takes the session with it.
+2. **Plugin state serialization**, and then a session file. `IComponent::getState` / `setState`.
+   The shell makes the absence conspicuous -- every restart is an empty rack -- and it is the last
+   thing standing between what exists and something usable daily. Note that this is *not* what
+   makes a parameter survive a format change; the rack owning the instances is (item 23).
 
 Engine work still outstanding, roughly in order of how much it will be missed:
 
-- **Plugin state serialization.** `IComponent::getState` / `setState`, for saving and restoring a
-  rack between sessions. Note that this is *not* what makes a parameter survive a format change --
-  the rack owning the instances is (sec. 7 item 23) -- so it is a feature rather than a fix.
-- **Send automation into a plugin.** `inputParameterChanges` is preallocated and warmed but never
-  filled; wiring the UI's parameter edits into it is what makes the queue earn its place.
 - **Act on `restartComponent`.** At minimum honour `kParamValuesChanged` and
   `kLatencyChanged`; currently every flag is drained and discarded.
 - Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
   cannot compensate for it.
+
+UI work still outstanding, none of it blocking:
+
+- **Resident set on screen, next to the allocation counters.** It is the other half of the
+  sec. 7.4.3 acceptance criterion and the shell currently shows only one half, which makes a long
+  soak weaker evidence than it needs to be. `GetProcessMemoryInfo` and `psapi`, which `tests/`
+  already links. Cheap, and it is the difference between "no allocations on the audio thread" and
+  "nothing is leaking anywhere".
+- Uptime and peak-since-reset alongside the counters, so a soak run documents itself.
+- A rack that shows more than a line of text per plugin: vendor, category, and the parameter count
+  are all already available from `PluginModule`/`PluginInstance`.
+- Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it.
+- Endpoint hot-swap while attached, which needs `ValetSupervisor` to grow it (see below).
+- Remembering window geometry and the last endpoint. `QSettings`, once there is a session format to
+  put it next to.
+- The sec. 5.2 "EQ/plot widgets" the design document mentions for `ui/`. Nothing needs them yet;
+  they belong with whatever the project's own processing turns out to be, not with plugin hosting.
 
 Worth doing at some point, none of it blocking:
 
@@ -483,6 +651,78 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     instances are reported by `Engine::strandedPlugins()` and released at teardown: leaking one is
     strictly better than freeing memory the audio thread is reading.
 
+### 7.3 Parameter delivery and the UI
+
+26. **An edit is applied to the half of the plugin that did not make it.** `ParameterEdit` now
+    carries an `Origin`, stamped by `ComponentHandler::submit` from the thread it runs on -- which
+    is the one thing the caller cannot supply. An `Audio`-origin edit means the processor moved the
+    parameter itself, so the *controller* is told, and the editor follows. A `Control`-origin edit
+    means the editor moved it, so the *processor* is told, through `inputParameterChanges`.
+
+    The second direction is new and it is what makes a knob work at all: for a split
+    component/controller plugin the two halves are separate objects forbidden to talk to each
+    other, so without the host carrying the value across, turning a control changes nothing
+    audible. Routing by origin rather than sending everything both ways is not tidiness -- pushing
+    a value into the controller in the middle of the user's own gesture is how a knob ends up
+    fighting the mouse.
+
+27. **`inputParameterChanges` is written only by the audio thread, from a ring.** The plugin reads
+    those queues during `process`, so the control thread cannot touch them; it pushes
+    `(id, value)` onto an SPSC ring instead and `PluginInstance::process` drains a bounded number
+    at the top of the next block. The bound is the number of queues `prepare` warmed, which is
+    what keeps `addParameterData` inside preallocated storage.
+
+    Every value is stamped at **sample offset 0**, and that is load-bearing rather than lazy: the
+    SDK's `addPoint` *replaces* a point at an offset it already holds, so repeated values for one
+    parameter within a block coalesce into one point. A dragged knob therefore costs one queue slot
+    per parameter per block however fast it is dragged, and the point list never grows. Sample
+    accuracy would be meaningless anyway -- the gesture came from a mouse, and protocol v1 has no
+    transport to place it against.
+
+28. **The GUI thread *is* the control thread, and `EngineHost` is where that is declared.** Both
+    `engine::Engine` and `ipc::ValetSupervisor` document themselves as expecting one control
+    thread and are not thread-safe against themselves; naming which thread that is, in one place,
+    is what keeps every rack mutation and both servicing calls on it. The single thing that
+    genuinely arrives from elsewhere -- the supervisor's state callback, on the supervisor's own
+    thread -- is turned into a Qt signal and nothing else, so its delivery is queued onto the GUI
+    thread and the engine is still only ever touched from one place.
+
+29. **An editor is released before the engine is allowed to touch its plugin.** `EditorManager`
+    holds that rule, because the engine cannot: an `IPlugView` holds the plugin's controller and
+    its child HWND, and destroying the instance first leaves a live view that will dutifully call
+    `removed()` on freed memory. The failure is not visible where it is caused. So `removePlugin`
+    from the rack panel closes the editor first, and `~MainWindow` closes them all by hand rather
+    than trusting Qt's child destruction -- Qt deletes children *after* member destruction, which
+    would be after the engine is already gone.
+
+    Editors are keyed by `PluginInstance*`, never by rack position. A position is not an identity:
+    inserting before an open editor moves it. The instance does not move, because the rack owns it
+    and outlives every published chain (item 23).
+
+30. **Bypass does not touch the editor; removal does.** Bypassing only changes which instances the
+    published view names, so the plugin keeps its parameters and its editor stays live and useful
+    (item 24). Removal destroys the instance. Reordering is the bypass case: nothing is
+    re-prepared, so nothing has to be closed.
+
+31. **The rack panel keeps no model of its own.** Every button calls the engine and then rebuilds
+    the whole list from what the engine now says. A few list items per click buys the guarantee
+    that the two can never disagree, which is a bug class rather than a bug.
+
+32. **Attaching is never automatic.** Attaching processes every sound on the endpoint,
+    system-wide, and a stalled client holds up `audiodg.exe` for up to a second (sec. 3.7.1). The
+    shell therefore starts detached, says in the window what attaching means, and only
+    `--attach` on the command line does it without a click.
+
+33. **The shell has a command line, for verification rather than for use.** A GUI whose only route
+    into a given state is a sequence of mouse clicks cannot be checked without a person;
+    `--vst3`, `--editors` and `--attach` are how the two-plugin, two-editor, attached state in
+    section 4 was reached and screenshotted. It is `--vst3` and not `--plugin` for a reason worth
+    knowing -- see section 8 item 15.
+
+34. **`ui/` keeps its headers next to its sources**, unlike `protocol/`, `ipc/` and `engine/`, which
+    all use `include/aip/<component>/`. Nothing links `ui/`; a public/private split with one side
+    empty is just ceremony. `tools/editor_spike` set the precedent.
+
 ---
 
 ## 8. Traps already paid for
@@ -542,6 +782,56 @@ integration. These are the ones found while implementing. Re-discovering any is 
     `setBusArrangements` that set an auxiliary bus to `kEmpty`, `getBusInfo` may still report it
     with its original channel count. Do not use the reply as confirmation of anything but the
     main busses -- see sec. 7 items 20 and 21.
+15. **`-plugin` is a reserved Qt option, and Qt eats it silently.** `QGuiApplication` consumes
+    `-plugin`/`--plugin` out of `argv` before any `QCommandLineParser` runs, and tries to load its
+    value as a *Qt* plugin. There is no diagnostic of any kind: the argument is simply absent from
+    `QCoreApplication::arguments()`, so the parser reports zero values and the program behaves as
+    though nothing had been asked of it -- while the flags either side of it work perfectly, which
+    is what makes it look like anything but an option-name collision. Hence `--vst3`. The full
+    reserved list is in the `QGuiApplication` class documentation; `-style`, `-platform`,
+    `-geometry`, `-title` and `-session` are the other easy ones to collide with.
+16. **Tell a plugin its content scale *before* asking its view size.** `IPlugView::getSize` answers
+    in whatever scale the plugin currently assumes, so a host that calls `getSize` and then
+    `IPlugViewContentScaleSupport::setContentScaleFactor` sizes its window from one answer while
+    the plugin draws to another. The symptom is an editor rendered correctly but small, in the
+    corner of a window one scale factor too big -- which reads as a DPI conversion bug and is not
+    one. NeuralAmpModeler did this until the two calls were swapped; ZL Equalizer 2 did not, so one
+    plugin is not enough to notice. `tools/editor_spike` had them the wrong way round too and has
+    been corrected, so the spike and `ui/` do not disagree with each other.
+17. **C++20 plus Ninja Multi-Config plus an OBJECT library made the Release configuration
+    unbuildable.** Declaring C++20 makes CMake emit a module-scanning (dyndep) step per target per
+    configuration. With `CMAKE_CROSS_CONFIGS=all`, the per-object modmap of an OBJECT library
+    (`aip_rt_hooks`) is declared once per configuration with the same output path, and ninja
+    refuses to load the build file at all: `alloc_hooks.cpp.obj.modmap is defined as an output
+    multiple times`. RelWithDebInfo built fine throughout, so this stayed invisible for as long as
+    nobody tried the `release` preset -- which was until 2026-08-21. The project uses no C++20
+    modules, so `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)` in the root `CMakeLists.txt` fixes it and
+    removes ~74 pointless dyndep steps per build as a bonus.
+18. **Pixi strips quotes from arguments it forwards to a task.** `pixi run ui --vst3 "C:/Program
+    Files/..."` reaches the executable as separate words, so a path with spaces arrives as an
+    option value plus a handful of stray positional arguments. Fine for `pixi run ui` with no
+    arguments, which is what the task is for; for anything with a path in it, put the pixi
+    environment's `Library/bin` on `PATH` and run `build/ui/RelWithDebInfo/aip_ui.exe` directly.
+19. **`catch_discover_tests` defaults to POST_BUILD, which is wrong in a multi-config build.** It
+    writes *one* test list naming the executable of whichever configuration was built last, and
+    `ctest -C <the other one>` then runs that binary instead. Build Release, then run the
+    RelWithDebInfo suite, and you get `100% tests passed out of 44` while the five tests that need
+    `AIP_RT_CHECKS` skip -- correctly, because they are compiled out of the binary actually being
+    run -- and a skipped test does not fail a ctest run. The sec. 7.4.3 acceptance criterion
+    silently stops being checked and the summary still says green. Fixed by
+    `DISCOVERY_MODE PRE_TEST`, which defers discovery to ctest time where `$<CONFIG>` is known.
+    **When a suite passes, check the skip count, not just the pass line.** `ctest --preset dev`
+    must skip *nothing*; `ctest --preset release` must skip exactly those five.
+20. **A green ctest run is not evidence on its own.** This is the second time the same shape of bug
+    has hit this project (trap 4 was the first: a leading dot in a Catch2 tag kept the soak test out
+    of discovery entirely). Both times the suite reported success while the most important test in
+    it did not run. Treat "how many tests ran, and did any skip" as part of the result.
+21. **A GUI executable cannot tell you why it will not start.** `aip_ui` is `WIN32`, so it has no
+    console: a missing Qt DLL, a missing platform plugin, or a `QCommandLineParser` error all
+    produce a process that exits with a bare code or a window that never appears. Run it from a
+    shell with the pixi environment active, and if it dies without saying anything, that is the
+    first suspect rather than the code. (Everything the shell has to say once it is up is in the
+    Counters group and the log view underneath it, which is why they exist.)
 
 ---
 

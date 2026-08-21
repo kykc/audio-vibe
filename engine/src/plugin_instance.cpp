@@ -336,6 +336,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
     outputParameterChanges_.setMaxParameters(queueCount);
     warmParameterChanges(inputParameterChanges_, queueCount, kMaxPointsPerParameter);
     warmParameterChanges(outputParameterChanges_, queueCount, kMaxPointsPerParameter);
+    queuedParameterLimit_ = queueCount;
 
     inputEvents_.setMaxSize(kMaxEvents);
     outputEvents_.setMaxSize(kMaxEvents);
@@ -373,7 +374,40 @@ void PluginInstance::unprepare() noexcept {
     processData_.unprepare();
 
     prepared_ = false;
+    queuedParameterLimit_ = 0;
     format_ = StreamFormat{};
+}
+
+bool PluginInstance::queueParameter(Vst::ParamID id, Vst::ParamValue value) noexcept {
+    if (!inputQueue_.push(ParameterValue{id, value})) {
+        droppedParameters_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
+void PluginInstance::deliverQueuedParameters() noexcept {
+    const auto limit = static_cast<std::size_t>(queuedParameterLimit_);
+    if (limit == 0) {
+        return;
+    }
+    std::size_t delivered = 0;
+    inputQueue_.drain(limit, [this, &delivered](const ParameterValue& queued) {
+        Steinberg::int32 index = 0;
+        Vst::IParamValueQueue* queue = inputParameterChanges_.addParameterData(queued.id, index);
+        if (queue == nullptr) {
+            return;
+        }
+        // Sample offset 0 for every value. The gesture that produced it has no sample-accurate
+        // position -- it came from a mouse -- and it is what makes repeated values for one
+        // parameter within a block replace each other instead of accumulating points.
+        Steinberg::int32 pointIndex = 0;
+        queue->addPoint(0, queued.value, pointIndex);
+        ++delivered;
+    });
+    if (delivered != 0) {
+        deliveredParameters_.fetch_add(delivered, std::memory_order_relaxed);
+    }
 }
 
 void PluginInstance::process(float** inputs, float** outputs, std::int32_t frames,
@@ -395,6 +429,10 @@ void PluginInstance::process(float** inputs, float** outputs, std::int32_t frame
     // automation and stale events.
     outputParameterChanges_.clearQueue();
     outputEvents_.clear();
+
+    // Whatever the control thread has queued since the last block, in the queues the plugin is
+    // about to read. This is the only place `inputParameterChanges_` is written.
+    deliverQueuedParameters();
 
     if (processor_->process(processData_) != kResultOk) {
         processFailures_.fetch_add(1, std::memory_order_relaxed);

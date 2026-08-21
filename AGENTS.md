@@ -25,11 +25,18 @@ only on `PATH` inside the environment:
 pixi run configure    # see the note in pixi.toml about CMAKE_GENERATOR_PLATFORM
 pixi run build        # RelWithDebInfo -- the only usable configuration (sec. 6.4)
 pixi run test         # ctest; also enforces the ASCII rule below
-pixi run probe        # attach to the real APO on the default render endpoint
+pixi run ui           # the Qt shell: pick an endpoint, press Attach, add plugins
+pixi run probe        # console client; attach to the real APO on the default endpoint
 ```
 
 `valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
 against the real APO, and `--list` / `--endpoint N` to pick a different endpoint.
+
+`aip_ui` takes `--vst3 <path>` (repeatable), `--editors` and `--attach`, so a state can be reached
+without clicking through to it. It is **`--vst3`, not `--plugin`**: Qt reserves `-plugin` and eats
+it out of `argv` with no diagnostic (status.md sec. 8 item 15). Pixi also strips quotes from
+forwarded arguments, so for a path with spaces run the executable directly with the pixi
+environment's `Library/bin` on `PATH` rather than going through `pixi run ui`.
 
 `design_doc.md` is the normative specification for this project. Read the relevant section
 before writing code; it records decisions that were made empirically and should not be
@@ -105,6 +112,11 @@ or anything the valet thread calls. Summary:
 - Our VST3 host interface implementations are on this call stack too.
   `IComponentHandler::performEdit` can legitimately be called by a plugin *from its processing
   thread* -- it must enqueue lock-free and return (sec. 7.4.5).
+- The reverse direction has the same obligation. `inputParameterChanges` is read by the plugin
+  during `process`, so only the audio thread may write it: the control thread pushes values onto a
+  ring and `process` drains a **bounded** number into the queues `prepare` warmed. Past that bound
+  the SDK's `addParameterData` and `addPoint` allocate. See status.md sec. 7 items 26 and 27, and
+  the test named "delivering parameters into a plugin allocates nothing on the audio thread".
 - `RealtimeSanitizer` is unavailable under MSVC. The substitute is a debug-only violation
   detector: a thread-local "in RT section" flag set by an RAII guard, checked from global
   `operator new`/`operator delete` overrides and assert-only wrappers around locking

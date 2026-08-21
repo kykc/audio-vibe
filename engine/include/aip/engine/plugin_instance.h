@@ -19,6 +19,7 @@
 #include "aip/engine/component_handler.h"
 #include "aip/engine/plugin_module.h"
 #include "aip/engine/stream_format.h"
+#include "aip/rt/spsc_queue.h"
 
 #include "public.sdk/source/vst/hosting/connectionproxy.h"
 #include "public.sdk/source/vst/hosting/eventlist.h"
@@ -100,6 +101,38 @@ public:
     /// Meaningful only once `prepare` has succeeded.
     [[nodiscard]] bool fullBusNegotiation() const noexcept { return fullBusNegotiation_; }
 
+    // ------------------------------------------------- parameters into the processor ---------
+    //
+    // A plugin's editor talks to its *controller*. For a split component/controller plugin the
+    // two halves are separate objects that are forbidden to talk to each other directly, so a
+    // knob the user turns changes nothing audible until the host carries the value across --
+    // through `IProcessData::inputParameterChanges`, which only the audio thread may write,
+    // because the plugin reads it during `process`.
+    //
+    // Hence a ring: the control thread pushes values in, `process` drains a bounded number of
+    // them into the preallocated queues at the top of the next block. Values are stamped at
+    // sample offset 0 and therefore coalesce -- the SDK's `addPoint` replaces a point at an
+    // offset it already holds -- so a fast gesture costs one queue slot per parameter per block
+    // however hard it is dragged, and nothing grows.
+
+    /// Control thread. Queues a normalized value for delivery to the processor on the next
+    /// block. False means the ring was full and the value was dropped: for a UI gesture that is
+    /// benign, because the next mouse move supersedes it, and the alternative is blocking a
+    /// thread that must never block.
+    [[nodiscard]] bool queueParameter(Steinberg::Vst::ParamID id,
+                                      Steinberg::Vst::ParamValue value) noexcept;
+
+    /// Values handed to the plugin through `inputParameterChanges`.
+    [[nodiscard]] std::uint64_t deliveredParameters() const noexcept {
+        return deliveredParameters_.load(std::memory_order_relaxed);
+    }
+
+    /// Values dropped because the ring was full. Nonzero means the audio thread is not draining
+    /// -- no chain published, or the plugin bypassed -- rather than that anything is too slow.
+    [[nodiscard]] std::uint64_t droppedParameters() const noexcept {
+        return droppedParameters_.load(std::memory_order_relaxed);
+    }
+
     // ------------------------------------------------------------------ audio thread ---------
 
     /// Runs one block. `inputs` and `outputs` are arrays of `format().channelCount` channel
@@ -122,10 +155,25 @@ public:
         return processFailures_.load(std::memory_order_relaxed);
     }
 
+    /// One queued normalized value, flattened so it can live in a fixed-capacity ring.
+    struct ParameterValue {
+        Steinberg::Vst::ParamID id = 0;
+        Steinberg::Vst::ParamValue value = 0.0;
+    };
+
+    /// Enough for a full block's worth of a user dragging several controls at once, and small
+    /// enough that the ring stays a cache-friendly few kilobytes.
+    static constexpr std::size_t kInputQueueSlots = 1024;
+
 private:
     PluginInstance() = default;
 
     void disconnect() noexcept;
+
+    /// Audio thread. Moves at most `queuedParameterLimit_` values out of the ring and into
+    /// `inputParameterChanges_`. The bound is what keeps `addParameterData` inside the queue
+    /// objects `prepare` warmed, so nothing here can allocate (sec. 7.4.1).
+    void deliverQueuedParameters() noexcept;
 
     PluginModule::Ptr module_;
     std::string name_;
@@ -153,8 +201,16 @@ private:
     Steinberg::Vst::EventList inputEvents_;
     Steinberg::Vst::EventList outputEvents_;
 
+    /// Producer is the control thread, consumer is the audio thread inside `process`.
+    rt::SpscQueue<ParameterValue, kInputQueueSlots> inputQueue_;
+    /// How many distinct parameters `inputParameterChanges_` was warmed for, and therefore the
+    /// per-block drain bound. Set by `prepare`.
+    Steinberg::int32 queuedParameterLimit_ = 0;
+
     std::atomic<std::uint64_t> processCalls_{0};
     std::atomic<std::uint64_t> processFailures_{0};
+    std::atomic<std::uint64_t> deliveredParameters_{0};
+    std::atomic<std::uint64_t> droppedParameters_{0};
 };
 
 } // namespace aip::engine

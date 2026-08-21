@@ -492,6 +492,94 @@ TEST_CASE("performEdit from the processing thread is queued, not executed", "[en
     CHECK(host.droppedParameterEdits() == 0);
 }
 
+TEST_CASE("an edit from a plugin editor reaches the processor", "[engine][parameters]") {
+    // The path a mouse gesture takes. A plugin's editor talks to its controller and tells the
+    // host through IComponentHandler::performEdit; for a split component/controller plugin that
+    // is the *only* notification the processor will ever get, so a host that does not carry the
+    // value across leaves the audio unchanged and the plugin looking broken.
+    //
+    // The call below is literally what an editor makes -- our handler, from a thread that is not
+    // the audio thread -- and nothing here touches the fixture's own setParamNormalized, which
+    // would move the processor's value directly and prove nothing about the host.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    engine::ComponentHandler* handler = plugin->handler();
+    REQUIRE(handler != nullptr);
+
+    Rig rig(host.blockProcessor(), L"engine-editor-edit");
+    const std::vector<float> in = signedRamp(kFrames);
+
+    // Unity to begin with, so the change is attributable.
+    const std::vector<float> before = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(before[i] == Approx(in[i]));
+    }
+
+    REQUIRE(handler->performEdit(kGainParam, 1.0) == Steinberg::kResultOk);
+
+    // Queued, not applied: until the control thread services it, nothing has moved.
+    const std::vector<float> unserviced = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(unserviced[i] == Approx(in[i]));
+    }
+
+    CHECK(host.serviceParameterEdits() == 1);
+    CHECK(host.deliveredParameters() == 0); // queued for the audio thread, not yet delivered
+
+    const std::vector<float> after = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(after[i] == Approx(in[i] * 2.f));
+    }
+
+    CHECK(host.deliveredParameters() == 1);
+    CHECK(host.droppedParameters() == 0);
+
+    // And the edit was not echoed back at the half that made it. A real editor has already moved
+    // its controller; pushing the value in again mid-gesture is what makes a knob fight the mouse.
+    CHECK(getParameter(host, 0, kGainParam) == Approx(0.5));
+}
+
+TEST_CASE("queued values for one parameter collapse to the last", "[engine][parameters]") {
+    // Dragging a knob produces a value per mouse event, far more than one per block. They are
+    // all stamped at sample offset 0, so the SDK's addPoint replaces rather than appends: the
+    // last value wins and the point list never grows. That is what keeps a fast gesture from
+    // pushing `inputParameterChanges` past the capacity prepare() warmed for it.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+
+    Rig rig(host.blockProcessor(), L"engine-coalesce");
+    const std::vector<float> in = signedRamp(kFrames);
+
+    // A sweep ending at 0.25, which the fixture turns into a gain of 0.5. Ending somewhere other
+    // than an endpoint matters: a host that delivered the *first* value, or the largest, would
+    // land on a different number rather than on a plausible one.
+    REQUIRE(plugin->queueParameter(kGainParam, 1.0));
+    REQUIRE(plugin->queueParameter(kGainParam, 0.75));
+    REQUIRE(plugin->queueParameter(kGainParam, 0.25));
+
+    const std::vector<float> out = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i] * 0.5f));
+    }
+
+    CHECK(plugin->deliveredParameters() == 3);
+    CHECK(plugin->droppedParameters() == 0);
+}
+
 TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread allocations",
           "[engine][rt][soak]") {
     // The sec. 7.4.3 acceptance criterion again, this time with a real VST3 plugin on the call
@@ -580,6 +668,78 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
 
     CHECK(host.chainProcessor().formatMismatches() == 0);
     CHECK(host.chainProcessor().blocksPassedThrough() == 0);
+}
+
+TEST_CASE("delivering parameters into a plugin allocates nothing on the audio thread",
+          "[engine][rt][soak]") {
+    // Parameter delivery put new work *on* the audio thread -- draining a ring into
+    // `inputParameterChanges` at the top of every block -- so it needs the sec. 7.4.3 acceptance
+    // criterion applied to it specifically, not just inherited from the chain soak above. The
+    // hazard it is guarding is precise: `addParameterData` past the warmed queue count, or
+    // `addPoint` past the warmed point count, both allocate inside the SDK.
+    if constexpr (!rt::checksEnabled()) {
+        SKIP("built without AIP_RT_CHECKS (Release); the detector is compiled out by design");
+    }
+
+    constexpr std::int32_t kFrames = 128;
+    constexpr int kWarmupBlocks = 500;
+    constexpr int kSoakBlocks = 3000;
+    /// More edits per block than the drain bound, so the ring is never empty and the drain hits
+    /// its limit every single block rather than only sometimes.
+    constexpr int kEditsPerBlock = 24;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    engine::ComponentHandler* handler = plugin->handler();
+    REQUIRE(handler != nullptr);
+
+    Rig rig(host.blockProcessor(), L"engine-param-soak");
+    const std::vector<float> in = signedRamp(kFrames);
+    std::vector<float> out(in.size(), 0.f);
+    const auto size = static_cast<std::int32_t>(in.size());
+
+    // A gesture that never stops, across all four of the fixture's parameters so that more than
+    // one queue is in play per block.
+    const auto gesture = [&](int block) {
+        for (int e = 0; e < kEditsPerBlock; ++e) {
+            const auto id = static_cast<Steinberg::Vst::ParamID>(e % 4);
+            const double value = static_cast<double>((block + e) % 100) / 100.0;
+            (void)handler->performEdit(id, value);
+        }
+        host.serviceParameterEdits(4096);
+    };
+
+    for (int i = 0; i < kWarmupBlocks; ++i) {
+        gesture(i);
+        REQUIRE(rig.king().dispatch(in.data(), out.data(), size) ==
+                harness::DispatchResult::Processed);
+    }
+
+    rt::resetViolations();
+
+    for (int i = 0; i < kSoakBlocks; ++i) {
+        gesture(i);
+        if (rig.king().dispatch(in.data(), out.data(), size) !=
+            harness::DispatchResult::Processed) {
+            FAIL("block " << i << " did not complete the rendezvous");
+        }
+    }
+
+    const rt::ViolationCounts counts = rt::violations();
+    INFO("delivered " << host.deliveredParameters() << " dropped " << host.droppedParameters());
+    INFO("allocations " << counts.allocations << " frees " << counts.deallocations << " locks "
+                        << counts.locks);
+
+    CHECK(counts.allocations == 0);
+    CHECK(counts.deallocations == 0);
+    CHECK(counts.locks == 0);
+    // The point of the exercise: values really were flowing while all that was zero.
+    CHECK(host.deliveredParameters() > static_cast<std::uint64_t>(kSoakBlocks));
 }
 
 TEST_CASE("republishing while audio is running retires the old chain safely", "[engine][chain]") {

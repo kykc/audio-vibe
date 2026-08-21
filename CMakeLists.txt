@@ -13,6 +13,19 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# This project uses no C++20 modules and has no plans to. With C++20 declared, CMake otherwise
+# emits a module-scanning (dyndep) step for every target in every configuration -- pure overhead
+# here, and worse than overhead under Ninja Multi-Config with CMAKE_CROSS_CONFIGS=all: the
+# per-object modmap of an OBJECT library gets declared once per configuration with the same output
+# path, and ninja refuses to load the build file at all:
+#
+#   ninja: error: CMakeFiles/impl-Release.ninja:NNNN:
+#   rt/CMakeFiles/aip_rt_hooks.dir/RelWithDebInfo/src/alloc_hooks.cpp.obj.modmap
+#   is defined as an output multiple times
+#
+# That is what made `cmake --build --preset release` impossible while RelWithDebInfo built fine.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 # RelWithDebInfo is the primary development configuration (design_doc.md sec. 6.4): conda-forge
 # qt6-main ships no debug libraries, so a Debug configuration cannot link. Drop NDEBUG from it
 # so that assert() and the real-time violation detector (sec. 7.4.6) are actually live in the
@@ -48,6 +61,7 @@ add_subdirectory(protocol)
 add_subdirectory(rt)
 add_subdirectory(ipc)
 add_subdirectory(engine)
+add_subdirectory(ui)
 add_subdirectory(tools/valet_probe)
 add_subdirectory(tools/editor_spike)
 add_subdirectory(tests)

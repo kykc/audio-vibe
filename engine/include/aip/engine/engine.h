@@ -120,15 +120,24 @@ public:
 
     // ------------------------------------------------------------------ plugin callbacks ------
 
-    /// Drains what the plugins queued through IComponentHandler and applies it: a `PerformEdit`
-    /// is pushed into the controller so its notion of the value follows the processor's.
-    /// `maxPerPlugin` bounds the work, as sec. 7.4.2 asks even of the control thread.
-    /// Returns the number of edits consumed.
+    /// Drains what the plugins queued through IComponentHandler and applies each edit to the half
+    /// of the plugin that did not originate it: an edit the processor made is pushed into the
+    /// controller, and an edit the editor made is queued for the processor. That second direction
+    /// is what makes a knob in a plugin's own editor change the audio at all when the component
+    /// and the controller are separate objects. `maxPerPlugin` bounds the work, as sec. 7.4.2
+    /// asks even of the control thread. Returns the number of edits consumed.
     std::size_t serviceParameterEdits(std::size_t maxPerPlugin = 64);
 
     /// Edits dropped across the whole rack because an audio-thread ring filled up. Nonzero means
     /// `serviceParameterEdits` is not being called often enough.
     [[nodiscard]] std::uint64_t droppedParameterEdits() const;
+
+    /// Values carried across to the processors through `inputParameterChanges`, rack-wide.
+    [[nodiscard]] std::uint64_t deliveredParameters() const;
+
+    /// Values that never got there because a ring was full -- in practice because no chain is
+    /// published, so nothing is draining. Rack-wide.
+    [[nodiscard]] std::uint64_t droppedParameters() const;
 
     /// Instances that could not be destroyed when they were removed, because the audio thread had
     /// not left the chain naming them within the grace period. They are freed at teardown. A

@@ -24,3 +24,4 @@ configure = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --p
 build = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --build --preset dev", depends-on = ["configure"] }
 test = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && ctest --preset dev", depends-on = ["build"] }
 probe = { cmd = "build/tools/valet_probe/RelWithDebInfo/valet_probe.exe", depends-on = ["build"] }
+ui = { cmd = "build/ui/RelWithDebInfo/aip_ui.exe", depends-on = ["build"] }

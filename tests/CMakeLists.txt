@@ -49,4 +49,14 @@ target_link_libraries(aip_tests PRIVATE
     aip_rt_hooks
 )
 
-catch_discover_tests(aip_tests)
+# DISCOVERY_MODE PRE_TEST is not a preference -- POST_BUILD is actively wrong in a multi-config
+# build. It writes *one* test list, naming the executable of whichever configuration was built
+# last, and `ctest -C <other>` then happily runs that one instead. Building Release and then
+# running the RelWithDebInfo suite reports "100% tests passed out of 44" while the five tests that
+# need AIP_RT_CHECKS skip themselves, because they are correctly compiled out of the binary being
+# run -- and skipped tests do not fail a ctest run. The single most important assertion in this
+# project silently stops being made, which is trap 4 all over again with a different cause.
+#
+# PRE_TEST defers discovery to ctest time, where $<CONFIG> is known, so each configuration gets
+# its own list of its own binary. See status.md sec. 8 item 19.
+catch_discover_tests(aip_tests DISCOVERY_MODE PRE_TEST)

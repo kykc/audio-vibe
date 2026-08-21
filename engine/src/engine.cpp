@@ -266,13 +266,25 @@ std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
         if (controller == nullptr || handler == nullptr) {
             continue;
         }
-        consumed += handler->drain(maxPerPlugin, [controller](const ParameterEdit& edit) {
-            // begin/end bracket a gesture and matter only to a UI that is not built yet;
-            // restartComponent is deliberately not acted on until there is a policy for it.
-            if (edit.kind == ParameterEdit::Kind::PerformEdit) {
-                controller->setParamNormalized(edit.paramId, edit.value);
+        PluginInstance* instance = entry.instance.get();
+        const auto apply = [controller, instance](const ParameterEdit& edit) {
+            // begin/end bracket a gesture and matter only to a host that keeps its own automation
+            // state, which this one does not yet; restartComponent is deliberately not acted on
+            // until there is a policy for it.
+            if (edit.kind != ParameterEdit::Kind::PerformEdit) {
+                return;
             }
-        });
+            // Each half is told what the *other* half did, and never what it did itself. Sending
+            // an edit back to its author is redundant at best; for a control-origin edit it is
+            // actively harmful, because pushing a value into the controller in the middle of the
+            // user's own gesture is how a knob ends up fighting the mouse.
+            if (edit.origin == ParameterEdit::Origin::Audio) {
+                controller->setParamNormalized(edit.paramId, edit.value);
+            } else {
+                (void)instance->queueParameter(edit.paramId, edit.value);
+            }
+        };
+        consumed += handler->drain(maxPerPlugin, apply);
     }
     return consumed;
 }
@@ -284,6 +296,26 @@ std::uint64_t Engine::droppedParameterEdits() const {
             if (const ComponentHandler* handler = entry.instance->handler()) {
                 dropped += handler->droppedEdits();
             }
+        }
+    }
+    return dropped;
+}
+
+std::uint64_t Engine::deliveredParameters() const {
+    std::uint64_t delivered = 0;
+    for (const RackEntry& entry : rack_) {
+        if (entry.instance) {
+            delivered += entry.instance->deliveredParameters();
+        }
+    }
+    return delivered;
+}
+
+std::uint64_t Engine::droppedParameters() const {
+    std::uint64_t dropped = 0;
+    for (const RackEntry& entry : rack_) {
+        if (entry.instance) {
+            dropped += entry.instance->droppedParameters();
         }
     }
     return dropped;

@@ -36,6 +36,13 @@ public:
     /// verbatim rather than replaced.
     [[nodiscard]] static Ptr load(const std::string& path, std::string& error);
 
+    /// Every `.vst3` the SDK finds in the standard search locations, sorted by file name. This
+    /// only walks directories -- nothing is loaded and no plugin code runs -- so it is safe to
+    /// call in-process. Actually *probing* those paths is what needs `scanner/` and its crash
+    /// isolation (sec. 7.2); this is the cheap half, and it is enough to offer the user a list
+    /// instead of a file dialog.
+    [[nodiscard]] static std::vector<std::string> installedModulePaths();
+
     [[nodiscard]] const std::string& path() const noexcept { return module_->getPath(); }
 
     [[nodiscard]] const std::string& name() const noexcept { return module_->getName(); }

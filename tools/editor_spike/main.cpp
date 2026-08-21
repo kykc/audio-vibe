@@ -142,6 +142,22 @@ public:
         : view_(view), useContainer_(useContainer) {
         setWindowTitle(title);
 
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        // Before `getSize`, not after. `getSize` answers in whatever scale the plugin currently
+        // assumes, so asking first and telling second sizes the window from one answer while the
+        // plugin draws to the other -- the editor then renders correctly but small, in the corner
+        // of a window one scale factor too big. NeuralAmpModeler does exactly that; ZL Equalizer 2
+        // does not, which is why the spike did not catch it and `ui/` did.
+        if (auto scale = Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)) {
+            scale->setContentScaleFactor(static_cast<float>(devicePixelRatioF()));
+            std::printf("  scale      : told the plugin %.2f\n", devicePixelRatioF());
+        } else {
+            std::puts("  scale      : plugin does not implement IPlugViewContentScaleSupport");
+        }
+
         Steinberg::ViewRect rect{};
         if (view_->getSize(&rect) != kResultTrue) {
             rect.right = 800;
@@ -149,18 +165,6 @@ public:
         }
         const int width = rect.right - rect.left;
         const int height = rect.bottom - rect.top;
-
-        auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(0);
-
-        // Tell the plugin about the display scale before it builds anything, not after.
-        if (auto scale = Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)) {
-            scale->setContentScaleFactor(static_cast<float>(devicePixelRatioF()));
-            std::printf("  scale      : told the plugin %.2f\n", devicePixelRatioF());
-        } else {
-            std::puts("  scale      : plugin does not implement IPlugViewContentScaleSupport");
-        }
 
         frame_ = Steinberg::owned(new PlugFrame(*this));
         view_->setFrame(frame_);
