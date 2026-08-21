@@ -150,7 +150,8 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             own search paths), engine_host (names the GUI thread as *the* control thread; the
             100 ms servicing tick), editor_manager (which editors are open, and the guarantee
             none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
-            plug_frame (IPlugFrame)
+            plug_frame (IPlugFrame), window_chrome (title-bar icon removal, item 35)
+            aip_ui.rc + assets/ -- the application icon, attached to the executable
 cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
 tests/      44 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
@@ -719,7 +720,39 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     section 4 was reached and screenshotted. It is `--vst3` and not `--plugin` for a reason worth
     knowing -- see section 8 item 15.
 
-34. **`ui/` keeps its headers next to its sources**, unlike `protocol/`, `ipc/` and `engine/`, which
+35. **The application icon lives on the executable, and nowhere else.** `ui/aip_ui.rc` attaches
+    `ui/assets/mixing-table-png.ico` as resource id 1 (the shell shows the lowest-numbered icon
+    resource, so the id is not arbitrary), and no Qt window icon is ever set. Explorer, the taskbar
+    and Alt-Tab read the executable; the title bars are stripped in `window_chrome.cpp`.
+
+    Removing a title-bar icon on Windows 11 takes four steps, not one, and getting three of them
+    right leaves an icon or -- worse -- leaves the *slot*, so the caption sits indented past an
+    empty square. `WS_EX_DLGMODALFRAME` is the only frame style that omits the slot rather than
+    reserving it, but on its own it does nothing, because Windows falls through to the window class
+    icon (Qt registers its classes with one extracted from the executable) and then derives a small
+    icon from `ICON_BIG` if `ICON_SMALL` is empty. So all of it has to go: the style set, both class
+    icons cleared, both window icon slots cleared, and `SWP_FRAMECHANGED` to make the frame
+    recalculate. A transparent icon is *not* a substitute -- it hides the picture and keeps the
+    indent.
+
+    The cost is that the taskbar icon now arrives by fallback (window -> class -> executable) rather
+    than being set explicitly. Setting `ICON_BIG` to keep it explicit is exactly what puts the icon
+    back in the title bar.
+
+    **The shell's caption text is blank as well**, which is what modern Windows applications do
+    rather than repeating their own name back at the user. `setWindowTitle(QString())` does not
+    achieve it on its own: Qt reads an empty widget title as "no preference" and substitutes
+    `QCoreApplication::applicationName()` when it creates the native window, so the name appears
+    anyway. `clearTitleText` clears the native window text afterwards, which is the only way to
+    mean it -- and it only works for a window whose title never changes, because a later
+    `setWindowTitle` hands control back to Qt.
+
+    With a standard frame the caption text *is* the window title, so the taskbar and Alt-Tab labels
+    are blank too; separating them would mean drawing the title bar ourselves. The icon is what
+    identifies the application there instead. **Plugin editors keep their titles** -- with several
+    open at once the plugin's name is the only thing telling them apart.
+
+36. **`ui/` keeps its headers next to its sources**, unlike `protocol/`, `ipc/` and `engine/`, which
     all use `include/aip/<component>/`. Nothing links `ui/`; a public/private split with one side
     empty is just ceremony. `tools/editor_spike` set the precedent.
 

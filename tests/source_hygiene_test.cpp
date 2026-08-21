@@ -24,8 +24,8 @@ namespace {
 // third-party headers), and build output.
 const std::set<std::string> kSkippedDirectories = {".git", ".pixi", "build", "out"};
 
-const std::set<std::string> kCheckedExtensions = {".h",   ".hpp", ".cpp", ".md",
-                                                  ".txt", ".json", ".toml"};
+const std::set<std::string> kCheckedExtensions = {".h",   ".hpp",  ".cpp", ".md",
+                                                  ".txt", ".json", ".toml", ".rc"};
 
 // Dotfiles have no extension but are still ours.
 const std::set<std::string> kCheckedNames = {".clang-format", ".gitignore", ".gitattributes"};

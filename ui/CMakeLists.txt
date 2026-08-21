@@ -9,6 +9,9 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Gui)
 # WIN32 so no console window appears behind the shell. Everything a console would have carried is
 # in the Counters group instead, which is the only place a user can see it anyway.
 add_executable(aip_ui WIN32
+    # The application icon, attached to the executable rather than to any window. Title bars are
+    # stripped of theirs in src/window_chrome.cpp.
+    aip_ui.rc
     src/main.cpp
     src/main_window.cpp
     src/main_window.h
@@ -24,9 +27,16 @@ add_executable(aip_ui WIN32
     src/editor_window.h
     src/plug_frame.cpp
     src/plug_frame.h
+    src/window_chrome.cpp
+    src/window_chrome.h
 )
 
 set_target_properties(aip_ui PROPERTIES AUTOMOC ON)
+
+# For the resource compiler, not for the C++ sources: rc.exe resolves a relative path in a .rc
+# against its include path, not against the .rc file's own directory, so without this the icon is
+# reported as missing.
+target_include_directories(aip_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(aip_ui PRIVATE
     aip_common

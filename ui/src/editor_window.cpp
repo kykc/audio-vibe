@@ -1,5 +1,7 @@
 #include "editor_window.h"
 
+#include "window_chrome.h"
+
 #include "pluginterfaces/base/funknownimpl.h"
 #include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -78,6 +80,7 @@ EditorWindow::EditorWindow(engine::PluginInstance& instance, QWidget* parent)
     : QWidget(parent, Qt::Window), instance_(&instance) {
     setWindowTitle(QString::fromStdString(instance.name()));
     setAttribute(Qt::WA_DeleteOnClose);
+    hideTitleBarIcon(*this);
 }
 
 EditorWindow::~EditorWindow() { release(); }
