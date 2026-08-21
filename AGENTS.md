@@ -2,35 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repository state
+## Start here
 
-**Stage 1 (client IPC foundation) is implemented and verified.** What exists:
+**Read `status.md` first.** It is the current position on the map: what is built, what has
+actually been proven and what has not, what the next action is, and which implementation
+decisions were taken that the design document does not cover. It is maintained precisely so that
+a session can be discarded and a new one started without losing orientation. Update it at the
+end of any session that changes the answer to "where do we stand".
 
-```
-protocol/            header-only protocol v1 -- layout, names, planar addressing, header access
-rt/                  RealtimeGuard + allocation/lock violation detector, fixed-capacity SPSC queue
-ipc/                 BufferValet, ValetThread (promoted audio thread), ValetSupervisor, endpoints
-tests/               27 Catch2 tests incl. the sec. 4.7 conformance harness (synthetic king)
-tools/valet_probe/   console client -- attaches to the deployed APO, reports block stats
-```
+The three documents divide up as follows, and none of them should repeat another:
 
-Not written yet: `engine/`, `scanner/`, `ui/`, `apo/`, `installer/`. The VST3 SDK is therefore
-not wired into CMake yet, and open item sec. 11.1 (pin the SDK archive `URL_HASH`) still blocks the
-first `engine/` build.
+| Document | Contains |
+|---|---|
+| `design_doc.md` | The normative specification. Frozen decisions. Changes rarely and deliberately |
+| `AGENTS.md` (this file) | Hard rules and working instructions. Changes rarely |
+| `status.md` | Current position, next actions, live blockers. Changes every session |
 
-Build and test:
+Build and test -- everything goes through `pixi run`, because Catch2 is a conda-forge DLL that is
+only on `PATH` inside the environment:
 
 ```
 pixi run configure    # see the note in pixi.toml about CMAKE_GENERATOR_PLATFORM
 pixi run build        # RelWithDebInfo -- the only usable configuration (sec. 6.4)
-pixi run test         # ctest, 27 tests, ~2 s
+pixi run test         # ctest; also enforces the ASCII rule below
 pixi run probe        # attach to the real APO on the default render endpoint
 ```
-
-Verified against the *deployed, unmodified* APO on the development machine: the client attaches
-as a v1 valet and processes real blocks from `audiodg.exe` (48 kHz, 2 ch, 480 frames) with no
-timeouts, no malformed headers and no reclaims. Object names, the planar layout and the endpoint
-GUID form are therefore confirmed against the real producer, not just against the harness.
 
 `design_doc.md` is the normative specification for this project. Read the relevant section
 before writing code; it records decisions that were made empirically and should not be
