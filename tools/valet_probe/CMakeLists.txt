@@ -4,6 +4,9 @@
 add_executable(valet_probe main.cpp)
 
 target_link_libraries(valet_probe PRIVATE
+    # --plugin runs a real VST3 chain against the real APO; without it nothing from engine/ is
+    # reached, but the target is linked either way.
+    aip_engine
     aip_ipc
     aip_protocol
     # The allocation hooks must be in the executable itself for the detector to observe

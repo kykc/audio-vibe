@@ -12,8 +12,17 @@
 //   valet_probe --list          list active render endpoints and exit
 //   valet_probe --endpoint N    attach to the Nth endpoint from --list
 //   valet_probe --gain 0.5      apply a gain instead of passing through
+//   valet_probe --plugin P      run a VST3 plugin chain instead of a gain; repeatable
 //   valet_probe --seconds 10    run for a fixed time instead of until Ctrl+C
+//
+// `--plugin` is the only mode in which anything from `engine/` is involved, and it is mutually
+// exclusive with `--gain`: they are different BlockProcessors and only one can be installed. The
+// chain cannot be built up front, because protocol v1 announces the endpoint's format nowhere --
+// the geometry is known only once a block has been through (sec. 4.5). The poll loop therefore
+// calls Engine::serviceFormatChange, which builds on the first observation and rebuilds if
+// Windows changes the format underneath.
 
+#include "aip/engine/engine.h"
 #include "aip/ipc/endpoints.h"
 #include "aip/ipc/valet_supervisor.h"
 #include "aip/ipc/valet_thread.h"
@@ -113,7 +122,11 @@ struct Options {
     int endpointIndex = -1; // -1 means "the default endpoint"
     float gain = 1.0f;
     int seconds = 0; // 0 means "until Ctrl+C"
+    std::vector<std::string> plugins;
 };
+
+const char* kUsage =
+    "Usage: valet_probe [--list] [--endpoint N] [--gain G] [--plugin PATH]... [--seconds S]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
     for (int i = 1; i < argc; ++i) {
@@ -126,13 +139,21 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.endpointIndex = std::atoi(argv[++i]);
         } else if (std::strcmp(arg, "--gain") == 0 && hasValue) {
             out.gain = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(arg, "--plugin") == 0 && hasValue) {
+            out.plugins.emplace_back(argv[++i]);
         } else if (std::strcmp(arg, "--seconds") == 0 && hasValue) {
             out.seconds = std::atoi(argv[++i]);
         } else {
             std::printf("Unrecognised argument: %s\n", arg);
-            std::puts("Usage: valet_probe [--list] [--endpoint N] [--gain G] [--seconds S]");
+            std::puts(kUsage);
             return false;
         }
+    }
+
+    if (!out.plugins.empty() && out.gain != 1.0f) {
+        std::puts("--gain and --plugin are mutually exclusive: only one is installed.");
+        std::puts(kUsage);
+        return false;
     }
     return true;
 }
@@ -180,7 +201,13 @@ int main(int argc, char** argv) {
     std::printf("Endpoint : %ls\n", target.friendlyName.c_str());
     std::printf("GUID     : %ls\n", target.guid.c_str());
     std::printf("Objects  : %ls\n", protocol::objectBaseName(target.guid).c_str());
-    std::printf("Gain     : %.3f\n", static_cast<double>(options.gain));
+    if (options.plugins.empty()) {
+        std::printf("Gain     : %.3f\n", static_cast<double>(options.gain));
+    } else {
+        for (const std::string& path : options.plugins) {
+            std::printf("Plugin   : %s\n", path.c_str());
+        }
+    }
     std::puts("");
     std::puts("Waiting for the APO. If nothing attaches, the APO is not registered for this");
     std::puts("endpoint, or the endpoint has no active stream (sec. 4.4 step 1).");
@@ -189,7 +216,22 @@ int main(int argc, char** argv) {
 
     ::SetConsoleCtrlHandler(consoleHandler, TRUE);
 
-    GainProcessor processor(options.gain);
+    // Both are constructed either way; only one is installed. An unused Engine loads nothing
+    // and publishes nothing.
+    GainProcessor gainProcessor(options.gain);
+    engine::Engine host;
+
+    for (const std::string& path : options.plugins) {
+        std::string error;
+        if (!host.appendPlugin(path, error)) {
+            std::printf("Failed to load %s: %s\n", path.c_str(), error.c_str());
+            return 1;
+        }
+    }
+
+    ipc::BlockProcessor& processor = options.plugins.empty()
+                                         ? static_cast<ipc::BlockProcessor&>(gainProcessor)
+                                         : host.blockProcessor();
     ipc::ValetSupervisor supervisor(target.guid, processor);
 
     supervisor.setStateCallback([](ipc::LinkState state, ipc::ValetExitReason reason) {
@@ -202,6 +244,14 @@ int main(int argc, char** argv) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(options.seconds);
     ipc::ValetCounters::Snapshot previous{};
 
+    // The chain can only be built once a block has revealed the format (sec. 4.5), so the sooner
+    // the control thread looks, the less audio goes through unprocessed on every attach. Ticking
+    // ten times a second and printing every tenth tick keeps that latency down to one block or
+    // two without turning the report into a wall of text.
+    constexpr int kTickMs = 100;
+    constexpr int kTicksPerReport = 10;
+    int tick = 0;
+
     while (!gStopRequested.load(std::memory_order_acquire)) {
         if (options.seconds > 0 && std::chrono::steady_clock::now() >= deadline) {
             break;
@@ -211,7 +261,28 @@ int main(int argc, char** argv) {
             break;
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kTickMs));
+
+        if (!options.plugins.empty()) {
+            // Control-plane servicing. Both calls are no-ops when there is nothing to do, and
+            // neither may ever happen on the valet thread (sec. 7.4.3).
+            std::string error;
+            if (host.serviceFormatChange(error)) {
+                const engine::StreamFormat built = host.builtFormat();
+                std::printf("[chain] built for %u Hz x%u ch, up to %d frames\n",
+                            built.sampleRate, built.channelCount, built.maxFrames);
+                std::fflush(stdout);
+            } else if (!error.empty()) {
+                std::printf("[chain] not built: %s\n", error.c_str());
+                std::fflush(stdout);
+            }
+            host.serviceParameterEdits();
+        }
+
+        if (++tick < kTicksPerReport) {
+            continue;
+        }
+        tick = 0;
 
         const ipc::ValetCounters::Snapshot now = supervisor.counters().snapshot();
         std::printf("blocks %llu (+%llu/s)  timeouts %llu  malformed %llu  reclaims %llu  "
@@ -236,6 +307,18 @@ int main(int argc, char** argv) {
     std::printf("Reclaims        : %llu\n", static_cast<unsigned long long>(final.reclaims));
     std::printf("Format changes  : %u\n", final.formatChanges);
     std::printf("Attach cycles   : %u\n", supervisor.attachCount());
+
+    if (!options.plugins.empty()) {
+        const engine::ChainProcessor& chain = host.chainProcessor();
+        std::printf("Chain blocks    : %llu\n",
+                    static_cast<unsigned long long>(chain.blocksProcessed()));
+        std::printf("Passed through  : %llu\n",
+                    static_cast<unsigned long long>(chain.blocksPassedThrough()));
+        std::printf("Format misses   : %llu\n",
+                    static_cast<unsigned long long>(chain.formatMismatches()));
+        std::printf("Dropped edits   : %llu\n",
+                    static_cast<unsigned long long>(host.droppedParameterEdits()));
+    }
 
     if (final.blocks == 0) {
         std::puts("");

@@ -28,6 +28,9 @@ pixi run test         # ctest; also enforces the ASCII rule below
 pixi run probe        # attach to the real APO on the default render endpoint
 ```
 
+`valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
+against the real APO, and `--list` / `--endpoint N` to pick a different endpoint.
+
 `design_doc.md` is the normative specification for this project. Read the relevant section
 before writing code; it records decisions that were made empirically and should not be
 re-litigated. Section references below (sec. n) point into it.
@@ -177,18 +180,22 @@ Every one of these fails in a way that does not point at its cause. Do not redis
 2. **Fetch the release archive, never `GIT_REPOSITORY`.** The git repo pulls seven
    relative-URL submodules totalling 501 MB and is the main MAX_PATH trigger. Use the pinned
    archive URL with `URL_HASH SHA256=...`; discover the current URL from the 302 redirect at
-   `https://www.steinberg.net/vst3sdk`. There are no GitHub release assets.
+   `https://www.steinberg.net/vst3sdk`. There are no GitHub release assets. The pin lives in
+   `cmake/vst3sdk.cmake` and nowhere else.
 3. **`SOURCE_SUBDIR vst3sdk` is mandatory** -- the archive root has no `CMakeLists.txt`. Without
    it, `FetchContent_MakeAvailable` silently skips `add_subdirectory`, `sdk_hosting` never
    exists, and the failure surfaces as a *missing header* error.
 4. **Add `public.sdk/source/vst/hosting/module_win32.cpp` to your own target's sources.**
    `smtg_create_public_sdk_hosting_target()` omits the platform module loader by design.
    Symptom: one `LNK2019` on `VST3::Hosting::Module::create` and no other diagnostic.
-5. **The SDK's CMake is not a well-behaved dependency.** `SMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF`
-   does not gate the sample subdirectories, so consuming via `add_subdirectory` always builds
-   `validator`, `editorhost`, `inspectorapp` and `moduleinfotool` -- a one-file test app produced
-   66 targets. Tolerable initially; sec. 9.6 is to replace it with an in-house static library over
-   the ~20 translation units `sdk_hosting` actually lists.
+5. **The SDK's CMake is not a well-behaved dependency.** Consuming it via `add_subdirectory`
+   declares the sample targets whether you want them or not -- a one-file test app produced 66.
+   `cmake/vst3sdk.cmake` cuts that to five compiled libraries with `EXCLUDE_FROM_ALL` plus four
+   `SMTG_*` options; read the comments there before changing any of them, and sec. 6.3.5 for why
+   each one is needed. Two more files follow the trap-4 pattern of being deliberately left out of
+   the SDK's own targets: `common/memorystream.cpp` (not in `sdk_common`) and
+   `vst/vstsinglecomponenteffect.cpp` (not in `sdk`, and it defines
+   `EditController::set/getEditorState`).
 
 Also: `QWidget::grab()` renders Qt's own backing store, so an embedded foreign HWND captures
 blank. Use `PrintWindow`/`BitBlt` if a plugin editor ever needs capturing (sec. 6.5).
@@ -217,9 +224,10 @@ Inherited, and the client must tolerate rather than fix them -- fixing requires 
 
 ## Open items (sec. 11)
 
-1. Pin the VST3 SDK archive `URL_HASH` -- blocks the first build.
-2. Minimum OS floor (sec. 8.1, leaning Windows 11 only) -- project owner, blocks APO stage.
-3. Independently verify GFX vs modern registration slots (sec. 8.2, leaning GFX `,2` only, since the
+1. Minimum OS floor (sec. 8.1, leaning Windows 11 only) -- project owner, blocks APO stage.
+2. Independently verify GFX vs modern registration slots (sec. 8.2, leaning GFX `,2` only, since the
    modern SFX/MFX/EFX slots are reportedly broken for third-party APOs on Windows 11 24H2) --
    project owner, blocks APO stage.
-4. Staged porting plan -- project owner.
+3. Staged porting plan -- project owner.
+
+(The VST3 SDK `URL_HASH` pin was item 1 and is closed -- see sec. 6.3.2.)

@@ -38,8 +38,15 @@ endif()
 
 enable_testing()
 
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+
+# Third-party source dependencies come in through FetchContent only (sec. 6.1). This one is
+# fetched at the top level so that engine/, tests/ and the future scanner/ all share one copy.
+include(vst3sdk)
+
 add_subdirectory(protocol)
 add_subdirectory(rt)
 add_subdirectory(ipc)
+add_subdirectory(engine)
 add_subdirectory(tools/valet_probe)
 add_subdirectory(tests)

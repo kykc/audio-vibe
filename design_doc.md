@@ -517,7 +517,7 @@ content hash:
 ```cmake
 FetchContent_Declare(vst3sdk
   URL https://download.steinberg.net/sdk_downloads/vst-sdk_3.8.1_build-84_2026-08-11.zip
-  URL_HASH SHA256=<pin this>
+  URL_HASH SHA256=64965f1b74e08a6d4087a35af7a716f4dcff5852c66ad7ee13f1c47e79c1ab77
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   SOURCE_SUBDIR vst3sdk
 )
@@ -526,9 +526,15 @@ FetchContent_Declare(vst3sdk
 `https://www.steinberg.net/vst3sdk` redirects (302) to that exact URL, which is how to discover
 the current one. There are no GitHub release assets for this repository.
 
+**The hash above is the live pin** (124,219,090 bytes; 221 MB extracted), verified against the
+archive on 2026-08-21 and in `cmake/vst3sdk.cmake`. To refresh it: follow the redirect, download,
+`sha256sum`, and update both values in that one file.
+
 #### 6.3.3 `SOURCE_SUBDIR` is mandatory
 
-The archive root contains `vst3sdk/` and `VST3_Project_Generator/` but **no `CMakeLists.txt`**.
+The archive contains a single top-level `VST_SDK/` directory, which CMake's extraction strips, so
+the populated source directory holds `vst3sdk/` and `VST3_Project_Generator/` and **no
+`CMakeLists.txt`**.
 Without `SOURCE_SUBDIR vst3sdk`, `FetchContent_MakeAvailable` populates the content but silently
 skips `add_subdirectory`. The `sdk_hosting` target then never exists, and the failure surfaces
 as a *missing header* error rather than a missing-target error.
@@ -549,17 +555,39 @@ target_link_libraries(app PRIVATE Qt6::Widgets sdk_hosting)
 #### 6.3.5 The SDK's CMake is not a well-behaved dependency
 
 In the SDK's root `CMakeLists.txt`, `add_subdirectory(public.sdk/samples/vst-hosting)` and
-`add_subdirectory(public.sdk/samples/vst-utilities)` are **unconditional** --
-`SMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF` does not gate them. Consuming the SDK via
-`add_subdirectory` therefore always builds `validator`, `editorhost`, `inspectorapp` and
-`moduleinfotool`. A single-file test application produced 66 targets.
+`add_subdirectory(public.sdk/samples/vst-utilities)` are **unconditional**, so consuming the SDK
+via `add_subdirectory` always *declares* the sample targets. A single-file test application
+produced 66 of them.
 
-This is tolerable as a one-time cost. **Preferred longer-term approach:** bypass the SDK's
-CMake and declare our own static library over the ~20 translation units that `sdk_hosting`
-actually lists (`public.sdk/source/vst/hosting/*.cpp`, `utility/stringconvert.cpp`,
-`vstinitiids.cpp`) plus `pluginterfaces` and `base`. For a host this is a small, well-understood
-surface and gives full control over flags and build time. Revisit once the client's shape
-settles.
+Two corrections established while integrating 3.8.1, both of which reduce the damage
+substantially:
+
+- `SMTG_ENABLE_VST3_HOSTING_EXAMPLES=OFF` **does** gate `audiohost`, `editorhost` and
+  `inspectorapp` in this version -- each of their `CMakeLists.txt` files opens with a test on it.
+  What it does not gate is `validator`; `moduleinfotool` is gated by `SMTG_ADD_VST3_UTILITIES`
+  instead. With those two options plus `SMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF` and
+  `SMTG_ENABLE_VSTGUI_SUPPORT=OFF`, the SDK declares six targets: `base`, `pluginterfaces`,
+  `sdk`, `sdk_common`, `sdk_hosting` and `validator`.
+- `EXCLUDE_FROM_ALL` on `FetchContent_Declare` (CMake 3.28) keeps the declared-but-unwanted
+  targets out of `all`, so only what is actually linked gets compiled. `validator` remains
+  declared and is never built.
+
+Together those take the whole-tree build from 66 targets to five compiled libraries.
+
+Two further omissions of the same kind as sec. 6.3.4, each producing link errors that name a
+class the consumer never mentions:
+
+- `public.sdk/source/common/memorystream.cpp` is **not** in `sdk_common`. Any host that transfers
+  component state to a separated controller must compile it itself.
+- `public.sdk/source/vst/vstsinglecomponenteffect.cpp` is **not** in `sdk`, and it happens to hold
+  the definitions of `EditController::setEditorState` and `getEditorState`. Omitting it yields
+  fifteen `LNK2001`s, most of them for `EditController`.
+
+**Preferred longer-term approach** (sec. 9.6): bypass the SDK's CMake and declare our own static
+library over the ~20 translation units that `sdk_hosting` actually lists
+(`public.sdk/source/vst/hosting/*.cpp`, `utility/stringconvert.cpp`, `vstinitiids.cpp`) plus
+`pluginterfaces` and `base`. For a host this is a small, well-understood surface and gives full
+control over flags and build time. Less urgent now that the target count is five.
 
 ### 6.4 Qt is Release-only
 
@@ -947,12 +975,12 @@ they are documented as prerequisites rather than left to be discovered during im
 
 ## 11. Open items
 
-| # | Item | Owner | Blocks |
-|---|---|---|---|
-| 1 | Pin the VST3 SDK archive `URL_HASH` | implementation | first build |
-| 2 | Confirm minimum OS floor (sec. 8.1) | project owner | APO stage |
-| 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage |
-| 4 | Staged porting plan | project owner | -- |
+| # | Item | Owner | Blocks | State |
+|---|---|---|---|---|
+| 1 | Pin the VST3 SDK archive `URL_HASH` | implementation | first build | **Closed** 2026-08-21; pinned in sec. 6.3.2 |
+| 2 | Confirm minimum OS floor (sec. 8.1) | project owner | APO stage | Open |
+| 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage | Open |
+| 4 | Staged porting plan | project owner | -- | Open |
 
 ---
 
