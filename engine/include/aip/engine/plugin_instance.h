@@ -34,6 +34,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace aip::engine {
 
@@ -92,6 +93,13 @@ public:
 
     [[nodiscard]] Steinberg::Vst::IComponent* component() const noexcept { return component_; }
 
+    /// True when the plugin accepted a description of *all* its busses, with everything but the
+    /// main pair set to `kEmpty`. False means it only accepted a description of the main pair and
+    /// its auxiliary busses are still nominally connected -- worth knowing per plugin, because it
+    /// is the difference between a side-chain the plugin has disabled and one it merely ignores.
+    /// Meaningful only once `prepare` has succeeded.
+    [[nodiscard]] bool fullBusNegotiation() const noexcept { return fullBusNegotiation_; }
+
     // ------------------------------------------------------------------ audio thread ---------
 
     /// Runs one block. `inputs` and `outputs` are arrays of `format().channelCount` channel
@@ -133,6 +141,10 @@ private:
 
     StreamFormat format_;
     bool prepared_ = false;
+    bool fullBusNegotiation_ = false;
+
+    /// Zeroed backing for every channel of every bus we do not drive. See prepare().
+    std::vector<float> unusedBus_;
 
     // Everything below is allocated by prepare() and only read/written by process().
     Steinberg::Vst::HostProcessData processData_;

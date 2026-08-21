@@ -1,6 +1,7 @@
 # Project status
 
-**Updated:** 2026-08-21, after the Engine milestone (VST3 SDK pinned, `engine/` standing up).
+**Updated:** 2026-08-21, after the Engine milestone plus the first real third-party plugin
+(ZL Equalizer 2), which found and fixed a side-chain bus defect.
 
 **Purpose of this file.** To let a work session be thrown away and a fresh one started without
 losing the plot. It records *where we stand* -- what is built, what is proven, what is next, and
@@ -39,21 +40,25 @@ Nothing of the plugin scanner or the UI exists yet.
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 38, ~3 s
+pixi run test          # expect: 100% tests passed out of 39, ~3 s
 ```
 
 Then, on a machine with the old APO installed, prove interop against real hardware:
 
 ```
-pixi run probe         # pass-through
-build/tools/valet_probe/RelWithDebInfo/valet_probe.exe \
-    --plugin build/tests/fixtures/aip_test_plugin/RelWithDebInfo/aip_test_plugin.vst3 --seconds 5
+pixi run probe                              # pass-through
+valet_probe --inspect --plugin <path.vst3>  # load and prepare only; never attaches
+valet_probe --plugin <path.vst3> --seconds 30
 ```
 
 Expect a line per second reading `blocks N (+~101/s) timeouts 0 malformed 0 reclaims 0
-48000 Hz x2 ch, 480 frames`, and with `--plugin`, a `[chain] built for 48000 Hz x2 ch` line plus a
-`Chain blocks` total at the end. Zero blocks means the APO is not registered for that endpoint or
-nothing is playing -- not necessarily a client bug.
+48000 Hz x2 ch, 480 frames`, an `Audio-thread allocations/frees/locks` block reading zero,
+and with `--plugin`, a `[chain] built for 48000 Hz x2 ch` line plus a `Chain blocks` total.
+
+**Audio has to be playing on the endpoint.** `audiodg.exe` only creates the shared objects
+while a stream is active, so with nothing playing the run reports `Attach cycles: 0` and
+zero blocks. That is not a client bug, and it is not evidence the APO is missing either --
+check playback first.
 
 **Everything must run through `pixi run`.** Catch2 is a conda-forge shared library and its DLL is
 only on `PATH` inside the pixi environment. A bare `aip_tests.exe` exits with a bare status code
@@ -106,11 +111,14 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             BlockProcessor: atomic pointer, format check, epoch-based retirement),
             engine (control-thread facade: load, rebuild, publish, service)
 cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
-tests/      38 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
+tests/      39 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
             built from the SDK). conformance, engine, planar, protocol_layout,
             realtime_safety, source_hygiene, spsc_queue
-tools/      valet_probe -- console client against the real APO, with --plugin
+tools/      valet_probe -- console client against the real APO, with --plugin and --inspect
+            (--inspect loads, instantiates and prepares plugins and reports bus layout,
+            parameter count, latency and split-vs-single, without attaching to anything;
+            it is the shape `scanner/` needs, one process further out)
 ```
 
 Thread split, which is the load-bearing structural decision:
@@ -167,6 +175,14 @@ Proven, and re-checkable by running the suite:
   does not prevent a later rebuild at a format it accepts.
 - Republishing five times while the valet thread is processing, then tearing down while it is
   still processing, neither faults nor loses blocks.
+- A real third-party plugin -- **ZL Equalizer 2 1.3.1**, JUCE-wrapped, 610 parameters -- loads,
+  instantiates and prepares at 48 kHz / 2 ch. That exercises the **split component/controller**
+  path end to end: `getControllerClassId`, the second `createInstance`, `ConnectionProxy`, and
+  the `MemoryStream` state transfer, none of which our own fixture can reach.
+- A plugin carrying a default-active side-chain input negotiates its bus arrangement, and the
+  auxiliary bus it keeps reporting as connected is backed with a zeroed buffer rather than null
+  pointers. Covered by a named test whose negative control was checked: removing the silence
+  backing makes the fixture stamp `-12345.0f` through the output.
 - MMCSS "Pro Audio" promotion succeeds on the valet thread (sec. 4.6).
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run.
 
@@ -178,21 +194,33 @@ Proven against the real deployed APO on the development machine:
   48000 Hz x2 ch on first observation and ran 491 of 503 blocks through it, with zero format
   misses and zero dropped parameter edits. The 12 blocks that passed through are the ~120 ms
   before the control thread's first poll tick sees the format.
+- **A real third-party plugin runs in that loop.** ZL Equalizer 2 processed 2,991 of 3,003 blocks
+  over 30 s with zero timeouts, zero malformed headers, zero format misses and zero dropped
+  parameter edits.
+- **Zero audio-thread allocations against the real producer**, which the soak test could only
+  show against the synthetic king. 1,004 blocks pass-through and 3,003 blocks with ZL Equalizer 2
+  both report exactly zero allocations, frees and lock acquisitions. Note what the second figure
+  does and does not say: the detector counts everything on the valet thread, so it is evidence
+  that *this* plugin is also clean -- another plugin may not be, and that would be its defect
+  rather than ours (sec. 7.4.5). Rerun without `--plugin` to separate the two.
 
 **Not** proven -- do not assume any of these:
 
-- Audible processing on real hardware. Everything against the real APO has been at unity gain, on
-  purpose: a non-unity gain would alter the machine's actual audio output.
-- Any third-party VST3 plugin. Every engine test runs `tests/fixtures/aip_test_plugin`, which is
-  ours, is a single component, and is well-behaved by construction.
-- A **split** component/controller plugin. Our fixture is single-component, so
-  `PluginInstance`'s separated-controller path -- `getControllerClassId`, the second
-  `createInstance`, `ConnectionProxy`, and the `MemoryStream` state transfer -- is written but
-  never executed by a test.
+- Audible processing on real hardware. Everything against the real APO has been at unity gain or
+  a flat EQ, on purpose: a real change would alter the machine's actual audio output.
+- More than one third-party plugin. ZL Equalizer 2 is proven end to end; it is one JUCE-wrapped
+  plugin, and the population it stands for is not obviously well represented by it.
+- The split component/controller path in a **test**. It is proven against a real plugin, which is
+  a manual step; the automated suite still only sees our single-component fixture. Covering it
+  hermetically needs a second plugin fixture.
+- Anything at all about *how it sounds*. Every real-APO run has been at unity or with a flat EQ,
+  on purpose, and the evidence is block counters rather than audio.
 - Plugin state persistence. `IComponent::getState`/`setState` are not called by the engine at
   all; a rebuilt chain starts from defaults, which the format-change test asserts rather than
   works around.
-- Multi-bus plugins beyond "deactivate everything but bus 0", and side-chains at all.
+- Multi-bus plugins beyond one main pair plus deactivated extras. Side-chains are now handled
+  (see sec. 7 item 20) but nothing *drives* one, and a plugin whose main output is not bus 0 is
+  not considered at all.
 - Latency compensation. `IAudioProcessor::getLatencySamples` is not read, and protocol v1 has
   nowhere to report it even if it were (sec. 3.7.1 -- the design is zero added latency).
 - MIDI/event input. The `IEventList`s are preallocated and always empty.
@@ -205,7 +233,7 @@ Proven against the real deployed APO on the development machine:
   harness.
 - Takeover between two real client processes. The `Stolen` path is covered only by the harness
   forging a foreign valet id.
-- A long soak (hours) against the real APO.
+- A long soak (hours) against the real APO. The longest so far is 30 s.
 - ARM64. Declared supported in sec. 6.1, never built. Note that
   `tests/fixtures/aip_test_plugin` hard-codes `x86_64-win` in its bundle layout.
 
@@ -369,7 +397,33 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     Single-component is the configuration in which a plugin can reach `IComponentHandler` from
     its own processing thread, which is the exact behaviour item 13 exists for. It is built by
     hand rather than through `smtg_add_vst3plugin`, because that macro depends on SMTG variables
-    set only inside the SDK's own CMake scope -- see the comments in its `CMakeLists.txt`.
+    set only inside the SDK's own CMake scope -- see the comments in its `CMakeLists.txt`. It
+    also carries a deliberately awkward side-chain; see item 20.
+
+20. **`setBusArrangements` describes every bus, not just the main pair.** The first real
+    third-party plugin tried, ZL Equalizer 2, refused outright: it carries a default-active
+    stereo side-chain, and a host that describes one input bus when the plugin has two is not
+    saying "leave the other alone", it is saying something the plugin cannot interpret. Auxiliary
+    busses are therefore passed `SpeakerArr::kEmpty`, which is VST3's "not connected" and is
+    exactly true -- protocol v1 carries one stream (sec. 4.3). A plugin that refuses `kEmpty`
+    falls back to the old main-pair-only call, and `PluginInstance::fullBusNegotiation()` reports
+    which happened, because that is a per-plugin quirk the scanner will want.
+
+21. **Every bus we do not drive is backed by a zeroed buffer, not by null.** Accepting `kEmpty`
+    does not oblige a plugin to *report* the bus as gone: ZL Equalizer 2 goes on saying its
+    side-chain has two channels, and JUCE-wrapped plugins generally do. `HostProcessData` leaves
+    those channel pointers null, so a plugin that reads an inactive bus without checking would
+    dereference null on the audio thread and take `audiodg.exe` down with it. One `maxFrames`
+    buffer of zeros, shared by every channel of every unused bus and written once at `prepare`,
+    removes the entire class of crash. A plugin that *writes* to it degrades only itself, which
+    is the sec. 7.4.5 bargain.
+
+22. **The fixture reproduces both halves of that on purpose.** It declares a default-active
+    stereo side-chain, accepts the host's `kEmpty` and then keeps the bus stereo anyway -- copying
+    the real plugin rather than being convenient -- and sums the side-chain into its output, so an
+    unchanged output is positive evidence that the host supplied real zeroed memory. The negative
+    control was run: removing the silence backing makes the assertion fail with `-12345.0f`
+    rather than passing quietly.
 
 ---
 
@@ -418,6 +472,18 @@ integration. These are the ones found while implementing. Re-discovering any is 
     (`LIBRARY_OUTPUT_DIRECTORY`) avoids the collision; a POST_BUILD copy does not.
 11. **`kQuadro` does not exist** in `Vst::SpeakerArr`. Four channels is `k40Music` (L R Ls Rs) or
     `k40Cine` (L R C Cs).
+12. **`pixi run ctest ...` does not build.** Only the `test` task depends on `build`; invoking
+    `ctest` directly through pixi runs whatever binary happens to be on disk. A source change you
+    are testing may simply not be in it -- which reads as "the test does not catch this" when the
+    truth is that the test never saw the change. Use `pixi run test`, and reach for
+    `pixi run ctest --preset dev -R ...` only after a build.
+13. **A VST3 `moduleinfo.json` is not JSON.** It permits trailing commas, so `json.load` rejects
+    the file every real plugin ships. `scanner/` will need the SDK's own parser (or a tolerant
+    one) rather than a stock JSON library.
+14. **A plugin's declared bus count is not what the host asked for.** After a successful
+    `setBusArrangements` that set an auxiliary bus to `kEmpty`, `getBusInfo` may still report it
+    with its original channel count. Do not use the reply as confirmation of anything but the
+    main busses -- see sec. 7 items 20 and 21.
 
 ---
 

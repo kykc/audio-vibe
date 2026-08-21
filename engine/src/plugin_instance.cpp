@@ -6,6 +6,7 @@
 #include "pluginterfaces/vst/vstspeaker.h"
 
 #include <algorithm>
+#include <vector>
 
 using Steinberg::kResultOk;
 using Steinberg::kResultTrue;
@@ -232,11 +233,37 @@ bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
 
     // Arrangement first: HostProcessData::prepare sizes its channel pointer arrays from
     // getBusInfo, which only reports the negotiated count once setBusArrangements has run.
-    Vst::SpeakerArrangement arrangement = speakerArrangementFor(format.channelCount);
-    if (processor_->setBusArrangements(&arrangement, 1, &arrangement, 1) != kResultOk) {
-        error = name_ + ": rejected a " + std::to_string(format.channelCount) +
-                "-channel bus arrangement";
+    const Steinberg::int32 inBusCount = component_->getBusCount(Vst::kAudio, Vst::kInput);
+    const Steinberg::int32 outBusCount = component_->getBusCount(Vst::kAudio, Vst::kOutput);
+    if (inBusCount < 1 || outBusCount < 1) {
+        error = name_ + ": has no main audio input or output bus";
         return false;
+    }
+
+    // Describe *every* bus, not just the main pair. A plugin with a side-chain -- and a great
+    // many effects have one, default-active -- rejects a partial description outright: it cannot
+    // tell "leave the rest alone" from "the rest do not exist". `kEmpty` is VST3's way of saying
+    // a bus is not connected, which is exactly true here (protocol v1 carries one stream, sec.
+    // 4.3), and is what makes the plugin disable it.
+    Vst::SpeakerArrangement arrangement = speakerArrangementFor(format.channelCount);
+    std::vector<Vst::SpeakerArrangement> inputs(static_cast<std::size_t>(inBusCount),
+                                                Vst::SpeakerArr::kEmpty);
+    std::vector<Vst::SpeakerArrangement> outputs(static_cast<std::size_t>(outBusCount),
+                                                 Vst::SpeakerArr::kEmpty);
+    inputs[0] = arrangement;
+    outputs[0] = arrangement;
+
+    fullBusNegotiation_ =
+        processor_->setBusArrangements(inputs.data(), inBusCount, outputs.data(), outBusCount) ==
+        kResultOk;
+    if (!fullBusNegotiation_) {
+        // Fall back to describing only the main pair. Some plugins refuse `kEmpty` on a bus they
+        // consider mandatory, and would rather be told about one bus than about a disabled one.
+        if (processor_->setBusArrangements(&arrangement, 1, &arrangement, 1) != kResultOk) {
+            error = name_ + ": rejected a " + std::to_string(format.channelCount) +
+                    "-channel bus arrangement";
+            return false;
+        }
     }
 
     // Asking is not the same as getting: a plugin may return kResultOk and then report a
@@ -277,6 +304,28 @@ bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
     if (processData_.numInputs < 1 || processData_.numOutputs < 1) {
         error = name_ + ": has no main audio input or output bus";
         return false;
+    }
+
+    // Every bus but the main pair is deactivated, and a deactivated bus must still be handed a
+    // well-formed AudioBusBuffers -- HostProcessData leaves its channel pointers null. A plugin
+    // that reads an inactive bus without checking would then dereference null on the audio
+    // thread, taking `audiodg.exe` with it. Pointing them all at one zeroed buffer costs
+    // maxFrames floats and removes the whole class of crash. Written once here: process() only
+    // ever rewrites bus 0, so these pointers persist.
+    //
+    // A misbehaving plugin that *writes* to an unused bus scribbles over this shared buffer and
+    // so only degrades itself, which is the sec. 7.4.5 bargain.
+    unusedBus_.assign(static_cast<std::size_t>(format.maxFrames), 0.0f);
+    for (Steinberg::int32 bus = 1; bus < processData_.numInputs; ++bus) {
+        for (Steinberg::int32 c = 0; c < processData_.inputs[bus].numChannels; ++c) {
+            processData_.inputs[bus].channelBuffers32[c] = unusedBus_.data();
+        }
+        processData_.inputs[bus].silenceFlags = Vst::HostProcessData::kAllChannelsSilent;
+    }
+    for (Steinberg::int32 bus = 1; bus < processData_.numOutputs; ++bus) {
+        for (Steinberg::int32 c = 0; c < processData_.outputs[bus].numChannels; ++c) {
+            processData_.outputs[bus].channelBuffers32[c] = unusedBus_.data();
+        }
     }
 
     const Steinberg::int32 declared =

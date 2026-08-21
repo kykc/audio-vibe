@@ -154,6 +154,51 @@ TEST_CASE("a published chain processes real blocks through the valet thread", "[
     CHECK(host.chainProcessor().formatMismatches() == 0);
 }
 
+TEST_CASE("a side-chain bus is negotiated away and backed with silence", "[engine][chain]") {
+    // The case a real plugin found: ZL Equalizer 2 carries a default-active stereo side-chain and
+    // rejected a bus arrangement that described only the main pair. Describing every bus fixed
+    // the refusal -- and then left a second hazard, because the plugin goes on reporting the
+    // side-chain as two connected channels while the host drives nothing into it.
+    //
+    // The fixture reproduces both halves deliberately (see aip_test_plugin.cpp) and sums its
+    // side-chain into the output, so an unchanged output is positive evidence that the host
+    // handed it a real, zeroed buffer rather than a null pointer or leftover memory.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginChain* chain = host.chainProcessor().current();
+    REQUIRE(chain != nullptr);
+    engine::PluginInstance& plugin = chain->at(0);
+
+    // The plugin accepted a description of all its busses, side-chain included.
+    CHECK(plugin.fullBusNegotiation());
+
+    Steinberg::Vst::IComponent* component = plugin.component();
+    REQUIRE(component->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput) == 2);
+
+    Steinberg::Vst::BusInfo aux{};
+    REQUIRE(component->getBusInfo(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, 1, aux) ==
+            Steinberg::kResultOk);
+    CHECK(aux.busType == Steinberg::Vst::kAux);
+    // Still claiming channels after the negotiation -- which is exactly why the silence backing
+    // has to exist rather than being an optimisation.
+    CHECK(aux.channelCount == 2);
+
+    Rig rig(host.blockProcessor(), L"engine-sidechain");
+    const std::vector<float> in = signedRamp(kFrames);
+    setParameter(host, 0, kGainParam, 1.0);
+    const std::vector<float> out = rig.run(in);
+
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i] * 2.f));
+    }
+}
+
 TEST_CASE("two plugins compose in order", "[engine][chain]") {
     constexpr std::int32_t kFrames = 64;
 

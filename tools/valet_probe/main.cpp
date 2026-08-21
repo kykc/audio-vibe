@@ -13,6 +13,7 @@
 //   valet_probe --endpoint N    attach to the Nth endpoint from --list
 //   valet_probe --gain 0.5      apply a gain instead of passing through
 //   valet_probe --plugin P      run a VST3 plugin chain instead of a gain; repeatable
+//   valet_probe --inspect       load and prepare the plugins, report, and exit; no APO involved
 //   valet_probe --seconds 10    run for a fixed time instead of until Ctrl+C
 //
 // `--plugin` is the only mode in which anything from `engine/` is involved, and it is mutually
@@ -27,8 +28,12 @@
 #include "aip/ipc/valet_supervisor.h"
 #include "aip/ipc/valet_thread.h"
 #include "aip/protocol/layout.h"
+#include "aip/rt/realtime_guard.h"
 
 #include <windows.h>
+
+#include "pluginterfaces/base/funknownimpl.h"
+#include "pluginterfaces/vst/ivstaudioprocessor.h"
 
 #include <atomic>
 #include <cstdio>
@@ -117,8 +122,15 @@ void printEndpoints(const std::vector<ipc::RenderEndpoint>& endpoints) {
     }
 }
 
+/// A VST3 String128 is char16_t[128]; on Windows wchar_t is also 16-bit, which is the whole
+/// reason the SDK offers `wscast`. Printing through it keeps this file free of a string library.
+const wchar_t* asWide(const Steinberg::Vst::TChar* text) {
+    return reinterpret_cast<const wchar_t*>(text);
+}
+
 struct Options {
     bool list = false;
+    bool inspect = false;
     int endpointIndex = -1; // -1 means "the default endpoint"
     float gain = 1.0f;
     int seconds = 0; // 0 means "until Ctrl+C"
@@ -126,7 +138,8 @@ struct Options {
 };
 
 const char* kUsage =
-    "Usage: valet_probe [--list] [--endpoint N] [--gain G] [--plugin PATH]... [--seconds S]";
+    "Usage: valet_probe [--list] [--endpoint N] [--gain G] [--plugin PATH]... [--inspect]"
+    " [--seconds S]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
     for (int i = 1; i < argc; ++i) {
@@ -141,6 +154,8 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.gain = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(arg, "--plugin") == 0 && hasValue) {
             out.plugins.emplace_back(argv[++i]);
+        } else if (std::strcmp(arg, "--inspect") == 0) {
+            out.inspect = true;
         } else if (std::strcmp(arg, "--seconds") == 0 && hasValue) {
             out.seconds = std::atoi(argv[++i]);
         } else {
@@ -158,6 +173,132 @@ bool parseOptions(int argc, char** argv, Options& out) {
     return true;
 }
 
+/// Reports what the host sees in each `--plugin`, then tries to prepare it. Deliberately never
+/// attaches: a plugin that faults during `create` or `prepare` should cost a console process,
+/// not a valet thread that `audiodg.exe` is blocked on for 1000 ms (sec. 3.7.1).
+///
+/// It drives PluginInstance directly rather than going through Engine, because the interesting
+/// state is the bus layout *before* the arrangement is negotiated -- which a chain build would
+/// have already destroyed by the time it failed. This is also the shape `scanner/` needs
+/// (sec. 7.2), one process further out.
+void reportBusses(Steinberg::Vst::IComponent& component,
+                  Steinberg::Vst::IAudioProcessor* processor) {
+    for (Steinberg::Vst::BusDirection dir : {Steinberg::Vst::kInput, Steinberg::Vst::kOutput}) {
+        const Steinberg::int32 count = component.getBusCount(Steinberg::Vst::kAudio, dir);
+        std::printf("       %s : %d\n",
+                    dir == Steinberg::Vst::kInput ? "audio in  " : "audio out ", count);
+        for (Steinberg::int32 b = 0; b < count; ++b) {
+            Steinberg::Vst::BusInfo bus{};
+            if (component.getBusInfo(Steinberg::Vst::kAudio, dir, b, bus) !=
+                Steinberg::kResultOk) {
+                continue;
+            }
+            Steinberg::Vst::SpeakerArrangement arrangement = 0;
+            const bool haveArrangement =
+                processor != nullptr &&
+                processor->getBusArrangement(dir, b, arrangement) == Steinberg::kResultOk;
+            std::printf("         [%d] %ls  %d ch  %s  %s  arr=0x%llx%s\n", b, asWide(bus.name),
+                        bus.channelCount,
+                        bus.busType == Steinberg::Vst::kMain ? "main" : "aux ",
+                        (bus.flags & Steinberg::Vst::BusInfo::kDefaultActive) != 0
+                            ? "default-active  "
+                            : "default-inactive",
+                        static_cast<unsigned long long>(arrangement),
+                        haveArrangement ? "" : " (unavailable)");
+        }
+    }
+    const Steinberg::int32 eventIn = component.getBusCount(Steinberg::Vst::kEvent,
+                                                           Steinberg::Vst::kInput);
+    const Steinberg::int32 eventOut = component.getBusCount(Steinberg::Vst::kEvent,
+                                                            Steinberg::Vst::kOutput);
+    std::printf("       event bus : %d in, %d out\n", eventIn, eventOut);
+}
+
+int runInspection(const Options& options) {
+    if (options.plugins.empty()) {
+        std::puts("--inspect needs at least one --plugin.");
+        return 2;
+    }
+
+    Steinberg::IPtr<Steinberg::Vst::HostApplication> hostContext =
+        Steinberg::owned(new Steinberg::Vst::HostApplication());
+
+    // Nominal geometry. Nothing has told us the endpoint's real format -- protocol v1 announces
+    // it nowhere (sec. 4.5) -- and for an inspection any plausible one will do.
+    const engine::StreamFormat format{48000, 2, engine::kDefaultMaxFrames};
+
+    int failures = 0;
+
+    for (const std::string& path : options.plugins) {
+        std::string error;
+        std::printf("Module   : %s\n", path.c_str());
+
+        engine::PluginModule::Ptr module = engine::PluginModule::load(path, error);
+        if (!module) {
+            std::printf("  FAILED : %s\n\n", error.c_str());
+            ++failures;
+            continue;
+        }
+        module->setHostContext(hostContext);
+        std::printf("  name   : %s\n", module->name().c_str());
+
+        for (const engine::PluginClass& info : module->audioEffects()) {
+            std::printf("  effect : %s  [%s %s]  %s\n", info.name.c_str(), info.vendor.c_str(),
+                        info.version.c_str(), info.subCategories.c_str());
+
+            std::unique_ptr<engine::PluginInstance> instance =
+                engine::PluginInstance::create(module, info.id, hostContext, error);
+            if (!instance) {
+                std::printf("       FAILED to instantiate: %s\n", error.c_str());
+                ++failures;
+                continue;
+            }
+
+            Steinberg::Vst::IComponent* component = instance->component();
+            Steinberg::Vst::IEditController* controller = instance->controller();
+            auto processor = Steinberg::U::cast<Steinberg::Vst::IAudioProcessor>(component);
+
+            // A single-component plugin is one object wearing both interfaces. The distinction
+            // decides how it is connected and torn down, so it is worth reporting.
+            const bool single =
+                Steinberg::U::cast<Steinberg::Vst::IEditController>(component) != nullptr;
+
+            std::printf("       controller : %s\n",
+                        controller == nullptr  ? "none"
+                        : single               ? "same object (single component)"
+                                               : "separate object (split component)");
+            std::printf("       parameters : %d\n",
+                        controller != nullptr ? controller->getParameterCount() : 0);
+            std::printf("       latency    : %u samples\n",
+                        processor ? processor->getLatencySamples() : 0u);
+            std::puts("       -- as instantiated --");
+            reportBusses(*component, processor);
+
+            if (!instance->prepare(format, error)) {
+                std::printf("       PREPARE FAILED at %u Hz x%u ch: %s\n", format.sampleRate,
+                            format.channelCount, error.c_str());
+                ++failures;
+            } else {
+                std::printf("       prepared at %u Hz x%u ch, up to %d frames  (%s)\n",
+                            format.sampleRate, format.channelCount, format.maxFrames,
+                            instance->fullBusNegotiation()
+                                ? "all busses negotiated"
+                                : "main busses only; aux busses left connected");
+                std::puts("       -- as prepared --");
+                reportBusses(*component, processor);
+            }
+        }
+        std::puts("");
+    }
+
+    if (failures != 0) {
+        std::printf("%d failure(s). Nothing was attached; no audio was touched.\n", failures);
+        return 1;
+    }
+    std::puts("All plugins prepared. Nothing was attached; no audio was touched.");
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -166,12 +307,16 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    // COM for MMDevice enumeration. Control thread only -- COM activation is forbidden on the
-    // audio thread (sec. 7.4.1).
+    // COM for MMDevice enumeration, and for whatever a plugin does during activation. Control
+    // thread only -- COM activation is forbidden on the audio thread (sec. 7.4.1).
     ipc::ComApartment com;
     if (!com.ok()) {
         std::puts("Failed to initialise COM.");
         return 1;
+    }
+
+    if (options.inspect) {
+        return runInspection(options);
     }
 
     const std::vector<ipc::RenderEndpoint> endpoints = ipc::enumerateRenderEndpoints();
@@ -215,6 +360,12 @@ int main(int argc, char** argv) {
     std::puts("");
 
     ::SetConsoleCtrlHandler(consoleHandler, TRUE);
+
+    // The real-time violation detector is linked into this executable on purpose (sec. 7.4.6):
+    // a run against the real APO is the only place our audio path is exercised by the real
+    // producer, so it is the most valuable reading we can take. Zeroed here so the count covers
+    // the run and not the process start-up.
+    rt::resetViolations();
 
     // Both are constructed either way; only one is installed. An unused Engine loads nothing
     // and publishes nothing.
@@ -307,6 +458,23 @@ int main(int argc, char** argv) {
     std::printf("Reclaims        : %llu\n", static_cast<unsigned long long>(final.reclaims));
     std::printf("Format changes  : %u\n", final.formatChanges);
     std::printf("Attach cycles   : %u\n", supervisor.attachCount());
+
+    if constexpr (rt::checksEnabled()) {
+        const rt::ViolationCounts counts = rt::violations();
+        std::puts("");
+        std::printf("Audio-thread allocations : %llu\n",
+                    static_cast<unsigned long long>(counts.allocations));
+        std::printf("Audio-thread frees       : %llu\n",
+                    static_cast<unsigned long long>(counts.deallocations));
+        std::printf("Audio-thread locks       : %llu\n",
+                    static_cast<unsigned long long>(counts.locks));
+        if (counts.total() != 0 && !options.plugins.empty()) {
+            std::puts("Note: the detector counts everything on the valet thread, the plugin's own");
+            std::puts("work included. A nonzero count here is not by itself a defect in our code");
+            std::puts("(sec. 7.4.5) -- rerun without --plugin to see whether the plumbing is clean.");
+        }
+        std::puts("");
+    }
 
     if (!options.plugins.empty()) {
         const engine::ChainProcessor& chain = host.chainProcessor();

@@ -16,6 +16,14 @@
 //   Gain   (id 0)  output = input * (normalized * 2), so the 0.5 default is unity
 //   Edits  (id 1)  performEdit calls per process() = round(normalized * 8), from the audio thread
 //   Meter  (id 2)  the parameter those callbacks report; its value is the block's first sample
+//
+// It also carries a default-active stereo side-chain input it never asks the host to disable,
+// copying what a JUCE-wrapped plugin does (ZL Equalizer 2 was the specimen). That combination --
+// an auxiliary bus the host does not drive but the plugin still reports as connected -- is what
+// catches a host handing out null channel pointers, so the side-chain is summed into the output
+// on every block. Silence from the host changes nothing; a null pointer stamps kNullBusStamp
+// into the output instead of being dereferenced, so the failure is a wrong number and not a
+// dead test process.
 
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 
@@ -51,6 +59,10 @@ constexpr int32 kMaxEditsPerBlock = 8;
 /// refusal to check against, which is otherwise hard to arrange.
 constexpr int32 kMaxSupportedChannels = 8;
 
+/// Written to the output when the host hands us a bus that claims channels but has a null
+/// buffer. Chosen to be impossible to reach by arithmetic on any test signal.
+constexpr float kNullBusStamp = -12345.0f;
+
 class TestPlugin : public SingleComponentEffect {
 public:
     static const FUID cid;
@@ -66,6 +78,8 @@ public:
         }
 
         addAudioInput(STR16("Input"), SpeakerArr::kStereo);
+        // Default-active, and never disabled below. See the note at the top of the file.
+        addAudioInput(STR16("Sidechain"), SpeakerArr::kStereo, kAux);
         addAudioOutput(STR16("Output"), SpeakerArr::kStereo);
 
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5,
@@ -84,13 +98,17 @@ public:
     tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
                                           SpeakerArrangement* outputs,
                                           int32 numOuts) SMTG_OVERRIDE {
-        if (numIns != 1 || numOuts != 1 || inputs[0] != outputs[0]) {
+        if (numOuts != 1 || numIns < 1 || numIns > 2 || inputs[0] != outputs[0]) {
             return kResultFalse;
         }
         if (SpeakerArr::getChannelCount(inputs[0]) > kMaxSupportedChannels) {
             return kResultFalse;
         }
-        return SingleComponentEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+        // The host asks for the side-chain to be kEmpty; we accept the call and keep it stereo
+        // anyway. That is not obstinacy -- it is what the real plugin did, and a fixture that
+        // quietly collapsed the bus would stop covering the case the host has to survive.
+        SpeakerArrangement adjusted[2] = {inputs[0], SpeakerArr::kStereo};
+        return SingleComponentEffect::setBusArrangements(adjusted, numIns, outputs, numOuts);
     }
 
     tresult PLUGIN_API setProcessing(TBool state) SMTG_OVERRIDE {
@@ -139,11 +157,36 @@ public:
             }
         }
 
+        sumSideChain(data, channels);
         issueAudioThreadEdits(first);
         return kResultOk;
     }
 
 private:
+    // Adds every auxiliary input bus into the output. A host that does not drive the bus owes us
+    // a well-formed silent buffer, so this must be a no-op; anything else is a host defect and
+    // shows up as a wrong sample rather than as a crash.
+    void sumSideChain(ProcessData& data, int32 channels) {
+        for (int32 bus = 1; bus < data.numInputs; ++bus) {
+            const AudioBusBuffers& aux = data.inputs[bus];
+            const int32 auxChannels = aux.numChannels < channels ? aux.numChannels : channels;
+            for (int32 c = 0; c < auxChannels; ++c) {
+                Sample32* out = data.outputs[0].channelBuffers32[c];
+                const Sample32* side =
+                    aux.channelBuffers32 != nullptr ? aux.channelBuffers32[c] : nullptr;
+                if (side == nullptr) {
+                    for (int32 s = 0; s < data.numSamples; ++s) {
+                        out[s] = kNullBusStamp;
+                    }
+                    continue;
+                }
+                for (int32 s = 0; s < data.numSamples; ++s) {
+                    out[s] += side[s];
+                }
+            }
+        }
+    }
+
     void applyInputParameterChanges(ProcessData& data) {
         if (data.inputParameterChanges == nullptr) {
             return;
