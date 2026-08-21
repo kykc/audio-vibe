@@ -1,0 +1,69 @@
+# Test suite on every push to main and every PR targeting main.
+#
+# The runner is a bare Windows host (labels: windows-amd64, pixi) with no Node.js, so no
+# JavaScript action can run here -- `actions/checkout` included. Every step is a plain
+# `run:` script and the checkout is done by hand with git.
+name: run-test-suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: pixi run test
+    runs-on: [windows-amd64, pixi]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      # Hand-rolled checkout. GITHUB_REF is refs/heads/main for a push and refs/pull/N/... for a
+      # PR; both are fetchable from the base repository, so fork PRs work too. The token is passed
+      # per-command via http.extraheader instead of being baked into the remote URL, because the
+      # workspace survives between runs on a self-hosted runner and .git/config would keep it.
+      - name: Checkout ${{ github.ref }}
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Git { git @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+
+          $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY.git"
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITEA_TOKEN"))
+          $header = "AUTHORIZATION: basic $auth"
+
+          if (-not (Test-Path .git)) { Invoke-Git init --quiet }
+          if (git remote | Select-String -SimpleMatch origin -Quiet) {
+            Invoke-Git remote set-url origin $url
+          } else {
+            Invoke-Git remote add origin $url
+          }
+
+          Invoke-Git -c "http.extraheader=$header" fetch --force --depth=1 origin "+$($env:GITHUB_REF):refs/ci/head"
+          Invoke-Git checkout --force --detach refs/ci/head
+          # Wipe leftovers from the previous run, including ignored files -- but keep the pixi
+          # environment, which is expensive to recreate and is validated by `pixi install --locked`.
+          Invoke-Git clean -ffdx -e .pixi
+          Invoke-Git --no-pager log -1 --format='%H %s'
+
+      # --locked fails if pixi.lock does not match pixi.toml, so a manifest change without a
+      # relock is a CI error rather than a silent resolve to different dependency versions.
+      - name: Install the pixi environment
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pixi install --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Configures and builds RelWithDebInfo via the task's depends-on chain, then runs ctest.
+      - name: Build and test
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pixi run --locked test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
