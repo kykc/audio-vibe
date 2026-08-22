@@ -443,8 +443,8 @@ predecessor repository. Not redistributable, so not shipped.
 | Concern | Choice |
 |---|---|
 | Environment / tools | **pixi** -- `pixi.toml` and `pixi.lock` committed to the repository |
-| pixi packages | `qt6-main`, `cmake`, `ninja`, `vs2022_win-64`, `catch2` |
-| Compiler | Local MSVC v143, activated automatically by `vs2022_win-64` |
+| pixi packages | `qt6-main`, `cmake`, `ninja`, `catch2`, and `vs2022_win-64` or `vs2026_win-64` |
+| Compiler | Local MSVC v143/v145, activated automatically by the environment's `vs*_win-64` |
 | Build system | CMake (4.x from pixi) with `CMakePresets.json` |
 | Generator | **Ninja Multi-Config** |
 | Primary configuration | **`RelWithDebInfo`** (see sec. 6.4) |
@@ -469,6 +469,19 @@ tags are mutable.
 **MSVC is not redistributable** and is therefore not provided by pixi. `vs2022_win-64` only
 *activates* a local install. **Visual Studio 2022 (or 2026) with the C++ workload remains a
 documented machine prerequisite.**
+
+Both generations are supported, one pixi environment each: the default environment carries
+`vs2022_win-64`, the `vs2026` environment carries `vs2026_win-64`, and a shared solve group
+keeps every other package bit-identical between them, so `pixi run -e vs2026 <task>` changes the
+compiler and nothing else. The environment must match the machine's Visual Studio: each
+activation script probes for its own generation first and that is the only probe passing
+`vswhere -products *`, so it is the only one that can find a **Build Tools** install -- the
+fallback chain ends at a bare `vswhere -latest`, which silently skips Build Tools and leaves
+`VSINSTALLDIR` empty. On a full Community/Professional/Enterprise install a mismatched
+environment does still activate (verified: `vs2026_win-64` against VS2022 Enterprise, deriving
+generator and `-vcvars_ver` from the installed toolset), but it exports a
+`CMAKE_GENERATOR_TOOLSET` for the wrong toolset -- harmless here only because every task already
+unsets that variable for the Ninja Multi-Config reason in sec. 6.1.
 
 ### 6.2 Machine prerequisites
 

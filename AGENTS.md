@@ -175,17 +175,26 @@ and web UIs are disqualified (sec. 5.1, sec. 5.4). Embedding uses `QWindow::from
 `QWidget::createWindowContainer()`.
 
 Toolchain: **pixi** (`pixi.toml` + `pixi.lock` committed) providing `qt6-main`, `cmake`,
-`ninja`, `vs2022_win-64`, `catch2`. CMake with `CMakePresets.json`, **Ninja Multi-Config**
-generator, tests via Catch2 v3 + `ctest`. Third-party source deps via **`FetchContent` only** --
-no submodules, no vcpkg, no Conan. Two of them: the VST3 SDK and yaml-cpp, both pinned by URL and
-SHA256 in `cmake/`. Note that CMake 4 refuses a dependency declaring a floor below 3.5, and that
-the fix for it re-enables the policy that makes `option()` discard your settings -- status.md
-sec. 8 item 23 before adding a third.
+`ninja`, `catch2`, and one of `vs2022_win-64` / `vs2026_win-64`. CMake with
+`CMakePresets.json`, **Ninja Multi-Config** generator, tests via Catch2 v3 + `ctest`.
+Third-party source deps via **`FetchContent` only** -- no submodules, no vcpkg, no Conan. Two
+of them: the VST3 SDK and yaml-cpp, both pinned by URL and SHA256 in `cmake/`. Note that CMake 4
+refuses a dependency declaring a floor below 3.5, and that the fix for it re-enables the policy
+that makes `option()` discard your settings -- status.md sec. 8 item 23 before adding a third.
 
 `vs2022_win-64` *activates* a local MSVC install (MSVC is not redistributable), so `cl.exe`
-resolves inside `pixi run` with no `vcvars` and no Developer Command Prompt. Visual Studio 2022+
-with the Desktop C++ workload and Windows SDK 10.0.26100+ remain machine prerequisites, as does
-long-path support -- both `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`
+resolves inside `pixi run` with no `vcvars` and no Developer Command Prompt. Two pixi
+environments wrap the two Visual Studio generations -- `pixi run <task>` uses VS2022 (the
+default environment), `pixi run -e vs2026 <task>` uses VS2026 -- and they differ only in that
+package; a shared solve group keeps cmake/ninja/qt6-main/catch2 bit-identical between them. Pick
+the one matching the machine: on a *Build Tools* install only the matching generation's
+`vswhere` probe can find it (the fallback chain ends at a bare `vswhere -latest`, which does not
+see Build Tools), which is why CI runs `-e vs2026` against its VS 18 Build Tools node. Both
+environments configure the same `build/` tree and `CXX` is `cl.exe` either way, so CMake sees no
+change to complain about and the cache keeps the full path it resolved first: on a machine with
+both Visual Studios installed, delete `build/` when switching environments. Visual
+Studio 2022+ with the Desktop C++ workload and Windows SDK 10.0.26100+ remain machine
+prerequisites, as does long-path support -- both `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1`
 and `git config --system core.longpaths true` (sec. 6.2).
 
 ### Build configuration: `RelWithDebInfo`, always

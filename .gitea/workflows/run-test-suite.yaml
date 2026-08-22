@@ -3,7 +3,10 @@
 # The runner is a bare Windows host (labels: windows-amd64, pixi) with no Node.js, so no
 # JavaScript action can run here -- `actions/checkout` included. Every step is a plain
 # `run:` script and the checkout is done by hand with git.
-# CAUTION: this relies on presence junction of Build tools (18) -> (2022) of VS because of vs2022 activation quirk.
+# The node has Visual Studio 18 (2026) *Build Tools* only, so every step runs in the `vs2026`
+# pixi environment: of the probes in a vs*_win-64 activation script, only the one matching its
+# own VS generation passes `vswhere -products *` and can therefore see a Build Tools install.
+# The default (vs2022) environment does not activate here.
 name: run-test-suite
 
 on:
@@ -56,15 +59,16 @@ jobs:
 
       # --locked fails if pixi.lock does not match pixi.toml, so a manifest change without a
       # relock is a CI error rather than a silent resolve to different dependency versions.
+      # Only the vs2026 environment is installed; the default one is never used on this node.
       - name: Install the pixi environment
         run: |
           $ErrorActionPreference = 'Stop'
-          pixi install --locked
+          pixi install --locked -e vs2026
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Configures and builds RelWithDebInfo via the task's depends-on chain, then runs ctest.
       - name: Build and test
         run: |
           $ErrorActionPreference = 'Stop'
-          pixi run --locked test
+          pixi run --locked -e vs2026 test
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
