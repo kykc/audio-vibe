@@ -90,6 +90,56 @@ TEST_CASE("the detector sees a lock taken inside a real-time section", "[rt][det
     rt::resetViolations();
 }
 
+TEST_CASE("a probe counts what a real-time section did without charging the process",
+          "[rt][probe]") {
+    // The whole value of `rt::ViolationProbe` is the second half of that sentence. Deliberately
+    // exercising third-party code that is expected to allocate -- which is what the engine's
+    // plugin warm-up does -- must not move the counters sec. 7.4.3 makes an acceptance criterion,
+    // or that criterion quietly starts meaning something else.
+    if constexpr (!rt::checksEnabled()) {
+        SKIP("built without AIP_RT_CHECKS (Release); the detector is compiled out by design");
+    }
+
+    rt::resetViolations();
+
+    rt::ViolationCounts seen;
+    {
+        const rt::ViolationProbe probe;
+        // Inside a probe the thread *is* in a real-time section -- that is what makes the
+        // allocation below observable at all.
+        CHECK(rt::inRealtimeSection());
+        auto leaked = std::make_unique<int>(7);
+        CHECK(*leaked == 7);
+        seen = probe.counts();
+    }
+
+    CHECK(seen.allocations == 1);
+    CHECK(rt::violations().total() == 0);
+    CHECK_FALSE(rt::inRealtimeSection());
+}
+
+TEST_CASE("a probe suspends the global counters and hands them back", "[rt][probe]") {
+    if constexpr (!rt::checksEnabled()) {
+        SKIP("built without AIP_RT_CHECKS (Release); the detector is compiled out by design");
+    }
+
+    rt::resetViolations();
+    {
+        const rt::RealtimeGuard guard;
+        {
+            const rt::ViolationProbe probe;
+            auto diverted = std::make_unique<int>(1);
+            CHECK(*diverted == 1);
+        }
+        // Back in the plain guard: this one is the process's problem again, which is what makes
+        // the diversion a suspension rather than a switch that stays flipped.
+        auto charged = std::make_unique<int>(2);
+        CHECK(*charged == 2);
+    }
+    CHECK(rt::violations().allocations == 1);
+    rt::resetViolations();
+}
+
 TEST_CASE("steady state performs exactly zero audio-thread allocations", "[rt][soak]") {
     // The sec. 7.4.3 acceptance criterion, verbatim: "A chain that has been running untouched for
     // hours must show the same audio-thread allocation count and the same resident set as it did

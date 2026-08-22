@@ -77,6 +77,12 @@ void RackPanel::refresh() {
             line += QStringLiteral("  %1 Hz x%2 ch")
                         .arg(format.sampleRate)
                         .arg(format.channelCount);
+            // A guessed geometry is still a real preparation -- the plugin is negotiated, warmed
+            // and ready -- but it has not been confirmed by a block, and saying so is cheaper
+            // than letting someone wonder why the numbers changed when playback started.
+            if (host_.engine().builtFormatIsSpeculative()) {
+                line += QStringLiteral(" (expected)");
+            }
         } else {
             line += QStringLiteral("  [not prepared]");
         }

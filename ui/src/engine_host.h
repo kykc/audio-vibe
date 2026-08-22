@@ -47,6 +47,16 @@ public:
         double blocksPerSecond = 0.0;
         std::uint32_t attachCycles = 0;
 
+        /// Attached, but the king has stopped publishing: no block has arrived for a while and
+        /// the valet's waits are expiring instead. Silence on the endpoint, not a fault.
+        ///
+        /// Worth a name of its own because of what it looks like otherwise. An idle valet times
+        /// out ten times a second for as long as the silence lasts (`ValetThread::kBlockWaitMs`),
+        /// so the `timeouts` counter climbs steadily and forever, sitting on screen beside
+        /// `malformed` and `reclaims` where a rising number means something is wrong. Saying
+        /// "idle" is what makes that climb read as the heartbeat it is.
+        bool idle = false;
+
         engine::StreamFormat builtFormat;
         std::uint64_t chainBlocks = 0;
         std::uint64_t passedThrough = 0;
@@ -89,7 +99,11 @@ Q_SIGNALS:
     void linkStateChanged(int state, int reason);
 
     /// A chain was built or rebuilt for a geometry the audio thread reported.
-    void chainBuilt(unsigned sampleRate, unsigned channelCount, int maxFrames);
+    /// `speculative` distinguishes a chain built from the endpoint's *configured* format, before
+    /// any audio arrived, from one built from a block that actually did. Both are real chains and
+    /// both process audio; the difference is only how much the format is to be trusted, and it
+    /// belongs in the log rather than being smoothed over.
+    void chainBuilt(unsigned sampleRate, unsigned channelCount, int maxFrames, bool speculative);
 
     /// A rebuild was attempted and failed. Audio keeps flowing, unprocessed.
     void chainFailed(const QString& error);
@@ -111,6 +125,10 @@ private:
     ipc::ValetCounters::Snapshot lastCounters_{};
     ipc::ValetCounters::Snapshot previousCounters_{};
     std::chrono::steady_clock::time_point previousTick_{};
+    /// When the block counter last moved, which is the only evidence that the king is still
+    /// publishing. Set on attach as well, so a fresh attach is not called idle before it has had
+    /// any chance to receive anything.
+    std::chrono::steady_clock::time_point lastBlockAt_{};
     double blocksPerSecond_ = 0.0;
 };
 

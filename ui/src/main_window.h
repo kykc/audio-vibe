@@ -68,6 +68,14 @@ private:
     void refreshEndpoints();
     void toggleAttach();
     void updateStatus();
+
+    /// Reports what the engine's warm-up found, after a chain is built. Nothing when no plugin
+    /// was warmed.
+    void logWarmUp();
+
+    /// Last value of `Engine::builtFormatIsSpeculative` the rack list was drawn with, so the
+    /// "(expected)" qualifier disappears when the first block confirms the guess.
+    bool speculativeShown_ = false;
     void log(const QString& text);
 
     void onLinkStateChanged(int state, int reason);

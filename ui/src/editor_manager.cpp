@@ -22,25 +22,37 @@ void EditorManager::open(engine::PluginInstance& instance, QWidget* parent) {
         return;
     }
 
-    QString error;
-    EditorWindow* window = EditorWindow::create(instance, parent, error);
+    const QString name = QString::fromStdString(instance.name());
+
+    QString nativeError;
+    PluginEditorWindow* window = EditorWindow::create(instance, parent, nativeError);
+
+    // Any failure falls through to the generic editor, not just "no view". A plugin that offers a
+    // view we cannot embed -- no HWND support, a refused window -- is in the same position from
+    // the user's side as one that offers none: its parameters are still there, and sliders still
+    // reach them. The reason the plugin's own editor was not used is carried into the message
+    // rather than discarded, because "why am I looking at sliders" is the first thing to ask.
+    QString genericError;
     if (window == nullptr) {
-        Q_EMIT message(QString::fromStdString(instance.name()) + QStringLiteral(": ") + error);
+        window = GenericEditorWindow::create(instance, parent, genericError);
+    }
+    if (window == nullptr) {
+        Q_EMIT message(QStringLiteral("%1: %2; %3").arg(name, nativeError, genericError));
         return;
     }
 
-    connect(window, &EditorWindow::closed, this, &EditorManager::onWindowClosed);
+    connect(window, &PluginEditorWindow::closed, this, &EditorManager::onWindowClosed);
     windows_.emplace(&instance, window);
     window->raise();
     window->activateWindow();
 
     Q_EMIT openCountChanged();
-    Q_EMIT message(QStringLiteral("editor open: %1 (%2 x %3, %4 child window(s), scale-aware: %5)")
-                       .arg(QString::fromStdString(instance.name()))
-                       .arg(window->width())
-                       .arg(window->height())
-                       .arg(window->childWindowCount())
-                       .arg(window->scaleAware() ? QStringLiteral("yes") : QStringLiteral("no")));
+    if (nativeError.isEmpty()) {
+        Q_EMIT message(QStringLiteral("editor open: %1 (%2)").arg(name, window->describe()));
+    } else {
+        Q_EMIT message(QStringLiteral("editor open: %1 (%2) -- %3")
+                           .arg(name, window->describe(), nativeError));
+    }
 }
 
 void EditorManager::close(engine::PluginInstance& instance) {
@@ -48,7 +60,7 @@ void EditorManager::close(engine::PluginInstance& instance) {
     if (found == windows_.end()) {
         return;
     }
-    EditorWindow* window = found->second;
+    PluginEditorWindow* window = found->second;
     windows_.erase(found);
 
     // Order matters, and this is the order: disconnect first so the destruction below cannot
@@ -63,21 +75,21 @@ void EditorManager::close(engine::PluginInstance& instance) {
 
 void EditorManager::closeAll() {
     // Copied out first: closing mutates the map.
-    std::vector<EditorWindow*> open;
+    std::vector<PluginEditorWindow*> open;
     open.reserve(windows_.size());
     for (const auto& [instance, window] : windows_) {
         open.push_back(window);
     }
     windows_.clear();
 
-    for (EditorWindow* window : open) {
+    for (PluginEditorWindow* window : open) {
         window->disconnect(this);
         window->release();
         delete window;
     }
 }
 
-void EditorManager::onWindowClosed(EditorWindow* window) {
+void EditorManager::onWindowClosed(PluginEditorWindow* window) {
     // The window has already released its view and is about to be deleted by Qt; all that is left
     // is to stop naming it. Searched by window rather than by instance because `release()` has
     // already cleared the window's idea of which instance it belonged to.

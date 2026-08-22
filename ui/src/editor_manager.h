@@ -14,6 +14,8 @@
 #pragma once
 
 #include "editor_window.h"
+#include "generic_editor_window.h"
+#include "plugin_editor_window.h"
 
 #include "aip/engine/plugin_instance.h"
 
@@ -32,6 +34,11 @@ public:
     ~EditorManager() override;
 
     /// Opens the editor for `instance`, or raises it if it is already open.
+    ///
+    /// The plugin's own editor when it has one, and a window of sliders built from its parameter
+    /// list when it does not -- VST3 permits a plugin to offer no view at all, and one that does
+    /// so is otherwise unreachable once loaded. Which of the two it turned out to be goes to the
+    /// status line rather than being silent, because the difference is worth noticing.
     void open(engine::PluginInstance& instance, QWidget* parent);
 
     /// Releases and destroys the editor for `instance`, if there is one. Returns immediately when
@@ -54,9 +61,9 @@ Q_SIGNALS:
     void openCountChanged();
 
 private:
-    void onWindowClosed(EditorWindow* window);
+    void onWindowClosed(PluginEditorWindow* window);
 
-    std::map<engine::PluginInstance*, EditorWindow*> windows_;
+    std::map<engine::PluginInstance*, PluginEditorWindow*> windows_;
 };
 
 } // namespace aip::ui

@@ -559,6 +559,67 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
     return true;
 }
 
+PluginInstance::WarmUpResult PluginInstance::warmUp(std::size_t blocks) {
+    WarmUpResult result;
+    if (!prepared_ || blocks == 0) {
+        return result;
+    }
+
+    const auto frames = static_cast<std::size_t>(format_.maxFrames);
+    // The widest block the plugin will ever be handed, not the one it usually gets: a plugin that
+    // sizes something lazily sizes it for what it is shown, and showing it the maximum now is what
+    // stops it sizing anything later.
+    std::vector<float> inputSamples(inputChannels_ * frames, 0.0f);
+    std::vector<float> outputSamples(outputChannels_ * frames, 0.0f);
+    std::vector<float*> inputs(inputChannels_, nullptr);
+    std::vector<float*> outputs(outputChannels_, nullptr);
+    for (std::uint32_t c = 0; c < inputChannels_; ++c) {
+        inputs[c] = inputSamples.data() + static_cast<std::ptrdiff_t>(c * frames);
+    }
+    for (std::uint32_t c = 0; c < outputChannels_; ++c) {
+        outputs[c] = outputSamples.data() + static_cast<std::ptrdiff_t>(c * frames);
+    }
+
+    // A fixed sequence, not a random one: a warm-up that behaves differently from run to run is
+    // a warm-up whose report cannot be compared with the last one. Amplitude is well clear of
+    // denormals in either direction -- feeding a plugin denormals is its own kind of pathology
+    // and not one worth introducing here.
+    std::uint32_t noise = 0x9e3779b9u;
+    for (float& sample : inputSamples) {
+        noise = noise * 1664525u + 1013904223u;
+        sample = (static_cast<float>((noise >> 8) & 0xffffu) / 65535.0f - 0.5f) * 2.0e-3f;
+    }
+
+    // The same context ChainProcessor builds, for the same reason: a plugin that reads the
+    // transport should see a coherent one rather than an absent one.
+    Vst::ProcessContext context{};
+    context.state = Vst::ProcessContext::kPlaying | Vst::ProcessContext::kContTimeValid |
+                    Vst::ProcessContext::kProjectTimeMusicValid |
+                    Vst::ProcessContext::kTempoValid | Vst::ProcessContext::kTimeSigValid;
+    context.sampleRate = static_cast<double>(format_.sampleRate);
+    context.tempo = 120.0;
+    context.timeSigNumerator = 4;
+    context.timeSigDenominator = 4;
+
+    const std::uint64_t failuresBefore = processFailures_.load(std::memory_order_relaxed);
+    {
+        // Everything the plugin does in here is expected to be the misbehaviour we came for, so
+        // it is counted privately rather than against the process (rt::ViolationProbe).
+        const rt::ViolationProbe probe;
+        for (std::size_t i = 0; i < blocks; ++i) {
+            process(inputs.data(), outputs.data(), format_.maxFrames, context);
+            context.projectTimeSamples += format_.maxFrames;
+            context.continousTimeSamples += format_.maxFrames;
+        }
+        result.violations = probe.counts();
+    }
+
+    result.blocksRun = blocks;
+    result.blocksFailed = static_cast<std::size_t>(
+        processFailures_.load(std::memory_order_relaxed) - failuresBefore);
+    return result;
+}
+
 void PluginInstance::unprepare() noexcept {
     if (!prepared_) {
         return;
@@ -586,6 +647,13 @@ bool PluginInstance::queueParameter(Vst::ParamID id, Vst::ParamValue value) noex
         return false;
     }
     return true;
+}
+
+bool PluginInstance::setParameter(Vst::ParamID id, Vst::ParamValue value) {
+    if (controller_ != nullptr) {
+        controller_->setParamNormalized(id, value);
+    }
+    return queueParameter(id, value);
 }
 
 void PluginInstance::deliverQueuedParameters() noexcept {

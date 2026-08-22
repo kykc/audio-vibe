@@ -27,6 +27,7 @@
 #include "aip/engine/plugin_instance.h"
 #include "aip/engine/plugin_module.h"
 #include "aip/engine/stream_format.h"
+#include "aip/rt/realtime_guard.h"
 
 #include "public.sdk/source/vst/hosting/hostclasses.h"
 
@@ -139,6 +140,35 @@ public:
 
     [[nodiscard]] std::uint32_t channelMask() const noexcept { return channelMask_; }
 
+    /// Builds for a geometry we have *guessed* rather than observed, so that a rack is ready
+    /// before any audio has arrived. `sampleRate` and `channelCount` come from the endpoint's
+    /// configured device format (`ipc::RenderEndpoint`).
+    ///
+    /// Protocol v1 announces the format nowhere (sec. 4.5), so without this a client that attaches
+    /// while nothing is playing sits with every plugin unprepared until the user happens to play
+    /// something -- and only then finds out that one of them refuses the format, and only then
+    /// runs the warm-up. Guessing moves both to the moment they pressed Attach.
+    ///
+    /// A wrong guess is already a handled case rather than a hazard: ChainProcessor compares each
+    /// block against the format the chain was built for and passes it through untouched on a
+    /// mismatch, and `serviceFormatChange` then rebuilds from what was actually observed. The
+    /// cost of guessing wrong is one passed-through block and one rebuild -- which is exactly
+    /// what a format change costs anyway.
+    ///
+    /// Deliberately does not touch `servicedFormatKey_`: the first real block must still be
+    /// examined, because it is the only thing that can confirm or contradict the guess.
+    ///
+    /// A no-op returning true when the guess matches what is already built. Returns false with
+    /// `error` set when the geometry is unusable or a plugin refused it, exactly as `rebuild`
+    /// does -- and a refusal here is the point, because it is being reported hours earlier than
+    /// it otherwise would be.
+    [[nodiscard]] bool prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount,
+                                            std::string& error);
+
+    /// True when the built format came from `prepareSpeculatively` and no block has confirmed it
+    /// yet. Worth showing: "prepared" on a guess is a weaker claim than "prepared" on a block.
+    [[nodiscard]] bool builtFormatIsSpeculative() const noexcept { return speculative_; }
+
     /// Unpublishes the chain. The rack is untouched, so a later `rebuild` brings it back with
     /// every parameter still set.
     void teardown();
@@ -153,6 +183,29 @@ public:
     bool serviceFormatChange(std::string& error);
 
     [[nodiscard]] const StreamFormat& builtFormat() const noexcept { return builtFormat_; }
+
+    // ---------------------------------------------------------------------------- warm-up -----
+
+    /// Blocks each plugin is run for the moment it is prepared. Four rather than one because
+    /// first-call laziness is not always on the *first* call -- a plugin that fills an internal
+    /// buffer before it allocates gets there on the second or third.
+    static constexpr std::size_t kWarmUpBlocks = 4;
+
+    /// What the last warm-up did, summed over the plugins it covered. See
+    /// `PluginInstance::warmUp` for what is being warmed and why, and
+    /// `PluginInstance::WarmUpResult::violations` for the one thing this cannot tell you: what
+    /// the plugin itself allocated. The detector does not reach inside a plugin DLL, so a
+    /// nonzero `violations` here means *our* processing path misbehaved, which is a defect.
+    struct WarmUpReport {
+        std::size_t plugins = 0;
+        std::size_t blocks = 0;
+        std::size_t blocksFailed = 0;
+        rt::ViolationCounts violations;
+
+        [[nodiscard]] bool ran() const noexcept { return plugins != 0; }
+    };
+
+    [[nodiscard]] const WarmUpReport& lastWarmUp() const noexcept { return lastWarmUp_; }
 
     // ------------------------------------------------------------------ plugin callbacks ------
 
@@ -211,7 +264,15 @@ private:
     std::vector<std::unique_ptr<PluginInstance>> stranded_;
 
     ChainProcessor processor_;
+    /// Runs `instance` through kWarmUpBlocks and folds the result into `lastWarmUp_`. The
+    /// caller owes `PluginInstance::warmUp` its precondition: no published chain may name the
+    /// instance.
+    void warmUpInstance(PluginInstance& instance);
+
     StreamFormat builtFormat_;
+    /// See builtFormatIsSpeculative(). Cleared the moment a real block confirms the geometry.
+    bool speculative_ = false;
+    WarmUpReport lastWarmUp_;
     /// See setChannelMask(). Survives every rebuild.
     std::uint32_t channelMask_ = 0;
     /// The packed geometry key the last `serviceFormatChange` acted on. See that function.

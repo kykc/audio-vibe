@@ -32,10 +32,16 @@ struct RenderEndpoint {
     /// valet that can attach at all already knows exactly which device to ask.
     std::uint32_t channelMask = 0;
 
-    /// `nChannels` from the same format blob. Kept beside the mask so a caller can reject a
-    /// stale mask rather than trust it: the device format is what the endpoint is *configured*
-    /// for, which is not a promise about the block in front of the audio thread.
+    /// `nChannels` and `nSamplesPerSec` from the same format blob. Kept beside the mask so a
+    /// caller can reject a stale mask rather than trust it: the device format is what the
+    /// endpoint is *configured* for, which is not a promise about the block in front of the audio
+    /// thread.
+    ///
+    /// Together they are also a good enough guess at the stream geometry to prepare a chain
+    /// before a single block has arrived -- see `Engine::prepareSpeculatively`, which is the
+    /// only reason the sample rate is carried at all.
     std::uint32_t deviceChannelCount = 0;
+    std::uint32_t deviceSampleRate = 0;
 };
 
 /// Active render endpoints. Requires an initialised COM apartment on the calling thread.

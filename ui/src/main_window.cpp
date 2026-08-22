@@ -94,11 +94,16 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     connect(&host_, &EngineHost::serviced, this, &MainWindow::updateStatus);
     connect(&host_, &EngineHost::linkStateChanged, this, &MainWindow::onLinkStateChanged);
     connect(&host_, &EngineHost::chainBuilt, this,
-            [this](unsigned sampleRate, unsigned channelCount, int maxFrames) {
-                log(QStringLiteral("chain built for %1 Hz x%2 ch, up to %3 frames")
+            [this](unsigned sampleRate, unsigned channelCount, int maxFrames, bool speculative) {
+                log(QStringLiteral("chain built for %1 Hz x%2 ch, up to %3 frames%4")
                         .arg(sampleRate)
                         .arg(channelCount)
-                        .arg(maxFrames));
+                        .arg(maxFrames)
+                        .arg(speculative
+                                 ? QStringLiteral(" (from the endpoint's configured format; no "
+                                                  "block seen yet)")
+                                 : QString()));
+                logWarmUp();
                 rack_->refresh();
             });
     connect(&host_, &EngineHost::chainFailed, this, [this](const QString& error) {
@@ -474,8 +479,45 @@ QWidget* MainWindow::buildCountersGroup() {
     return group;
 }
 
+void MainWindow::logWarmUp() {
+    const engine::Engine::WarmUpReport& report = host_.engine().lastWarmUp();
+    if (!report.ran()) {
+        return;
+    }
+
+    QString text = QStringLiteral("warm-up: %1 block(s) through %2 plugin(s)")
+                       .arg(report.blocks)
+                       .arg(report.plugins);
+    if (report.blocksFailed != 0) {
+        text += QStringLiteral(", %1 refused").arg(report.blocksFailed);
+    }
+    log(text);
+
+    // Deliberately not reported as a fact about the plugin: the detector replaces `operator new`
+    // per image and a plugin is a DLL with its own, so what it can see here is our own processing
+    // path. A nonzero count is therefore a defect on our side, and reads like one.
+    const rt::ViolationCounts& v = report.violations;
+    if (v.total() != 0) {
+        log(QStringLiteral("warm-up: the host's own processing path performed %1 allocation(s), "
+                           "%2 free(s) and %3 lock(s) -- that is a defect, not the plugin")
+                .arg(v.allocations)
+                .arg(v.deallocations)
+                .arg(v.locks));
+    }
+}
+
 void MainWindow::updateStatus() {
     const EngineHost::Status status = host_.status();
+
+    // The rack list is only rebuilt on demand, and one of the things it shows -- whether the
+    // format each plugin was prepared for is a guess or an observation -- changes without any
+    // rack mutation to hang a refresh off. It flips exactly once per attach, when the first block
+    // confirms the guess, so watching it here costs one comparison a tick.
+    const bool speculative = host_.engine().builtFormatIsSpeculative();
+    if (speculative != speculativeShown_) {
+        speculativeShown_ = speculative;
+        rack_->refresh();
+    }
 
     attachButton_->setText(status.attached ? QStringLiteral("Detach")
                                            : QStringLiteral("Attach"));
@@ -483,6 +525,12 @@ void MainWindow::updateStatus() {
     refreshButton_->setEnabled(!status.attached);
 
     QString link = QStringLiteral("%1").arg(QLatin1String(linkStateName(status.linkState)));
+    if (status.idle) {
+        // The endpoint has gone quiet. Said here rather than left to be inferred from the
+        // counters, because what the counters show is `timeouts` climbing ten a second next to
+        // two counters that only move when something is wrong -- see EngineHost::Status::idle.
+        link += QStringLiteral(", idle");
+    }
     if (status.attached) {
         link += QStringLiteral("  --  %1").arg(status.endpointName);
         link += QStringLiteral("  --  %1 attach cycle(s)").arg(status.attachCycles);

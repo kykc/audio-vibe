@@ -58,6 +58,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <vector>
 
 #define AIP_TEST_PLUGIN_NAME "AIP Test Plugin"
 #define AIP_WIDE_PLUGIN_NAME "AIP Wide Plugin"
@@ -224,6 +225,19 @@ public:
     }
 
     tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {
+        // Allocates on the first call and never again, which is what a great many real plugins do
+        // and what the host's warm-up exists to absorb (PluginInstance::warmUp).
+        //
+        // The host cannot *count* this -- its detector replaces `operator new` per image and this
+        // is a DLL with its own -- so no test asserts on it. It is here so the fixture has the
+        // first-call laziness the warm-up is aimed at, rather than being a plugin for which the
+        // warm-up is trivially a no-op.
+        if (!firstProcessDone) {
+            firstProcessDone = true;
+            std::vector<float> lazy(64, 0.f);
+            firstProcessSum = lazy.size();
+        }
+
         applyInputParameterChanges(data);
 
         if (data.numInputs < 1 || data.numOutputs < 1 || data.numSamples <= 0) {
@@ -322,6 +336,11 @@ private:
             componentHandler->performEdit(kMeterId, static_cast<ParamValue>(reportedValue));
         }
     }
+
+    /// See the top of `process`. Not atomic: written once, on whichever thread gets there first,
+    /// and read by nothing that matters.
+    bool firstProcessDone = false;
+    std::size_t firstProcessSum = 0;
 
     std::atomic<ParamValue> gainNormalized{0.5};
     std::atomic<ParamValue> editsNormalized{0.0};

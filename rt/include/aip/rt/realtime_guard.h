@@ -48,9 +48,20 @@ inline std::atomic<std::uint64_t> gAllocations{0};
 inline std::atomic<std::uint64_t> gDeallocations{0};
 inline std::atomic<std::uint64_t> gLocks{0};
 inline std::atomic<bool> gBreakOnViolation{false};
+/// Non-null while a ViolationProbe is in scope on this thread. See the class below.
+inline thread_local ViolationCounts* tlsProbe = nullptr;
 
-inline void note(std::atomic<std::uint64_t>& counter) noexcept {
+inline void note(std::atomic<std::uint64_t>& counter,
+                 std::uint64_t ViolationCounts::*field) noexcept {
     if (tlsRealtimeDepth == 0) {
+        return;
+    }
+    // A probe means the caller is deliberately exercising code that is *expected* to misbehave,
+    // and wants to be told what it did rather than to have it charged against the process-wide
+    // counters. Not breaking into the debugger either: a violation that was asked for is not a
+    // bug, and trapping on it would make the probe unusable in an interactive session.
+    if (tlsProbe != nullptr) {
+        ++(tlsProbe->*field);
         return;
     }
     counter.fetch_add(1, std::memory_order_relaxed);
@@ -75,19 +86,19 @@ inline void note(std::atomic<std::uint64_t>& counter) noexcept {
 
 inline void noteAllocation() noexcept {
 #if defined(AIP_RT_CHECKS)
-    detail::note(detail::gAllocations);
+    detail::note(detail::gAllocations, &ViolationCounts::allocations);
 #endif
 }
 
 inline void noteDeallocation() noexcept {
 #if defined(AIP_RT_CHECKS)
-    detail::note(detail::gDeallocations);
+    detail::note(detail::gDeallocations, &ViolationCounts::deallocations);
 #endif
 }
 
 inline void noteLock() noexcept {
 #if defined(AIP_RT_CHECKS)
-    detail::note(detail::gLocks);
+    detail::note(detail::gLocks, &ViolationCounts::locks);
 #endif
 }
 
@@ -127,6 +138,51 @@ inline void setBreakOnViolation(bool enabled) noexcept {
     return false;
 #endif
 }
+
+/// Runs a scope *as if* it were an audio-thread callback, and counts what it did privately.
+///
+/// This exists for one job: exercising third-party code on the control thread on purpose, to make
+/// it do its first-call misbehaviour somewhere harmless. `PluginInstance::warmUp` runs a few
+/// blocks through a plugin the moment it is prepared, so that a plugin which allocates on its
+/// first `process` -- a great many do -- allocates *there*, on the control thread, rather than on
+/// the valet thread the first time the user plays something.
+///
+/// A plain RealtimeGuard would be wrong for that. Its counters are process-wide, and sec. 7.4.3's
+/// acceptance criterion is that they are *exactly zero* after steady state; charging a deliberate
+/// warm-up against them would make the one number this project is most careful about mean
+/// something else. So the probe diverts counting into itself for the duration of the scope, and
+/// the globals never see it.
+///
+/// Nests: an inner probe takes over and the outer one resumes when it leaves. Not thread-safe and
+/// does not need to be -- the diversion is thread-local, like the depth it rides on.
+class ViolationProbe {
+public:
+    ViolationProbe() noexcept {
+#if defined(AIP_RT_CHECKS)
+        ++detail::tlsRealtimeDepth;
+        previous_ = detail::tlsProbe;
+        detail::tlsProbe = &counts_;
+#endif
+    }
+
+    ~ViolationProbe() {
+#if defined(AIP_RT_CHECKS)
+        detail::tlsProbe = previous_;
+        --detail::tlsRealtimeDepth;
+#endif
+    }
+
+    ViolationProbe(const ViolationProbe&) = delete;
+    ViolationProbe& operator=(const ViolationProbe&) = delete;
+
+    /// What the scope has done so far. Zero in a build without the detector, which is why
+    /// callers must report it rather than assert on it.
+    [[nodiscard]] ViolationCounts counts() const noexcept { return counts_; }
+
+private:
+    ViolationCounts counts_{};
+    [[maybe_unused]] ViolationCounts* previous_ = nullptr;
+};
 
 /// RAII marker for a real-time section. Place one at the top of every audio-thread callback.
 /// Nesting is supported; the guard is reentrant per thread.

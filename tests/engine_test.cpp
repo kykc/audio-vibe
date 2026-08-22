@@ -21,9 +21,14 @@
 #include "aip/ipc/valet_thread.h"
 #include "aip/rt/realtime_guard.h"
 
+#include "public.sdk/source/vst/hosting/hostclasses.h"
+
+#include "pluginterfaces/gui/iplugview.h"
+
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -969,4 +974,354 @@ TEST_CASE("a plugin narrower than the stream is still refused", "[engine][busses
     CHECK(host.chainProcessor().current() == nullptr);
     REQUIRE(host.rebuild(stereoFormat(), error));
     CHECK(host.chainProcessor().current() != nullptr);
+}
+
+
+// -------------------------------------------------------------- the host's own parameter path -
+
+TEST_CASE("a plugin is allowed to have no editor of its own", "[engine][editor]") {
+    // The premise of the generic editor, pinned here because it is a fact about VST3 rather than
+    // about our code: `createView(kEditor)` returning null is a legal answer, not a failure. The
+    // fixture gives it -- it never overrides createView -- which is what makes it the specimen
+    // the shell's fallback editor is built against.
+    std::string error;
+    engine::PluginModule::Ptr module = engine::PluginModule::load(kTestPluginPath, error);
+    REQUIRE(module != nullptr);
+
+    Steinberg::IPtr<Steinberg::Vst::HostApplication> hostContext =
+        Steinberg::owned(new Steinberg::Vst::HostApplication());
+    std::unique_ptr<engine::PluginInstance> instance = engine::PluginInstance::create(
+        module, module->audioEffects().front().id, hostContext, error);
+    REQUIRE(instance != nullptr);
+
+    Steinberg::Vst::IEditController* controller = instance->controller();
+    REQUIRE(controller != nullptr);
+
+    Steinberg::IPtr<Steinberg::IPlugView> view =
+        Steinberg::owned(controller->createView(Steinberg::Vst::ViewType::kEditor));
+    CHECK(view == nullptr);
+
+    // ...and it still has parameters, which is the whole reason a fallback editor is worth
+    // building rather than reporting "no editor" and stopping.
+    CHECK(controller->getParameterCount() > 0);
+}
+
+TEST_CASE("a host-originated parameter edit reaches both halves of the plugin",
+          "[engine][params]") {
+    // A plugin's own editor sets its controller itself and reports the edit through
+    // IComponentHandler, and Engine::serviceParameterEdits carries that across to the processor.
+    // An edit made in a window of *ours* has neither going for it, so `setParameter` has to do
+    // both -- and this checks both, separately, because the fixture is a single component and
+    // would sound right from the controller call alone.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    const std::uint64_t deliveredBefore = plugin->deliveredParameters();
+
+    CHECK(plugin->setParameter(kGainParam, 1.0));
+
+    // The controller half: what the shell's own slider and the plugin's value string read from.
+    CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
+
+    Rig rig(host.blockProcessor(), L"engine-host-param");
+    const std::vector<float> in = signedRamp(kFrames);
+    const std::vector<float> out = rig.run(in);
+
+    // The processor half, twice over: the audio changed, and it changed because a value came
+    // through `inputParameterChanges` rather than because a single-component plugin happens to
+    // be its own controller.
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i] * 2.f));
+    }
+    CHECK(plugin->deliveredParameters() > deliveredBefore);
+}
+
+TEST_CASE("a host-originated edit survives a rebuild, like any other", "[engine][params]") {
+    // The rack outlives the chain, so a value set through the shell has to come back after a
+    // format change the same way one set in a plugin's own editor does. Cheap to check and the
+    // kind of thing that quietly stops being true.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->setParameter(kOffsetParam, 0.25));
+
+    REQUIRE(host.rebuild(stereoFormat(96000), error));
+    INFO("rebuild error: " << error);
+
+    // Same instance, because re-preparing happens in place.
+    CHECK(host.pluginAt(0) == plugin);
+    CHECK(getParameter(host, 0, kOffsetParam) == Approx(0.25));
+}
+
+
+// ------------------------------------------------------------------------------- warm-up ------
+
+TEST_CASE("a plugin is exercised the moment it is prepared, not the first time audio arrives",
+          "[engine][warmup]") {
+    // Left alone, a plugin's first-call behaviour -- allocating, building tables, faulting --
+    // happens on the valet thread the first time the user plays something, which may be hours
+    // after they loaded it and with nothing on screen connecting the two. The warm-up moves it
+    // to the moment they pressed the button.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+
+    // No audio has been dispatched at all at this point -- there is not even a valet attached.
+    CHECK(plugin->processCalls() == engine::Engine::kWarmUpBlocks);
+
+    const engine::Engine::WarmUpReport& report = host.lastWarmUp();
+    CHECK(report.ran());
+    CHECK(report.plugins == 1);
+    CHECK(report.blocks == engine::Engine::kWarmUpBlocks);
+    CHECK(report.blocksFailed == 0);
+}
+
+TEST_CASE("warming up costs the process no counted violations", "[engine][warmup][rt]") {
+    // Two claims, and the second one is a limitation rather than a feature -- pinned here because
+    // it is exactly the sort of thing someone reads the warm-up's report and assumes away.
+    if constexpr (!rt::checksEnabled()) {
+        SKIP("built without AIP_RT_CHECKS (Release); the detector is compiled out by design");
+    }
+
+    rt::resetViolations();
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    const engine::Engine::WarmUpReport& report = host.lastWarmUp();
+    REQUIRE(report.ran());
+
+    // One: nothing the warm-up did was charged to the process. That is the whole point of running
+    // it under a probe -- a warm-up that moved these counters would make sec. 7.4.3's "exactly
+    // zero" mean "zero plus whatever we did on purpose", which is not a criterion at all.
+    CHECK(rt::violations().total() == 0);
+
+    // Two: the probe saw nothing either, *and this is expected*. The fixture allocates on its
+    // first process call on purpose (see aip_test_plugin.cpp), and the detector still reports
+    // zero -- because it replaces `operator new` per image and a VST3 plugin is a DLL carrying
+    // its own, as rt/src/alloc_hooks.cpp says in as many words.
+    //
+    // So the warm-up cannot tell anyone what a plugin allocates. It can only make the plugin do
+    // it here rather than on the valet thread, which needs no counter. Anything nonzero in this
+    // field is our own processing path misbehaving, and would be a defect.
+    INFO("allocations " << report.violations.allocations << " frees "
+                        << report.violations.deallocations << " locks "
+                        << report.violations.locks);
+    CHECK(report.violations.total() == 0);
+
+    rt::resetViolations();
+}
+
+TEST_CASE("a plugin inserted into a running rack is warmed before it can be reached",
+          "[engine][warmup]") {
+    // The other prepare site. Here there is no retract to lean on -- the instance is warmed while
+    // it is still outside the rack, which is what makes it unreachable from the audio thread.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    Rig rig(host.blockProcessor(), L"engine-warmup-insert");
+    const std::vector<float> in = signedRamp(32);
+    (void)rig.run(in);
+
+    REQUIRE(host.insertPlugin(1, kTestPluginPath, error));
+    INFO("insert error: " << error);
+
+    engine::PluginInstance* inserted = host.pluginAt(1);
+    REQUIRE(inserted != nullptr);
+    CHECK(inserted->processCalls() >= engine::Engine::kWarmUpBlocks);
+
+    const engine::Engine::WarmUpReport& report = host.lastWarmUp();
+    CHECK(report.plugins == 1);
+    CHECK(report.blocks == engine::Engine::kWarmUpBlocks);
+
+    // The rack still works afterwards, which is the part a warm-up could plausibly break: it
+    // leaves parameter queues drained and the plugin's own state advanced by four blocks.
+    const std::vector<float> out = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i]));
+    }
+}
+
+TEST_CASE("warming up does not disturb a restored parameter", "[engine][warmup][params]") {
+    // The warm-up calls the same `process` the audio thread does, which drains the parameter ring
+    // into the plugin. That is correct -- the values are applied rather than lost -- but it is
+    // exactly the kind of side effect worth pinning, because "the session restored but the first
+    // four blocks used the wrong gain" is invisible until someone listens closely.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->setParameter(kGainParam, 1.0));
+
+    // A rebuild re-prepares and re-warms with that value already queued.
+    REQUIRE(host.rebuild(stereoFormat(96000), error));
+    INFO("rebuild error: " << error);
+    CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
+
+    Rig rig(host.blockProcessor(), L"engine-warmup-params", 96000);
+    const std::vector<float> in = signedRamp(32);
+    const std::vector<float> out = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i] * 2.f));
+    }
+}
+
+
+// ------------------------------------------------------------------- speculative preparation --
+
+TEST_CASE("a rack is prepared from the endpoint's format before any block arrives",
+          "[engine][speculative]") {
+    // Protocol v1 announces the format nowhere (sec. 4.5), so a client that attaches while
+    // nothing is playing used to sit with every plugin unprepared -- no warm-up, and no way to
+    // learn that a plugin refuses the format -- until the user happened to play something.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    REQUIRE_FALSE(plugin->prepared());
+
+    REQUIRE(host.prepareSpeculatively(48000, 2, error));
+    INFO("guess error: " << error);
+
+    CHECK(plugin->prepared());
+    CHECK(host.builtFormat().sampleRate == 48000);
+    CHECK(host.builtFormat().channelCount == 2);
+    // Prepared *and warmed*, which is the other half of what waiting for a block was costing.
+    CHECK(plugin->processCalls() == engine::Engine::kWarmUpBlocks);
+
+    // Flagged, because "prepared" on a guess is a weaker claim than "prepared" on a block.
+    CHECK(host.builtFormatIsSpeculative());
+}
+
+TEST_CASE("a correct guess is confirmed by the first block rather than rebuilt",
+          "[engine][speculative]") {
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.prepareSpeculatively(48000, 2, error));
+    REQUIRE(host.builtFormatIsSpeculative());
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    const std::uint64_t warmedCalls = plugin->processCalls();
+
+    Rig rig(host.blockProcessor(), L"engine-guess-right", 48000, 2);
+    const std::vector<float> in = signedRamp(64);
+    const std::vector<float> out = rig.run(in);
+
+    // Processed from the very first block: no pass-through, because the chain was already there.
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i]));
+    }
+    CHECK(host.chainProcessor().blocksProcessed() >= 1);
+    CHECK(host.chainProcessor().blocksPassedThrough() == 0);
+
+    // Servicing now confirms the guess without rebuilding -- same instance, no second warm-up.
+    REQUIRE_FALSE(host.serviceFormatChange(error));
+    CHECK(error.empty());
+    CHECK_FALSE(host.builtFormatIsSpeculative());
+    CHECK(host.pluginAt(0) == plugin);
+    CHECK(plugin->processCalls() == warmedCalls + 1);
+}
+
+TEST_CASE("a wrong guess costs one passed-through block and then corrects itself",
+          "[engine][speculative]") {
+    // The safety argument for guessing at all. ChainProcessor compares every block against the
+    // format the chain was built for and passes it through untouched on a mismatch, so a wrong
+    // guess is a handled case rather than a hazard.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+
+    // The endpoint claims 44100; the king will actually produce 48000.
+    REQUIRE(host.prepareSpeculatively(44100, 2, error));
+    REQUIRE(host.builtFormat().sampleRate == 44100);
+
+    Rig rig(host.blockProcessor(), L"engine-guess-wrong", 48000, 2);
+    const std::vector<float> in = signedRamp(64);
+
+    setParameter(host, 0, kGainParam, 1.0);
+    const std::vector<float> first = rig.run(in);
+
+    // Untouched, because the chain was built for a rate this block is not.
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(first[i] == Approx(in[i]));
+    }
+    CHECK(host.chainProcessor().formatMismatches() >= 1);
+
+    // The control thread now sees what was really observed and rebuilds for it.
+    REQUIRE(host.serviceFormatChange(error));
+    INFO("rebuild error: " << error);
+    CHECK(host.builtFormat().sampleRate == 48000);
+    CHECK_FALSE(host.builtFormatIsSpeculative());
+
+    // And the gain set before the correction survived it, because the rack outlives the chain.
+    const std::vector<float> second = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(second[i] == Approx(in[i] * 2.f));
+    }
+}
+
+TEST_CASE("guessing does not overwrite a format a block already established",
+          "[engine][speculative]") {
+    // Re-attaching to the same endpoint must not tear down a chain built from real evidence and
+    // replace it with one built from a guess.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    REQUIRE_FALSE(host.builtFormatIsSpeculative());
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    const std::uint64_t calls = plugin->processCalls();
+
+    REQUIRE(host.prepareSpeculatively(48000, 2, error));
+
+    // Same geometry, so nothing happened at all: no re-prepare, no second warm-up, and the claim
+    // is not downgraded from observed to guessed.
+    CHECK(plugin->processCalls() == calls);
+    CHECK_FALSE(host.builtFormatIsSpeculative());
+}
+
+TEST_CASE("an endpoint that reports no format is declined, not guessed at",
+          "[engine][speculative]") {
+    // A device that reports a plain WAVEFORMATEX, or none at all, leaves these zero. Inventing a
+    // plausible-looking 48 kHz stereo would be asserting something we were not told.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+
+    CHECK_FALSE(host.prepareSpeculatively(0, 0, error));
+    CHECK_FALSE(error.empty());
+    CHECK_FALSE(host.pluginAt(0)->prepared());
+
+    // Past the ceiling is refused for the same reason a rebuild refuses it.
+    CHECK_FALSE(host.prepareSpeculatively(48000, engine::kMaxChannels + 1, error));
+    CHECK_FALSE(error.empty());
 }

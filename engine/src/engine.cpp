@@ -73,6 +73,16 @@ bool Engine::publishRack() {
 
 bool Engine::retract() { return processor_.publish(nullptr); }
 
+void Engine::warmUpInstance(PluginInstance& instance) {
+    const PluginInstance::WarmUpResult result = instance.warmUp(kWarmUpBlocks);
+    ++lastWarmUp_.plugins;
+    lastWarmUp_.blocks += result.blocksRun;
+    lastWarmUp_.blocksFailed += result.blocksFailed;
+    lastWarmUp_.violations.allocations += result.violations.allocations;
+    lastWarmUp_.violations.deallocations += result.violations.deallocations;
+    lastWarmUp_.violations.locks += result.violations.locks;
+}
+
 bool Engine::rebuild(const StreamFormat& format, std::string& error) {
     error.clear();
     if (!format.valid() || format.channelCount > kMaxChannels) {
@@ -87,6 +97,7 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
         return false;
     }
 
+    lastWarmUp_ = WarmUpReport{};
     for (RackEntry& entry : rack_) {
         // prepare() re-prepares in place -- same component, same parameters, new geometry. That
         // is the whole point of the rack outliving the chain.
@@ -94,9 +105,15 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
             builtFormat_ = StreamFormat{};
             return false;
         }
+        // Safe here and only here: `retract()` above waited for the audio thread to leave, so
+        // nothing else is inside any of these instances.
+        warmUpInstance(*entry.instance);
     }
 
     builtFormat_ = format;
+    // Any ordinary rebuild is either driven by an observed block or is a caller asserting the
+    // format outright. `prepareSpeculatively` sets the flag back after calling through here.
+    speculative_ = false;
     if (!publishRack()) {
         error = "the audio thread did not release the previous chain";
         return false;
@@ -104,9 +121,36 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
     return true;
 }
 
+bool Engine::prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount,
+                                  std::string& error) {
+    error.clear();
+
+    StreamFormat guess;
+    guess.sampleRate = sampleRate;
+    guess.channelCount = channelCount;
+    guess.maxFrames = kDefaultMaxFrames;
+    if (!guess.valid() || guess.channelCount > kMaxChannels) {
+        error = "the endpoint reports no usable format to prepare for";
+        return false;
+    }
+
+    // Nothing to do when this is already what is built -- including when a real block built it,
+    // which must not be downgraded to a guess.
+    if (builtFormat_ == guess) {
+        return true;
+    }
+
+    if (!rebuild(guess, error)) {
+        return false;
+    }
+    speculative_ = true;
+    return true;
+}
+
 void Engine::teardown() {
     processor_.publish(nullptr);
     builtFormat_ = StreamFormat{};
+    speculative_ = false;
 }
 
 bool Engine::serviceFormatChange(std::string& error) {
@@ -126,6 +170,10 @@ bool Engine::serviceFormatChange(std::string& error) {
         observed.maxFrames <= builtFormat_.maxFrames) {
         // Only the block size moved, and it still fits. Nothing to do; remember it so the next
         // block of the same size does not walk this path again.
+        //
+        // This is also where a guess stops being one: a block has now been observed that the
+        // built chain matches, which is the only confirmation available.
+        speculative_ = false;
         servicedFormatKey_ = key;
         return false;
     }
@@ -235,8 +283,14 @@ bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
 
     // Prepared before it is inserted, and inserted before anything is published: a plugin that
     // cannot take the current format is reported without disturbing what is already running.
-    if (builtFormat_.valid() && !instance->prepare(builtFormat_, channelMask_, error)) {
-        return false;
+    if (builtFormat_.valid()) {
+        if (!instance->prepare(builtFormat_, channelMask_, error)) {
+            return false;
+        }
+        // No retract needed for this one: the instance is not in the rack yet, so no published
+        // chain can name it and the audio thread has no way to reach it.
+        lastWarmUp_ = WarmUpReport{};
+        warmUpInstance(*instance);
     }
 
     rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),

@@ -57,6 +57,7 @@ void readDeviceFormat(IPropertyStore& store, RenderEndpoint& out) {
         value.blob.pBlobData != nullptr && value.blob.cbSize >= sizeof(WAVEFORMATEX)) {
         const auto* format = reinterpret_cast<const WAVEFORMATEX*>(value.blob.pBlobData);
         out.deviceChannelCount = format->nChannels;
+        out.deviceSampleRate = format->nSamplesPerSec;
         if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
             value.blob.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) &&
             format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {

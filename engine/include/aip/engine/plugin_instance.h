@@ -19,6 +19,7 @@
 #include "aip/engine/component_handler.h"
 #include "aip/engine/plugin_module.h"
 #include "aip/engine/stream_format.h"
+#include "aip/rt/realtime_guard.h"
 #include "aip/rt/spsc_queue.h"
 
 #include "public.sdk/source/vst/hosting/connectionproxy.h"
@@ -134,6 +135,52 @@ public:
     [[nodiscard]] bool prepare(const StreamFormat& format, std::uint32_t channelMask,
                                std::string& error);
 
+    /// What one warm-up did. See `warmUp`.
+    struct WarmUpResult {
+        std::size_t blocksRun = 0;
+        /// Blocks the plugin answered with something other than `kResultOk`. A few on the first
+        /// call is not unusual; all of them means the plugin does not want to run at this format
+        /// and is worth putting in front of a user.
+        std::size_t blocksFailed = 0;
+        /// Violations the detector could see during the warm-up, counted privately so they are
+        /// not charged against sec. 7.4.3's process-wide criterion (`rt::ViolationProbe`).
+        ///
+        /// **This does not see what the plugin did.** The detector replaces `operator new` per
+        /// image, and a VST3 plugin is a DLL carrying its own (`rt/src/alloc_hooks.cpp` says so
+        /// in as many words); its allocations resolve to the CRT's and are invisible here. What
+        /// this covers is *our* side of the call -- `process` itself, the parameter drain, the
+        /// SDK containers -- where a nonzero count is a bug in this codebase rather than a fact
+        /// about the plugin.
+        ///
+        /// The warm-up still does its job for plugin-side laziness. Making the allocation happen
+        /// here instead of on the valet thread does not require being able to count it.
+        ///
+        /// Always zero in a build without the detector.
+        rt::ViolationCounts violations;
+    };
+
+    /// Control thread, on a prepared instance that **no published chain names**. Runs `blocks`
+    /// blocks through the plugin and throws the output away.
+    ///
+    /// The point is to make first-call behaviour happen somewhere harmless. A great many plugins
+    /// allocate, build tables, or touch pages the first time `process` is called, and some fault
+    /// outright; left alone, all of that lands on the valet thread the first time the user plays
+    /// something -- minutes or hours after the plugin was loaded, with nothing on screen
+    /// connecting the two. Running it here moves it to the moment the user pressed a button.
+    ///
+    /// Fed low-level noise rather than silence, and for a concrete reason: silence is skippable.
+    /// The APO on the other end of the protocol does exactly that -- it returns early on
+    /// `BUFFER_SILENT` without publishing anything -- and plugins take the same shortcut. A block
+    /// of zeroes would warm up only the plugins that had nothing to warm up.
+    ///
+    /// The caller's obligation is the one in the first line. `process` is not safe to call
+    /// concurrently with the audio thread, so this is only correct where nothing else can be
+    /// inside the instance: after `retract()`, or on an instance not yet in the rack.
+    ///
+    /// Counts toward `processCalls()`, which is the honest thing for it to do -- the blocks
+    /// really were processed.
+    [[nodiscard]] WarmUpResult warmUp(std::size_t blocks);
+
     /// Reverses `prepare`. Idempotent.
     void unprepare() noexcept;
 
@@ -238,6 +285,25 @@ public:
     /// thread that must never block.
     [[nodiscard]] bool queueParameter(Steinberg::Vst::ParamID id,
                                       Steinberg::Vst::ParamValue value) noexcept;
+
+    /// Control thread. Applies a value the *host* originated -- a control in a window of ours,
+    /// rather than one in the plugin's own editor -- to both halves of the plugin.
+    ///
+    /// Both, because for a host-originated edit nothing else will do either. A plugin's own
+    /// editor sets its controller itself and tells us through `IComponentHandler`, which
+    /// `Engine::serviceParameterEdits` carries across to the processor; an edit that started
+    /// outside the plugin has neither of those going for it. So this sets the controller, so it
+    /// and any editor of its own show the value, *and* queues it for the processor, so it is
+    /// audible.
+    ///
+    /// For a single-component plugin the two halves are one object and the controller call is
+    /// already enough to change the sound. Queueing anyway is deliberate: the value the processor
+    /// reads should arrive by the same route whatever shape the plugin is, and delivering a value
+    /// the object already holds costs one coalesced queue slot and changes nothing.
+    ///
+    /// False means the ring was full and the *processor* did not get it; the controller is
+    /// updated either way. Benign mid-gesture -- the next mouse move supersedes it.
+    bool setParameter(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value);
 
     /// Values handed to the plugin through `inputParameterChanges`.
     [[nodiscard]] std::uint64_t deliveredParameters() const noexcept {

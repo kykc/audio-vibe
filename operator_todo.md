@@ -14,6 +14,5 @@
 * Drag-and-drop reordering.
 * Context menu for chain items.
 * Refine stats not to be so noisy (condence fast changing numbers to 23.4k? limit number of updates to n per second?)
-* Relax bus/channel requirements. If plugins want 32 channels and we only have 2 there's no need to decline -> we can provide 2 channels and 30 channels of silent throw-away buffers.
-* plugins with no editor
 * ability to save/load chain presets outside of the main state file
+* Why timeouts are not climbing after attaching to the idle device right after starting UI?

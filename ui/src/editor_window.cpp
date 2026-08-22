@@ -77,7 +77,7 @@ private:
 // -------------------------------------------------------------------------------- construction
 
 EditorWindow::EditorWindow(engine::PluginInstance& instance, QWidget* parent)
-    : QWidget(parent, Qt::Window), instance_(&instance) {
+    : PluginEditorWindow(parent, Qt::Window), instance_(&instance) {
     setWindowTitle(QString::fromStdString(instance.name()));
     setAttribute(Qt::WA_DeleteOnClose);
     hideTitleBarIcon(*this);
@@ -285,6 +285,14 @@ void EditorWindow::resizeEvent(QResizeEvent* event) {
         native_->resize(wanted.right - wanted.left, wanted.bottom - wanted.top);
     }
     view_->onSize(&wanted);
+}
+
+QString EditorWindow::describe() const {
+    return QStringLiteral("its own editor, %1 x %2, %3 child window(s), scale-aware: %4")
+        .arg(width())
+        .arg(height())
+        .arg(childWindowCount())
+        .arg(scaleAware_ ? QStringLiteral("yes") : QStringLiteral("no"));
 }
 
 int EditorWindow::childWindowCount() const {

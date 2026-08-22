@@ -2,6 +2,9 @@
 
 #include <QTimer>
 
+#include <chrono>
+#include <string>
+
 namespace aip::ui {
 
 namespace {
@@ -11,6 +14,13 @@ namespace {
 /// or two blocks. It is also how long a knob in a plugin's editor can lag the audio, which is the
 /// same reason to keep it short.
 constexpr int kTickMs = 100;
+
+/// How long the block counter has to stand still before the link is called idle. The valet times
+/// out every 100 ms, and a playing endpoint delivers a block far more often than that -- roughly
+/// one every 10 ms at the geometry Windows actually uses -- so half a second is dozens of missed
+/// blocks and cannot be reached by ordinary jitter. Long enough not to flicker at the end of a
+/// track, short enough that the label is right by the time a user looks at it.
+constexpr auto kIdleAfter = std::chrono::milliseconds(500);
 
 } // namespace
 
@@ -58,8 +68,29 @@ bool EngineHost::attach(const ipc::RenderEndpoint& endpoint, QString& error) {
 
     supervisor_ = std::move(supervisor);
     endpointName_ = QString::fromStdWString(endpoint.friendlyName);
+
+    // Prepare for the endpoint's configured format now, rather than waiting for a block to reveal
+    // one. Nothing is playing on a freshly attached endpoint more often than not, and without
+    // this the whole rack sits unprepared -- no warm-up, and no way to learn that a plugin
+    // refuses the format -- until the user happens to play something.
+    //
+    // Failure is reported and otherwise ignored: the guess is an optimisation, and the first real
+    // block will build the chain properly whatever happens here.
+    std::string guessError;
+    if (engine_.prepareSpeculatively(endpoint.deviceSampleRate, endpoint.deviceChannelCount,
+                                     guessError)) {
+        const engine::StreamFormat built = engine_.builtFormat();
+        if (built.valid()) {
+            Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames,
+                              engine_.builtFormatIsSpeculative());
+        }
+    } else {
+        Q_EMIT chainFailed(QString::fromStdString(guessError));
+    }
+
     previousCounters_ = ipc::ValetCounters::Snapshot{};
     lastCounters_ = ipc::ValetCounters::Snapshot{};
+    lastBlockAt_ = std::chrono::steady_clock::now();
     blocksPerSecond_ = 0.0;
     return true;
 }
@@ -87,6 +118,11 @@ void EngineHost::tick() {
             blocksPerSecond_ = static_cast<double>(counters.blocks - previousCounters_.blocks) /
                                seconds;
         }
+        // The block *counter* moving, not the rate: a rate computed over one tick can round to
+        // zero for a slow endpoint, and the question here is whether anything arrived at all.
+        if (counters.blocks != previousCounters_.blocks) {
+            lastBlockAt_ = now;
+        }
         previousCounters_ = counters;
         lastCounters_ = counters;
     }
@@ -97,7 +133,8 @@ void EngineHost::tick() {
     std::string error;
     if (engine_.serviceFormatChange(error)) {
         const engine::StreamFormat built = engine_.builtFormat();
-        Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames);
+        Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames,
+                          engine_.builtFormatIsSpeculative());
     } else if (!error.empty()) {
         Q_EMIT chainFailed(QString::fromStdString(error));
     }
@@ -114,6 +151,11 @@ EngineHost::Status EngineHost::status() {
     status.counters = lastCounters_;
     status.blocksPerSecond = blocksPerSecond_;
     status.attachCycles = supervisor_ ? supervisor_->attachCount() : 0;
+    // Only while attached, and only in the state where blocks are the expectation. A relinquished
+    // link is not idle, it is finished, and saying "idle" of it would be the same kind of
+    // misreading this flag exists to prevent.
+    status.idle = status.attached && status.linkState == ipc::LinkState::Attached &&
+                  (std::chrono::steady_clock::now() - lastBlockAt_) >= kIdleAfter;
 
     const engine::ChainProcessor& processor = engine_.chainProcessor();
     status.builtFormat = engine_.builtFormat();

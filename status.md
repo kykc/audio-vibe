@@ -1307,6 +1307,104 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     be something a run could demonstrate rather than something the code asserts about itself. It
     does exactly what the first Add does and reports the summary through the log view.
 
+59. **A plugin with no editor of its own gets one drawn from its parameter list.**
+    `createView(kEditor)` returning null is a legal VST3 answer, not a failure, and a plugin that
+    gives it was previously loadable, audible, and completely unadjustable -- the shell reported
+    "the plugin has no editor view" and stopped. `GenericEditorWindow` draws a row per parameter
+    instead: name, slider, and the value as the plugin spells it through `getParamStringByValue`.
+
+    Three things about it are not obvious. **An edit made there has to reach both halves of the
+    plugin**: a plugin's own editor sets its controller itself and reports through
+    `IComponentHandler`, which item 26's drain carries to the processor, and an edit that starts
+    in a window of *ours* has neither going for it -- hence `PluginInstance::setParameter`, which
+    does both and is a separate path rather than a special case inside the drain. **The values are
+    polled, not pushed**, because nothing tells a host that a plugin moved its own parameter; a
+    100 ms timer re-reads the controller, skipping any slider the user is holding, since a poll
+    that writes into a control mid-drag makes it stutter. And **read-only parameters are shown and
+    disabled rather than omitted**, because for a meter or a gain-reduction readout the value is
+    the entire point of it.
+
+    `EditorManager` falls through to it on *any* failure to embed the plugin's own editor, not
+    only on "no view": from the user's side a view we cannot host is in the same position as one
+    that does not exist, and the reason is carried into the status line rather than discarded.
+    Both kinds of window now share a `PluginEditorWindow` base, so item 29's release-before-destroy
+    rule covers them by construction instead of by a second code path remembering to.
+
+60. **The generic editor is sized from the layout's `sizeHint`, not from a row height times the
+    parameter count.** The first version did the latter and was wrong by a third on the machine it
+    was written on -- the window opened with a quarter of it blank. A guessed row height cannot
+    survive a different font size or display scale, and the grid already knows exactly what its
+    rows came out to. Past a share of the screen height the rows scroll instead, because a plugin
+    with two hundred parameters is not a reason to produce a window taller than the desktop.
+
+61. **The rack is prepared from the endpoint's configured format, before any block arrives.**
+    Protocol v1 announces the format nowhere (sec. 4.5), so `serviceFormatChange` keys off an
+    observed block and there is nothing to observe until someone plays something. A client that
+    attached to a quiet endpoint therefore sat with every plugin `[not prepared]`, unwarmed, and
+    with no way to learn that one of them refuses the format -- until the user happened to start
+    audio, possibly hours later. `Engine::prepareSpeculatively` guesses from
+    `PKEY_AudioEngine_DeviceFormat`, which we were already reading for the channel mask (item
+    11b) and which carries `nSamplesPerSec` and `nChannels` too.
+
+    The safety argument is that a wrong guess was already a handled case. `ChainProcessor`
+    compares every block against the format its chain was built for and passes it through
+    untouched on a mismatch; `serviceFormatChange` then rebuilds from what was actually observed.
+    So guessing wrong costs one passed-through block and one rebuild -- exactly what a format
+    change costs anyway -- and there is a test that drives that path deliberately.
+
+    Two things it must not do, both tested. It must not touch `servicedFormatKey_`, because the
+    first real block still has to be examined -- it is the only thing that can contradict the
+    guess. And it must not overwrite a format a block already established, or re-attaching to the
+    same endpoint would tear down a chain built from evidence and replace it with one built from
+    a guess. `builtFormatIsSpeculative()` distinguishes the two claims, and the rack shows
+    "(expected)" until a block confirms it.
+
+62. **A plugin is run for four blocks the moment it is prepared, before any audio can reach it.**
+    First-call behaviour -- allocating, building tables, faulting outright -- otherwise happens on
+    the valet thread the first time the user plays something, which can be hours after they loaded
+    the plugin and with nothing on screen connecting the two. `PluginInstance::warmUp` moves it to
+    the moment they pressed the button. Called from the two places a plugin is prepared: inside
+    `rebuild` (after `retract()`, so every instance is quiescent) and inside `insertPluginImpl`
+    (before the instance joins the rack, so no published chain can name it). That precondition --
+    no published chain names the instance -- is the whole safety argument; `process` is not safe
+    to call beside the audio thread.
+
+    Fed low-level deterministic noise, not silence, and the APO is the reason. It returns early on
+    `BUFFER_SILENT` without publishing anything at all (`AudioIpcApo.cpp:270`), and plugins take
+    the same shortcut internally -- so a block of zeroes would warm up only the plugins that had
+    nothing to warm up. Run at `maxFrames` rather than a typical block size, because a plugin that
+    sizes something lazily sizes it for what it is shown.
+
+    This was chosen over the obvious alternative of opening our own WASAPI stream and playing an
+    inaudible tone to make the endpoint go live. That would additionally get the *authentic*
+    format at attach time, but it is the weakest of the three benefits -- a chain built from the
+    device format and later contradicted just rebuilds, which is the designed path -- and it costs
+    a relay click on every AV receiver and USB DAC that pops when a stream starts on an idle
+    endpoint, plus a failure mode when another app holds the endpoint exclusively.
+
+63. **The warm-up cannot tell you what a plugin allocated, and the report says so.**
+    The first version claimed it could. The detector replaces `operator new` per *image*, and a
+    VST3 plugin is a DLL carrying its own -- `rt/src/alloc_hooks.cpp` says exactly this in its
+    header comment, about Qt and "later the VST3 plugins". So a plugin's allocations resolve to
+    the CRT's operators and are invisible. The fixture allocates on its first process call on
+    purpose and the probe still reports zero; there is a test that asserts that zero and explains
+    it, so the claim cannot quietly come back.
+
+    What survives is what mattered: making the allocation happen on the control thread instead of
+    the valet thread needs no counter. A nonzero count in `WarmUpReport::violations` means *our*
+    processing path misbehaved, and the shell reports it as a defect on our side rather than as a
+    fact about the plugin.
+
+64. **`rt::ViolationProbe` runs a scope as a real-time section but counts privately.**
+    Introduced for the warm-up and useful beyond it. A plain `RealtimeGuard` would have charged
+    four blocks of deliberate third-party execution against the process-wide counters, and sec.
+    7.4.3's acceptance criterion is that those are *exactly zero* after steady state -- charging a
+    warm-up against them would make the one number this project is most careful about mean
+    something else. The probe diverts counting into a caller-owned tally for the duration of the
+    scope and restores the previous destination on the way out, so it nests and suspends rather
+    than latching. It also suppresses `setBreakOnViolation`: a violation that was asked for is not
+    a bug, and trapping on it would make the probe unusable in an interactive session.
+
 ---
 
 ## 8. Traps already paid for

@@ -15,6 +15,7 @@
 #pragma once
 
 #include "plug_frame.h"
+#include "plugin_editor_window.h"
 
 #include "aip/engine/plugin_instance.h"
 
@@ -22,7 +23,6 @@
 #include "pluginterfaces/gui/iplugview.h"
 
 #include <QString>
-#include <QWidget>
 
 #include <memory>
 
@@ -30,7 +30,7 @@ namespace aip::ui {
 
 class NativeHostWindow;
 
-class EditorWindow final : public QWidget, private PlugFrameHost {
+class EditorWindow final : public PluginEditorWindow, private PlugFrameHost {
     Q_OBJECT
 
 public:
@@ -46,14 +46,11 @@ public:
     EditorWindow(const EditorWindow&) = delete;
     EditorWindow& operator=(const EditorWindow&) = delete;
 
-    /// Gives the plugin's view back. Idempotent, and safe to call while audio is running: it
-    /// touches the controller, never the processor. After this the window holds nothing of the
-    /// plugin and the instance may be destroyed.
-    void release() noexcept;
+    void release() noexcept override;
 
-    /// Null once `release()` has run: the instance is no longer this window's business, and
-    /// holding on to the pointer would be holding on to something the engine may have destroyed.
-    [[nodiscard]] engine::PluginInstance* instance() const noexcept { return instance_; }
+    [[nodiscard]] engine::PluginInstance* instance() const noexcept override { return instance_; }
+
+    [[nodiscard]] QString describe() const override;
 
     /// How many windows the plugin created inside the HWND we gave it. Zero means it accepted the
     /// handle and drew nothing, which is indistinguishable from success without asking -- so it is
@@ -64,11 +61,6 @@ public:
     /// `ViewRect` has to be read -- see the note on `pluginToLogical`. Worth reporting: it is the
     /// single per-plugin fact that determines whether the editor fills the window we give it.
     [[nodiscard]] bool scaleAware() const noexcept { return scaleAware_; }
-
-Q_SIGNALS:
-    /// The user closed the window. Emitted before Qt deletes it, so a listener can drop its
-    /// pointer while the object is still valid.
-    void closed(EditorWindow* self);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

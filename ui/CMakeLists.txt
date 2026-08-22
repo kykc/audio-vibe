@@ -27,6 +27,9 @@ add_executable(aip_ui WIN32
     src/editor_manager.h
     src/editor_window.cpp
     src/editor_window.h
+    src/generic_editor_window.cpp
+    src/generic_editor_window.h
+    src/plugin_editor_window.h
     src/plug_frame.cpp
     src/plug_frame.h
     src/window_chrome.cpp
