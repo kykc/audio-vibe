@@ -814,6 +814,28 @@ Worth doing at some point, none of it blocking:
 - sec. 9.6 -- replace the SDK's CMake with an in-house static library. Much less urgent now that
   `cmake/vst3sdk.cmake` gets the build down to five SDK libraries.
 
+Defects seen and not yet investigated. Both were met on 2026-08-23 while driving the shell from
+the command line to check the rack's new bypass check boxes, and both were then reproduced on a
+build of `f54f547` with that change stashed -- so neither is the check box work, and neither has
+been looked into any further than that:
+
+- **`--vst3 "C:/Program Files/Common Files/VST3/Mixer Test.vst3"` kills the shell during startup.**
+  The process dies before the main window is shown -- bash reports a segmentation fault, stdout and
+  stderr are empty, and the `--config` file is never written, so there is nothing to read
+  afterwards. It is that bundle and not the option: ZL Equalizer 2, Virtuoso, NeuralAmpModeler and
+  `mixer_playground` each load through `--vst3` on this machine without trouble. The plugin is
+  loaded in-process here, which is exactly the case `scanner/` exists to keep out of the shell
+  (sec. 7.4.5), so the first question is whether `aip_scan` survives the same bundle.
+- **Two plugins at startup hang the shell before it paints.** Either two `--vst3`, or a session
+  with one plugin restored plus one `--vst3`. The window is created at its saved size but never
+  draws: Windows replaces it with the white ghost it uses for a window that is not pumping
+  messages, and it was still that way after 45 s. One plugin is fine by either route -- `--vst3`
+  alone and a one-plugin session restore both come up and draw normally, which is how the check
+  boxes were checked in both states. Nothing has been measured; a stack from the hung process is
+  the first thing to get, and the thing to rule out first is the warm-up (item 62), which runs
+  four blocks per plugin synchronously inside `insertPluginImpl` -- on this path, before the
+  window has ever painted.
+
 ---
 
 ## 6. Live blockers and open decisions

@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
+#include <QListWidgetItem>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -33,7 +34,6 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
 
     addButton_ = button(QStringLiteral("Add..."));
     editorButton_ = button(QStringLiteral("Editor"));
-    bypassButton_ = button(QStringLiteral("Bypass"));
     upButton_ = button(QStringLiteral("Move up"));
     downButton_ = button(QStringLiteral("Move down"));
     removeButton_ = button(QStringLiteral("Remove"));
@@ -41,11 +41,13 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
 
     connect(addButton_, &QPushButton::clicked, this, &RackPanel::addPlugin);
     connect(editorButton_, &QPushButton::clicked, this, &RackPanel::openEditorForSelected);
-    connect(bypassButton_, &QPushButton::clicked, this, &RackPanel::toggleBypassSelected);
     connect(upButton_, &QPushButton::clicked, this, [this] { moveSelected(-1); });
     connect(downButton_, &QPushButton::clicked, this, [this] { moveSelected(1); });
     connect(removeButton_, &QPushButton::clicked, this, &RackPanel::removeSelected);
     connect(list_, &QListWidget::currentRowChanged, this, [this](int) { updateButtons(); });
+    // The only thing an item's check state can change is the engine's bypass flag, so every edit
+    // to an item is one -- there is nothing else on these items a user can edit.
+    connect(list_, &QListWidget::itemChanged, this, &RackPanel::setBypassFromCheck);
     connect(list_, &QListWidget::itemDoubleClicked, this, &RackPanel::openEditorForSelected);
 
     refresh();
@@ -56,6 +58,7 @@ int RackPanel::selectedIndex() const { return list_->currentRow(); }
 void RackPanel::refresh() {
     const int previous = list_->currentRow();
 
+    refreshing_ = true;
     list_->clear();
     for (std::size_t i = 0; i < host_.engine().pluginCount(); ++i) {
         engine::PluginInstance* plugin = host_.engine().pluginAt(i);
@@ -69,9 +72,6 @@ void RackPanel::refresh() {
         QString line = QStringLiteral("%1. %2")
                            .arg(i + 1)
                            .arg(QString::fromStdString(plugin->name()));
-        if (host_.engine().bypassed(i)) {
-            line += QStringLiteral("  [bypassed]");
-        }
         if (plugin->prepared()) {
             const engine::StreamFormat& format = plugin->format();
             line += QStringLiteral("  %1 Hz x%2 ch")
@@ -89,8 +89,14 @@ void RackPanel::refresh() {
         if (editors_.isOpen(*plugin)) {
             line += QStringLiteral("  [editor open]");
         }
-        list_->addItem(line);
+        auto* item = new QListWidgetItem(line, list_);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        // The box is the bypass control, so it reads the way a rack reads: ticked is in the
+        // chain, cleared is bypassed. The engine's flag remains the only copy of that fact -- the
+        // box is set from it here on every rebuild and never remembered between them.
+        item->setCheckState(host_.engine().bypassed(i) ? Qt::Unchecked : Qt::Checked);
     }
+    refreshing_ = false;
 
     if (previous >= 0 && previous < list_->count()) {
         list_->setCurrentRow(previous);
@@ -104,7 +110,6 @@ void RackPanel::updateButtons() {
     const int index = selectedIndex();
     const bool any = index >= 0;
     editorButton_->setEnabled(any);
-    bypassButton_->setEnabled(any);
     removeButton_->setEnabled(any);
     upButton_->setEnabled(any && index > 0);
     downButton_->setEnabled(any && index + 1 < list_->count());
@@ -185,22 +190,35 @@ void RackPanel::moveSelected(int delta) {
     list_->setCurrentRow(target);
 }
 
-void RackPanel::toggleBypassSelected() {
-    const int index = selectedIndex();
+void RackPanel::setBypassFromCheck(QListWidgetItem* item) {
+    if (refreshing_ || item == nullptr) {
+        return;
+    }
+    const int index = list_->row(item);
     if (index < 0) {
         return;
     }
     const auto position = static_cast<std::size_t>(index);
-    const bool bypass = !host_.engine().bypassed(position);
+    const bool bypass = item->checkState() != Qt::Checked;
+    if (bypass == host_.engine().bypassed(position)) {
+        return;
+    }
     // A bypassed plugin leaves the published view but stays in the rack, keeps its parameters and
     // keeps its editor alive (status.md sec. 7 item 24) -- so, unlike removal, this does not
     // touch the editor at all.
     if (!host_.engine().setBypass(position, bypass)) {
         Q_EMIT message(QStringLiteral("could not change bypass"));
-        return;
     }
-    refresh();
-    list_->setCurrentRow(index);
+    // Queued, not immediate: this runs inside the view's own handling of the click, and clearing
+    // the list out from under it there is not safe. Either way the rebuild re-reads the engine,
+    // so a rejected toggle puts the box back where the engine says it belongs.
+    QMetaObject::invokeMethod(
+        this,
+        [this, index] {
+            refresh();
+            list_->setCurrentRow(index);
+        },
+        Qt::QueuedConnection);
 }
 
 void RackPanel::openEditorForSelected() {

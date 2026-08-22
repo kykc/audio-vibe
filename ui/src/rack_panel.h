@@ -1,9 +1,9 @@
 // The plugin rack: what is loaded, in what order, and which ones are bypassed.
 //
 // This is a direct view of `engine::Engine`'s rack and nothing else -- there is no second model of
-// the rack on this side to fall out of step with the engine's. Every button calls the engine and
-// then rebuilds the list from what the engine now says. That costs a few list items per click and
-// removes a whole class of bug in exchange.
+// the rack on this side to fall out of step with the engine's. Every button, and the check box on
+// each row, calls the engine and then rebuilds the list from what the engine now says. That costs
+// a few list items per click and removes a whole class of bug in exchange.
 //
 // The engine's rack API is already the API a UI wants (status.md sec. 5): positions are rack
 // positions, they are stable across a rebuild, and every mutation takes effect immediately with
@@ -21,6 +21,7 @@
 #include <QWidget>
 
 class QListWidget;
+class QListWidgetItem;
 class QPushButton;
 
 namespace aip::ui {
@@ -47,7 +48,7 @@ private:
     void addPlugin();
     void removeSelected();
     void moveSelected(int delta);
-    void toggleBypassSelected();
+    void setBypassFromCheck(QListWidgetItem* item);
     void openEditorForSelected();
     void updateButtons();
 
@@ -64,11 +65,16 @@ private:
     PluginCatalog catalog_;
 
     QListWidget* list_ = nullptr;
+
+    /// Set while refresh() is filling the list. Setting an item's check state emits the same
+    /// signal a user's click does, and without this the rebuild would report every box it ticks
+    /// back to the engine as a bypass change.
+    bool refreshing_ = false;
+
     QPushButton* addButton_ = nullptr;
     QPushButton* removeButton_ = nullptr;
     QPushButton* upButton_ = nullptr;
     QPushButton* downButton_ = nullptr;
-    QPushButton* bypassButton_ = nullptr;
     QPushButton* editorButton_ = nullptr;
 };
 
