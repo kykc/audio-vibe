@@ -57,9 +57,11 @@ public:
     /// reported rather than assumed.
     [[nodiscard]] int childWindowCount() const;
 
-    /// True when the plugin implements `IPlugViewContentScaleSupport`, which decides how its
-    /// `ViewRect` has to be read -- see the note on `pluginToLogical`. Worth reporting: it is the
-    /// single per-plugin fact that determines whether the editor fills the window we give it.
+    /// True when the plugin implements `IPlugViewContentScaleSupport`. Reported and not acted on:
+    /// this host does not send a scale factor, because it is per-monitor-DPI-aware and the plugin
+    /// can read its own window's DPI -- see `embed()` for the measurements behind that. Worth
+    /// reporting anyway, because it is the one per-plugin fact that says whether the plugin has
+    /// any notion of content scale at all, and the interface is all that can be asked.
     [[nodiscard]] bool scaleAware() const noexcept { return scaleAware_; }
 
 protected:
@@ -86,16 +88,22 @@ private:
     /// is no such signal in VST3 to read, and following every size it asks for costs a `move`.
     void placeOnOwner();
 
-    /// `ViewRect` is not necessarily in the same units as `QWidget` geometry. A plugin that
-    /// implements `IPlugViewContentScaleSupport` has been told the display scale and scales its
-    /// own drawing, so its rects are logical and Qt's are too -- they agree, and both of these are
-    /// the identity. A plugin that does not implement it has never heard of the scale factor and
-    /// reports device pixels, so its rects have to be divided down before Qt sees them.
+    /// `ViewRect` and `QWidget` geometry are not in the same units, and on Windows they never are.
+    /// `pluginterfaces/gui/iplugview.h` is explicit: the coordinates in a `ViewRect` are "native to
+    /// the view system of the parent type", which for `kPlatformTypeHWND` means **physical
+    /// pixels**. Qt widget geometry is logical. So every rect crossing this boundary is divided by
+    /// the device pixel ratio on the way in and multiplied on the way out -- unconditionally,
+    /// whatever the plugin implements and whatever it has been told.
     ///
-    /// Both plugins tried so far (ZL Equalizer 2 and NeuralAmpModeler) *do* implement it, so the
-    /// dividing branch is written from the VST3 contract and has not been exercised. What was
-    /// actually observed -- an editor drawn at the wrong size in the corner of its window -- had a
-    /// different cause: asking `getSize()` before `setContentScaleFactor()`. See `embed()`.
+    /// It is the "unconditionally" that was wrong here. This used to treat a scale-aware plugin's
+    /// rects as already-logical, on the reasoning that a plugin which scales its own drawing must
+    /// be answering in the same units as Qt. It is not: a plugin that scales itself scales the rect
+    /// it reports *too*, and both are physical. Reading 1472 x 949 as logical and handing it to
+    /// `resize()` asks Qt for 1840 x 1186 physical -- the scale factor applied a second time, an
+    /// editor drawn correctly in the top-left corner of a window 1.25x too big in each direction,
+    /// and with `canResize` the plugin then chasing the oversized container through `resizeView`.
+    /// On a 100% display the two readings coincide, which is the whole reason this survived: it is
+    /// invisible until an editor opens on a scaled monitor.
     [[nodiscard]] int pluginToLogical(int value) const;
     [[nodiscard]] int logicalToPlugin(int value) const;
 

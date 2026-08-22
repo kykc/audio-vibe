@@ -418,9 +418,12 @@ Proven against the real deployed APO on the development machine:
   through a two-plugin rack (ZL Equalizer 2 -> NeuralAmpModeler) with zero timeouts, zero malformed
   headers, zero format misses, zero dropped edits, zero stranded plugins and zero audio-thread
   allocations, frees or locks. Both plugins' editors were open the whole time.
-- **Two real plugin editors are hosted at once, and both fill their windows.** ZL Equalizer 2 at
-  1180 x 752 and NeuralAmpModeler at 600 x 400, each with one child HWND under the handle we gave
-  it, both reporting `IPlugViewContentScaleSupport`. ZL Equalizer 2's analyser was drawing the live
+- **Two real plugin editors are hosted at once, and both fill their windows -- on both monitors.**
+  On the 100% primary, ZL Equalizer 2 at 1178 x 759 and NeuralAmpModeler at 600 x 400; on the 125%
+  second monitor, 1472 x 949 and 750 x 500, each inside a window client area of the same size to
+  within the one pixel that 1178 x 1.25 = 1472.5 costs. Each has one child HWND under the handle we
+  gave it, and both report `IPlugViewContentScaleSupport`. Getting the second monitor right took
+  item 68. ZL Equalizer 2's analyser was drawing the live
   spectrum of the machine's own audio, which is the first evidence in this project that a plugin is
   *receiving* the system stream rather than merely being called with it.
 - **A graceful shutdown with editors open while attached exits 0.** WM_CLOSE to the shell with two
@@ -596,14 +599,19 @@ Proven against the real deployed APO on the development machine:
   is the one case where the UI carries an ordering obligation the engine cannot enforce (item 28).
 - A plugin that has no editor, or whose editor refuses our HWND. Both are handled and reported
   through the log rather than assumed away, and neither has been seen.
-- A plugin that does not implement `IPlugViewContentScaleSupport`. Both plugins tried do, so the
-  unit conversion written for the other case is from the specification and has never run.
+- A plugin that does not implement `IPlugViewContentScaleSupport`, and more to the point one that
+  does not read its own window's DPI either. Both plugins tried do the latter, which is what item
+  68 rests on; a plugin that does neither would draw at 1:1 on a scaled monitor -- small, but with
+  the window fitted exactly around it -- and none has been seen.
 - Endpoint switching from the shell. `Refresh` and the combo box are disabled while attached, which
   makes the question "detach, then attach elsewhere" -- untried, and no reason to think it fails.
 - Two shells at once, which is the real `Stolen` test (see below).
-- Anything about how the shell behaves on a high-DPI monitor other than this machine's, or across a
-  monitor change while an editor is open. `setContentScaleFactor` is sent once, at embed time, and
-  nothing listens for a screen change.
+- Dragging an open editor from one monitor to another with a different scale. Editors opening on
+  each of this machine's two monitors is now measured both ways (item 68), and a *move* should
+  follow by itself -- the plugin's window gets `WM_DPICHANGED`, rescales, and asks through
+  `resizeView`, which is converted at the ratio current at that moment -- but nobody has dragged
+  one. Nothing in `ui/` listens for a screen change, by design rather than omission.
+- Any scale other than 100% and 125%, and any monitor other than this machine's two.
 - The split component/controller path in a **test**. It is proven against a real plugin, which is
   a manual step; the automated suite still only sees our single-component fixture. Covering it
   hermetically needs a second plugin fixture.
@@ -1548,6 +1556,55 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     before the first placement the window is not centred on anything, and the move that
     `hideTitleBarIcon` causes was disarming the feature before it had run once.
 
+68. **A `ViewRect` is physical pixels, always, and the host does not send a content scale factor.**
+    Reported by the project owner on 2026-08-22: on the 125% second monitor both editors opened in
+    a window far bigger than the editor drawn in it, while the shell's own window was correct.
+    Two separate mistakes, and the second one is the interesting one.
+
+    The first: `pluginToLogical`/`logicalToPlugin` treated a scale-aware plugin's rects as *already
+    logical*, on the reasoning that a plugin scaling its own drawing must be answering in Qt's
+    units. It is not. `pluginterfaces/gui/iplugview.h` says the coordinates in a `ViewRect` are
+    "native to the view system of the parent type", which on `kPlatformTypeHWND` means physical
+    pixels -- and a plugin that scales itself scales the rect it reports too, so the rect gets
+    *larger*, not re-based. Reading 1472 x 949 as logical asked Qt for 1840 x 1186 physical: the
+    scale factor applied twice, the editor correct in the top-left corner of a window 1.25x too
+    big each way, running off the bottom of a 1080p screen. Both branches are the identity at 100%,
+    which is the whole reason this survived to be reported.
+
+    The second: **the host no longer calls `IPlugViewContentScaleSupport::setContentScaleFactor`
+    at all.** That interface exists, in the SDK's own words, "on systems where plug-ins cannot get
+    this information directly like Microsoft Windows" -- which stopped being true of this process
+    the moment it became per-monitor-DPI-aware, which Qt 6 is by default. The plugin's child window
+    then sits on our monitor and `GetDpiForWindow` tells it the truth. Measured on the 125%
+    monitor, with the call and without it:
+
+    | plugin | told 1.25 | not told | correct |
+    |---|---|---|---|
+    | ZL Equalizer 2 (JUCE) | 1472 x 949 | 1472 x 949 | 1178 x 759 at 1.25 = 1472 x 949 |
+    | NeuralAmpModeler (iPlug2) | 937 x 625 | 750 x 500 | 600 x 400 at 1.25 = 750 x 500 |
+
+    JUCE ignores the value outright, so the call is dead weight there. iPlug2 takes it *and* reads
+    the window DPI, and 937 = 600 x 1.25 x 1.25 is the two multiplied together. Worse, the doubled
+    figure arrives after attaching, as a `resizeView` a host cannot tell from a legitimate one --
+    which is why fixing the units alone left NeuralAmpModeler still 1.25x out while ZL Equalizer 2
+    came out exact. Sending it *after* attaching instead of before was tried and is no better: the
+    plugin has self-scaled by then, so the second factor lands just the same.
+
+    What this costs is a plugin that only ever learns its scale from the host: it draws at 1:1,
+    small, but with our window fitted exactly around it, because the conversion above divides
+    either way. That is a worse editor; a window one scale factor too big with the editor in the
+    corner of it is a broken one, and there is no way to ask a plugin which kind it is. Both
+    plugins in this project's reach are the self-scaling kind, and so is every framework that
+    handles per-monitor DPI.
+
+    `tools/editor_spike` carried both mistakes and has been corrected alongside, for the same
+    reason as trap 16: the spike and `ui/` must not teach different lessons.
+
+    The one residual is a single pixel. Qt widget geometry is integral logical units, so a plugin
+    1472 physical pixels wide is 1178 logical at 1.25 and 1178 x 1.25 = 1472.5 comes back as 1473.
+    The rounding is deliberately outward -- a pixel of window background at the right edge, rather
+    than a pixel of the editor clipped off.
+
 ---
 
 ## 8. Traps already paid for
@@ -1615,14 +1672,21 @@ integration. These are the ones found while implementing. Re-discovering any is 
     is what makes it look like anything but an option-name collision. Hence `--vst3`. The full
     reserved list is in the `QGuiApplication` class documentation; `-style`, `-platform`,
     `-geometry`, `-title` and `-session` are the other easy ones to collide with.
-16. **Tell a plugin its content scale *before* asking its view size.** `IPlugView::getSize` answers
-    in whatever scale the plugin currently assumes, so a host that calls `getSize` and then
-    `IPlugViewContentScaleSupport::setContentScaleFactor` sizes its window from one answer while
-    the plugin draws to another. The symptom is an editor rendered correctly but small, in the
-    corner of a window one scale factor too big -- which reads as a DPI conversion bug and is not
-    one. NeuralAmpModeler did this until the two calls were swapped; ZL Equalizer 2 did not, so one
-    plugin is not enough to notice. `tools/editor_spike` had them the wrong way round too and has
-    been corrected, so the spike and `ui/` do not disagree with each other.
+16. **If you send a plugin a content scale factor, send it *before* asking its view size -- but in
+    a per-monitor-DPI-aware host, do not send it at all.** `IPlugView::getSize` answers in whatever
+    scale the plugin currently assumes, so a host that calls `getSize` and then
+    `IPlugViewContentScaleSupport::setContentScaleFactor` sizes its window from one answer while the
+    plugin draws to another: an editor rendered correctly but small, in the corner of a window one
+    scale factor too big, which reads as a DPI conversion bug and is not one. NeuralAmpModeler did
+    this until the two calls were swapped; ZL Equalizer 2 did not, so one plugin is not enough to
+    notice.
+
+    Kept because the ordering claim is true and costs a day to rediscover -- but it is no longer
+    the reason this host gets DPI right, and the symptom above is *also* what a genuine unit bug
+    looks like, so the two are easy to confuse. Both calls are now gone: sec. 7.3 item 68 has the
+    measurements for why a host whose process reads its own window DPI must not send the factor
+    either way round, and the real conversion bug that was hiding behind this trap.
+    `tools/editor_spike` is corrected alongside, so the spike and `ui/` do not disagree.
 17. **C++20 plus Ninja Multi-Config plus an OBJECT library made the Release configuration
     unbuildable.** Declaring C++20 makes CMake emit a module-scanning (dyndep) step per target per
     configuration. With `CMAKE_CROSS_CONFIGS=all`, the per-object modmap of an OBJECT library

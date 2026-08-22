@@ -381,10 +381,13 @@ A protocol conformance harness is a first-class deliverable, replacing the manua
 ### 5.1 The deciding constraint
 
 VST3 exposes plugin editors through `IPlugView` with platform type `kPlatformTypeHWND`: the
-host must supply a **real child window handle**, and should implement
-`IPlugViewContentScaleSupport` for DPI. Any UI framework that cannot hand out a genuine HWND
-and host a foreign child HWND with correct per-monitor scaling is disqualified, regardless of
-how good its app chrome is.
+host must supply a **real child window handle**, and must get the DPI conversion right in both
+directions -- a `ViewRect` on `kPlatformTypeHWND` is in physical pixels, whatever the plugin
+implements. (`IPlugViewContentScaleSupport` looks like the answer to that and is not: it exists
+for hosts whose windows cannot report their own DPI, and sending it from one that can applies the
+scale factor twice. status.md sec. 7.3 item 68 has the measurements.) Any UI framework that cannot
+hand out a genuine HWND and host a foreign child HWND with correct per-monitor scaling is
+disqualified, regardless of how good its app chrome is.
 
 This single requirement, not aesthetics, determines the stack.
 

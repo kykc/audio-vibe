@@ -54,6 +54,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -146,31 +147,33 @@ public:
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
-        // Before `getSize`, not after. `getSize` answers in whatever scale the plugin currently
-        // assumes, so asking first and telling second sizes the window from one answer while the
-        // plugin draws to the other -- the editor then renders correctly but small, in the corner
-        // of a window one scale factor too big. NeuralAmpModeler does exactly that; ZL Equalizer 2
-        // does not, which is why the spike did not catch it and `ui/` did.
-        if (auto scale = Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)) {
-            scale->setContentScaleFactor(static_cast<float>(devicePixelRatioF()));
-            std::printf("  scale      : told the plugin %.2f\n", devicePixelRatioF());
-        } else {
-            std::puts("  scale      : plugin does not implement IPlugViewContentScaleSupport");
-        }
+        // The scale factor is reported and deliberately not sent -- same reasoning, and the same
+        // measurements, as `ui/src/editor_window.cpp`. This process is per-monitor-DPI-aware, so
+        // the plugin's own window can read its monitor's DPI and does; sending it as well applies
+        // the factor twice, and NeuralAmpModeler compounds it where JUCE ignores it outright.
+        std::printf("  scale      : dpr %.2f, plugin %s IPlugViewContentScaleSupport (not sent)\n",
+                    devicePixelRatioF(),
+                    Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)
+                        ? "implements"
+                        : "does not implement");
 
         Steinberg::ViewRect rect{};
         if (view_->getSize(&rect) != kResultTrue) {
-            rect.right = 800;
-            rect.bottom = 600;
+            rect.right = toPlugin(800);
+            rect.bottom = toPlugin(600);
         }
-        const int width = rect.right - rect.left;
-        const int height = rect.bottom - rect.top;
+        // `ViewRect` is physical pixels on `kPlatformTypeHWND` (`iplugview.h`); `QWidget` geometry
+        // is logical. On a 100% display they are the same number, which is what makes getting this
+        // wrong survivable until somebody opens an editor on a scaled monitor.
+        const int width = toLogical(rect.right - rect.left);
+        const int height = toLogical(rect.bottom - rect.top);
 
         frame_ = Steinberg::owned(new PlugFrame(*this));
         view_->setFrame(frame_);
 
         if (useContainer_) {
-            native_ = std::make_unique<NativeHostWindow>(width, height);
+            native_ = std::make_unique<NativeHostWindow>(rect.right - rect.left,
+                                                         rect.bottom - rect.top);
             if (native_->hwnd() == nullptr) {
                 std::puts("  FAILED     : could not create the native host window");
                 return;
@@ -189,7 +192,20 @@ public:
         }
 
         resize(width, height);
-        std::printf("  requested  : %d x %d\n", width, height);
+        std::printf("  requested  : %d x %d physical, %d x %d logical\n",
+                    rect.right - rect.left, rect.bottom - rect.top, width, height);
+    }
+
+    /// `ViewRect` (physical pixels) <-> `QWidget` geometry (logical). Unconditional: what the
+    /// plugin implements does not change the units it answers in.
+    [[nodiscard]] int toLogical(int value) const {
+        const double ratio = devicePixelRatioF();
+        return ratio > 0.0 ? static_cast<int>(std::lround(value / ratio)) : value;
+    }
+
+    [[nodiscard]] int toPlugin(int value) const {
+        const double ratio = devicePixelRatioF();
+        return ratio > 0.0 ? static_cast<int>(std::lround(value * ratio)) : value;
     }
 
     ~EditorWidget() override { detach(); }
@@ -235,11 +251,11 @@ public:
 
     /// Applies a size the plugin asked for. Called from PlugFrame::resizeView.
     void applyPluginSize(const Steinberg::ViewRect& size) {
-        const int width = size.right - size.left;
-        const int height = size.bottom - size.top;
         if (native_) {
-            native_->resize(width, height);
+            native_->resize(size.right - size.left, size.bottom - size.top);
         }
+        const int width = toLogical(size.right - size.left);
+        const int height = toLogical(size.bottom - size.top);
         if (container_ != nullptr) {
             container_->resize(width, height);
         }
@@ -268,8 +284,8 @@ protected:
             return;
         }
         Steinberg::ViewRect wanted{};
-        wanted.right = event->size().width();
-        wanted.bottom = event->size().height();
+        wanted.right = toPlugin(event->size().width());
+        wanted.bottom = toPlugin(event->size().height());
 
         if (view_->canResize() != kResultTrue) {
             return;

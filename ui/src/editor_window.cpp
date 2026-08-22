@@ -125,18 +125,13 @@ EditorWindow* EditorWindow::create(engine::PluginInstance& instance, QWidget* pa
 }
 
 int EditorWindow::pluginToLogical(int value) const {
-    if (scaleAware_) {
-        return value;
-    }
     const double ratio = devicePixelRatioF();
     return ratio > 0.0 ? static_cast<int>(std::lround(value / ratio)) : value;
 }
 
 int EditorWindow::logicalToPlugin(int value) const {
-    if (scaleAware_) {
-        return value;
-    }
-    return static_cast<int>(std::lround(value * devicePixelRatioF()));
+    const double ratio = devicePixelRatioF();
+    return ratio > 0.0 ? static_cast<int>(std::lround(value * ratio)) : value;
 }
 
 bool EditorWindow::embed(QString& error) {
@@ -144,20 +139,28 @@ bool EditorWindow::embed(QString& error) {
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    // **Before `getSize`, and this ordering is load-bearing.** A plugin that has not yet been told
-    // the content scale reports the size it would need at the scale it currently assumes; told the
-    // scale, it reports the size at that scale and draws accordingly. Ask first and you size the
-    // window from one answer while the plugin draws to the other -- which looks like an editor
-    // sitting in the corner of a window one scale factor too big. NeuralAmpModeler did exactly
-    // that until these two calls were swapped.
+    // **The display scale is deliberately not sent.** `IPlugViewContentScaleSupport` exists, in the
+    // SDK's own words, "on systems where plug-ins cannot get this information directly like
+    // Microsoft Windows" -- which stopped being true of this host the moment it became
+    // per-monitor-DPI-aware, which Qt 6 does by default. The plugin's own child window then sits
+    // on our monitor and `GetDpiForWindow` tells it the truth, so every framework that handles
+    // per-monitor DPI scales itself without being asked, and telling it as well applies the factor
+    // twice.
     //
-    // It is also simply better manners: a plugin told its scale late has already built its
-    // bitmaps.
-    if (auto scale = Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)) {
-        scale->setContentScaleFactor(static_cast<float>(devicePixelRatioF()));
-        scaleAware_ = true;
-    }
-
+    // Measured on a 125% second monitor, both ways round:
+    //
+    //   ZL Equalizer 2 (JUCE)    told 1.25 -> 1472 x 949   not told -> 1472 x 949
+    //   NeuralAmpModeler (iPlug2) told 1.25 -> 937 x 625   not told -> 750 x 500
+    //
+    // 1472 = 1178 * 1.25 and 750 = 600 * 1.25, both correct; 937 = 600 * 1.25 * 1.25 is the second
+    // multiplication, and it arrives *after* attaching, as a `resizeView` the host cannot tell
+    // from a legitimate one. JUCE ignores the value outright, so the two plugins disagree about
+    // nothing except whether the redundant call does damage.
+    //
+    // The cost is a plugin that only ever learns its scale from the host: it draws at 1:1, small
+    // but with our window fitted exactly around it, because `pluginToLogical` divides either way.
+    // Small is a worse editor; a window one scale factor too big with the editor in the corner of
+    // it is a broken one. Neither plugin here is that plugin, and there is no way to ask.
     Steinberg::ViewRect rect{};
     if (view_->getSize(&rect) != kResultTrue) {
         rect.right = logicalToPlugin(kFallbackWidth);
@@ -165,6 +168,9 @@ bool EditorWindow::embed(QString& error) {
     }
     const int width = pluginToLogical(rect.right - rect.left);
     const int height = pluginToLogical(rect.bottom - rect.top);
+
+    // Not acted on -- see above -- but worth knowing and reported through `describe()`.
+    scaleAware_ = Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_) != nullptr;
 
     frame_ = Steinberg::owned(new PlugFrame(*this));
     view_->setFrame(frame_);
@@ -326,7 +332,11 @@ void EditorWindow::resizeEvent(QResizeEvent* event) {
 }
 
 QString EditorWindow::describe() const {
-    return QStringLiteral("its own editor, %1 x %2, %3 child window(s), scale-aware: %4")
+    // "logical", because that is what these numbers are and the physical size is what the plugin
+    // was measured in -- on a scaled monitor the two differ, and a report that does not say which
+    // it means is a report that cannot be checked against anything.
+    return QStringLiteral(
+               "its own editor, %1 x %2 logical, %3 child window(s), content-scale interface: %4")
         .arg(width())
         .arg(height())
         .arg(childWindowCount())

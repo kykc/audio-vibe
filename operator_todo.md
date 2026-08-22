@@ -3,8 +3,7 @@
 # Client/VST host
 
 * https://www.flaticon.com/free-icon/mixing-table_5903291?term=sound+mixer&related_id=5903291 how to make attribution properly
-* Sizing of NAM plugin editor window is wrong on secondary ASUS monitor. Affects all plugins. Scaling and sizing of editor windows is weird.
-* Do I need multiple tabs as previously? Probably no. But at least verify that multiinstance works.
+* Verify that multiinstance works.
 * Filter device list to those that have APO registered. (others greyed out?)
 * checkbox on chain item for bypass.
 * Drag-and-drop reordering.
