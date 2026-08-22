@@ -12,17 +12,24 @@
 // that was attached when it closed attaches again on the next start (project owner, 2026-08-22),
 // because being attached is a state someone put this application into rather than a transient.
 //
-// The reattach is conditional in exactly one way. It happens only when the endpoint the session
-// named is still present. Attaching to whatever device happens to be default now, because the one
-// the user chose has been unplugged, would be taking over the wrong stream on their behalf -- so
-// that case selects the default, says so, and waits to be asked.
+// The reattach is conditional in two ways, and both are in `config::shouldReattach`. It happens
+// only when the endpoint the session named is still present -- attaching to whatever device
+// happens to be default now, because the one the user chose has been unplugged, would be taking
+// over the wrong stream on their behalf. And it happens only when the previous run ended tidily:
+// a run that vanished while attached is what a plugin faulting in `process` looks like, and
+// reattaching into that is a boot loop that costs the machine's audio every time round
+// (config/attach_guard.h). Either case selects the endpoint, says why in the log, and waits to be
+// asked. The second also says so in a dialog, because a user who has just lost their sound to a
+// crash should not have to read a log to find out that this start is deliberately quiet.
 
 #pragma once
 
 #include "editor_manager.h"
 #include "engine_host.h"
 #include "rack_panel.h"
+#include "session_end_filter.h"
 
+#include "aip/config/attach_guard.h"
 #include "aip/config/session.h"
 #include "aip/ipc/endpoints.h"
 
@@ -31,6 +38,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -86,6 +94,18 @@ private:
     void loadSession();
     void saveSession();
 
+    /// Writes down that the shell is attached, or that it is not, so that the next start can tell
+    /// a run that ended from a run that stopped existing. Called wherever the attached state can
+    /// have changed rather than only where it is changed on purpose -- the link can also end
+    /// without anyone pressing anything (sec. 4.1) -- and marking twice with the same endpoint
+    /// costs nothing.
+    void syncAttachMark();
+
+    /// Says, in a dialog rather than only in the log, that the previous run stopped existing
+    /// while it was attached and that this one is therefore detached. Called once, after the
+    /// window is on screen.
+    void reportUncleanAttach();
+
     /// Marks the rack entries that must not be loaded, and says why in the log. Two sources: the
     /// breadcrumb the previous start left behind if it died mid-load, and the scan report, which
     /// already knows which modules crash or hang because a child process found out safely.
@@ -120,7 +140,18 @@ private:
     /// them back: they are still part of the chain the user built, and the alternative is that a
     /// plugin which crashes once disappears from their setup without explanation.
     std::vector<std::pair<std::size_t, config::RackEntry>> blockedEntries_;
-    /// The session was attached when it closed, *and* the endpoint it used is still here. Acted
+    /// Watches for the message Windows sends before it ends the session, which is the difference
+    /// between "the user rebooted" and "the shell died with the audio running through it".
+    SessionEndFilter* sessionEnd_ = nullptr;
+    /// The mark that says the shell is attached. Built in `loadSession`, because until then there
+    /// is no session file for it to sit next to. Null before that and in a run with nowhere to
+    /// write, which costs this run its protection and nothing else.
+    std::unique_ptr<config::AttachGuard> attachGuard_;
+    /// What the previous run left behind, taken before anything is marked. Held because the
+    /// dialog that reports it cannot be raised until the window is on screen.
+    config::UncleanAttach uncleanAttach_;
+    /// What `config::shouldReattach` decided: the session was attached when it closed, and
+    /// nothing about this start argues against doing it again. Acted
     /// on in `applyStartupOptions` rather than in `loadSession`, because attaching before the
     /// window is shown would start the valet thread behind an invisible window -- and because it
     /// puts the automatic attach through the same one line as `--attach`.

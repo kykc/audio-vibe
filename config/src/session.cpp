@@ -71,6 +71,39 @@ std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
     return blocked;
 }
 
+ReattachDecision shouldReattach(const Session& session, bool endpointPresent,
+                                const UncleanAttach& lastRun) {
+    ReattachDecision decision;
+    if (!session.attached) {
+        // Nothing to act on and nothing to explain: the user closed the shell detached, so it
+        // starts detached. Any mark the last run left behind is the window's to report.
+        return decision;
+    }
+
+    if (lastRun.present) {
+        decision.reason = "not reattaching: the last run was attached";
+        if (!lastRun.endpointName.empty()) {
+            decision.reason += " to " + lastRun.endpointName;
+        }
+        decision.reason += " and did not shut down cleanly. A plugin that faults while processing"
+                           " takes the machine's audio with it every time, so this start stays"
+                           " detached -- press Attach when you are ready to try again.";
+        return decision;
+    }
+
+    if (!endpointPresent) {
+        decision.reason = "not reattaching: the endpoint this session was using";
+        if (!session.endpointName.empty()) {
+            decision.reason += " (" + session.endpointName + ")";
+        }
+        decision.reason += " is gone";
+        return decision;
+    }
+
+    decision.attach = true;
+    return decision;
+}
+
 std::size_t apply(const Session& session, engine::Engine& engine,
                   std::vector<std::string>& problems, LoadGuard* guard) {
     std::size_t restored = 0;

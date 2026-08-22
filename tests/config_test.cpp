@@ -10,6 +10,7 @@
 // refuses a blob it does not recognise, so both the restore and the refusal are observable here
 // rather than inferred from a plugin nobody controls.
 
+#include "aip/config/attach_guard.h"
 #include "aip/config/base64.h"
 #include "aip/config/file_stamp.h"
 #include "aip/config/load_guard.h"
@@ -662,4 +663,75 @@ TEST_CASE("a blocked entry is skipped, reported, and kept in the file", "[config
     // bury the one line a user is looking for.
     REQUIRE(text.find("blocked: true") != std::string::npos);
     REQUIRE(text.find("blocked: false") == std::string::npos);
+}
+
+// ------------------------------------------------------- surviving a plugin that faults later
+
+TEST_CASE("the attach mark outlives the process that wrote it, and only that", "[config]") {
+    const TempDir dir("attach_mark");
+
+    // Nothing was attached, so nothing is suspected.
+    REQUIRE_FALSE(config::AttachGuard::takePrevious(dir.file()).present);
+
+    {
+        config::AttachGuard guard(dir.file());
+        guard.mark("Speakers (Realtek)");
+        // Read off the file system rather than out of the object: this is what the *next process*
+        // sees, and the whole mechanism rests on the mark being there when this one is not.
+        const config::UncleanAttach seen = config::AttachGuard::takePrevious(dir.file());
+        REQUIRE(seen.present);
+        REQUIRE(seen.endpointName == "Speakers (Realtek)");
+        // Taking it consumed it. A mark that survived being acted on would mean a shell that
+        // never attached on its own again, with nothing to say why.
+        REQUIRE_FALSE(config::AttachGuard::takePrevious(dir.file()).present);
+    }
+
+    // Detaching is an end, and so is destruction: both mean the shell was not processing audio
+    // when it stopped, which is the only thing the next start is asking about.
+    {
+        config::AttachGuard guard(dir.file());
+        guard.mark("Speakers (Realtek)");
+        guard.clear();
+        REQUIRE_FALSE(config::AttachGuard::takePrevious(dir.file()).present);
+        guard.mark("Speakers (Realtek)");
+    }
+    REQUIRE_FALSE(config::AttachGuard::takePrevious(dir.file()).present);
+}
+
+TEST_CASE("a run that vanished while attached is not reattached", "[config]") {
+    config::Session session;
+    session.attached = true;
+    session.endpointId = "{0.0.0.00000000}.{guid}";
+    session.endpointName = "Speakers (Realtek)";
+
+    config::UncleanAttach clean;
+    config::UncleanAttach unclean;
+    unclean.present = true;
+    unclean.endpointName = "Speakers (Realtek)";
+
+    SECTION("an ordinary previous run attaches again, and says nothing about it") {
+        const config::ReattachDecision decision = config::shouldReattach(session, true, clean);
+        REQUIRE(decision.attach);
+        REQUIRE(decision.reason.empty());
+    }
+
+    SECTION("a previous run that stopped existing does not, and says why") {
+        const config::ReattachDecision decision = config::shouldReattach(session, true, unclean);
+        REQUIRE_FALSE(decision.attach);
+        REQUIRE(decision.reason.find("did not shut down cleanly") != std::string::npos);
+        REQUIRE(decision.reason.find("Speakers (Realtek)") != std::string::npos);
+    }
+
+    SECTION("an endpoint that has gone does not, and says something else") {
+        const config::ReattachDecision decision = config::shouldReattach(session, false, clean);
+        REQUIRE_FALSE(decision.attach);
+        REQUIRE(decision.reason.find("is gone") != std::string::npos);
+    }
+
+    SECTION("a session that was detached is left alone, with nothing to report") {
+        session.attached = false;
+        const config::ReattachDecision decision = config::shouldReattach(session, true, unclean);
+        REQUIRE_FALSE(decision.attach);
+        REQUIRE(decision.reason.empty());
+    }
 }

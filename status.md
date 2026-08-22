@@ -1,6 +1,12 @@
 # Project status
 
-**Updated:** 2026-08-22, after the Session milestone: `config/`, a single YAML file holding the
+**Updated:** 2026-08-22. NeuralAmpModeler restores from a session -- the case where the state is
+a *path* rather than a value -- and the negative control settled what the shell can see when that
+path stops resolving: nothing at all (item 66). Before that the same day, closing the last boot
+loop: a shell that stops existing while it
+is attached comes back detached and says why, rather than reattaching into whatever killed it
+(sec. 7 item 65). Driven end to end, including the reboot that must *not* be reported as a crash.
+Before that the same day, the Session milestone: `config/`, a single YAML file holding the
 rack, each plugin's own state, the scan report, the window geometry and the last endpoint --
 portable next to the executable, AppData otherwise -- proven by a full round trip through the real
 shell, out and back in byte-identical, and by a second start that reused a cached scan instead of
@@ -128,7 +134,7 @@ components rather than numbered, so the two schemes cannot be confused.
 | **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
 | **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Scanned once while attached, with no dropouts** |
-| **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob** |
+| **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob. Neither half of a plugin that kills the shell -- while loading, or while processing -- survives into the next start** |
 | Installer | `installer/` -- WiX v7 | Not started. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
@@ -179,12 +185,16 @@ config/     session.h (the Session struct -- rack entries, cached scan report, w
             last endpoint -- and capture/apply against an Engine), session_file (the two
             locations, and the YAML reader and writer), base64 (wrapped on the way out,
             whitespace-tolerant on the way back), load_guard (the breadcrumb that lets the next
-            start survive a plugin that kills this one), file_stamp (size and newest write time
+            start survive a plugin that kills this one while it loads), attach_guard (the mark
+            that stops the next start walking back into one that kills it while it processes),
+            file_stamp (size and newest write time
             over a
             bundle, from directory metadata, which is what decides whether a cached scan entry is
             still true). No Qt: all of it is testable without a window on screen
 ui/         src/ only -- an executable, nothing links it. main (OLE apartment, command line),
-            main_window (the shell: endpoint attach, counters, log), rack_panel (a direct view of
+            main_window (the shell: endpoint attach, counters, log), session_end_filter (the
+            message Windows sends before it ends the session, which is what keeps a reboot from
+            being mistaken for a crash), rack_panel (a direct view of
             the engine's rack; no second model), plugin_catalog (the scan report, carried across
             runs in the session file and re-probed per entry only where a bundle's stamp has
             changed, plus the progress dialog that fills it),
@@ -372,6 +382,11 @@ Proven, and re-checkable by running the suite:
 - The breadcrumb names what was being loaded, is gone once the load returns, is gone when the
   guard is destroyed with a mark outstanding -- a clean shutdown mid-load is not a crash -- and is
   *consumed* when it is read, so an entry it blocked can be tried again by clearing one flag.
+- The attach mark is written when the shell attaches, is gone when it detaches and gone when the
+  guard is destroyed, and is *consumed* when it is read. On the policy it feeds: an automatic
+  reattach is refused for a previous run that vanished while attached and for an endpoint that has
+  gone, allowed for an ordinary one, and a session that was closed detached produces no decision
+  to explain at all.
 - What killed the last start is blocked and nothing else is; a module the scan report calls
   crashed or timed out is blocked without a breadcrumb at all; a blocked entry is skipped,
   reported, and still written back to the file with its reason.
@@ -492,6 +507,37 @@ Proven against the real deployed APO on the development machine:
   do if the shell attached on its own, because the flag is written from what the link is actually
   doing at closing time rather than from what the file said on the way in. Negative control run:
   editing the file to `attached: false` and starting again leaves it false.
+- **A shell that vanished while attached does not take the machine's audio again by itself.**
+  Driven end to end on 2026-08-22 against the real APO, on an endpoint nothing was playing on.
+  Attach, and the mark appears next to the session file naming the endpoint. `TerminateProcess`,
+  which leaves exactly what a fault on the audio thread leaves -- no destructors, no `closeEvent`,
+  the mark still on disk. The next start comes up **detached**, consumes the mark, says why in the
+  log and in a dialog, and the start after *that* reattaches on its own -- the negative control,
+  and what makes this one refusal rather than a shell that has forgotten how to attach.
+- **A reboot is not reported as a crash.** The same run, driven with the messages Windows itself
+  sends. `WM_QUERYENDSESSION` delivered to the shell's window clears the mark while the process is
+  still alive and still attached, so being killed after it -- which is what a shutdown does to an
+  application that answers too slowly -- leaves nothing behind, and the next start reattaches
+  without a word. `WM_ENDSESSION` with `wParam` false puts the mark back, because a shutdown that
+  was called off leaves a shell that is still attached and still worth protecting. This is the
+  false positive the project owner named before the code was written (item 65).
+- **A plugin whose state is a *path* comes back working -- and its dependency going missing is
+  invisible to us.** NeuralAmpModeler, checked on 2026-08-22. Its state is 219 bytes: an id, a
+  version, the model's absolute path as a length-prefixed string, an empty IR path, and ten
+  doubles. The project owner confirmed by hand that picking a model, closing and reopening brings
+  the same model back, and the same restore was then driven from a session file with the editor
+  open to watch it happen.
+
+  The negative control is the half worth having, and it was run without touching a real model
+  file: the path *inside the blob* was rewritten to a directory that does not exist, same length,
+  so nothing else in the state moved. The plugin restores, the parameters restore, the shell says
+  `1 of 1 plugin(s) restored` and reports no problem at all. The only thing anywhere that says
+  otherwise is inside the plugin's own editor, which relabels its model slot `(FAILED) <name>`.
+
+  And the state it hands back on the way out is **byte-identical to the one that failed**. That
+  retires the obvious host-side diagnostic before it was written: asking for the state again after
+  `setState` and comparing detects nothing here, because a plugin that could not find its model
+  still faithfully remembers where it looked. See item 66.
 - **The scan report is reused instead of redone.** Measured on 2026-08-22 with the real
   `aip_ui --scan` against this machine's plugin population: a cold start with no session file
   probed all of them and wrote 21 cached entries; a second start from that file produced the same
@@ -561,10 +607,11 @@ Proven against the real deployed APO on the development machine:
 - The split component/controller path in a **test**. It is proven against a real plugin, which is
   a manual step; the automated suite still only sees our single-component fixture. Covering it
   hermetically needs a second plugin fixture.
-- **A plugin whose state points at something outside itself.** ZL Equalizer 2 round-trips (see
-  above), which retires the general question. NeuralAmpModeler does not: it references a model
-  file on disk, so its blob is a *path* as much as a state, and nothing has checked what happens
-  when that path is restored -- let alone when the model has moved since.
+- **That a plugin which lost its external dependency still passes audio, and what it sounds
+  like.** The restore is now checked in both directions (see above), but both runs were detached:
+  nothing was attached while a model was missing, so what a failed model does to the chain is
+  inference -- NAM prepares and processes, and the expectation is a signal that passes through
+  unmodelled. Nobody has heard it.
 - **A non-empty controller blob.** The split path runs and a decline is handled (see above), but
   no plugin met so far has actually returned controller state, so the restore half of it --
   `IEditController::setState` with real bytes -- has never executed. Every plugin in the automated
@@ -574,11 +621,16 @@ Proven against the real deployed APO on the development machine:
   when the endpoint id is gone from the enumeration, which is the unplugged case. What has not
   been tried is the same id coming back at a different format, or a device that enumerates but
   will not produce blocks. Neither has a reason to fail; neither has been seen.
-- **A plugin that crashes *after* the rack is built.** The breadcrumb brackets loading and only
-  loading. A plugin that faults in `process` -- on the audio thread, seconds after the session has
-  reattached -- crashes the shell outside anything that is watching, and since being attached is
-  now restored too, it does so again on the next start. That is the same boot loop the breadcrumb
-  closes for loading, still open for processing (section 5).
+- **A real plugin faulting inside `process`.** What the fault would cost is now bounded -- the
+  next start comes up detached instead of walking back into it (item 65) -- and that was driven
+  with `TerminateProcess`, which leaves behind exactly what a fault leaves. What has not happened
+  is the trigger: no plugin on this machine has ever faulted while processing, so the response is
+  proven and the event it responds to is still hypothetical. Note also what is *not* claimed: the
+  crash still happens, and still takes that run's audio with it. Only the loop is closed.
+- **That a real Windows shutdown clears the attach mark.** `WM_QUERYENDSESSION` was delivered by
+  hand with `SendMessage`, and the shell has no way to tell that from the real one -- but a real
+  restart with the shell left open has not been sat through, and neither has a power cut, which
+  is the one end that genuinely does report a crash that did not happen.
 - **That the portable folder runs on another machine.** It runs here without the build
   environment, which is the strongest thing that can be checked *here* -- but this machine has
   Visual Studio, the Windows SDK and a Qt installation somewhere on it, and none of that can be
@@ -685,33 +737,24 @@ have bitten audibly. Both are in section 4 now. So is the session file, built th
 and checked twice by hand: ZL Equalizer 2's own state survives a restart, and the cached scan
 report comes back instead of costing two minutes. The shell is usable daily as of now.
 
-A session that crashes on load no longer costs the application -- that is section 7 item 56, and
-it is done and proven in both directions. What is left is the half of the same problem it does
-not reach.
+A session that crashes on load no longer costs the application -- section 7 item 56 -- and as of
+2026-08-22 neither does one that crashes while *processing*: the shell writes a mark while it is
+attached, and a start that finds one left behind comes up detached and says so, in a dialog rather
+than only in the log (item 65). The project owner chose that over timing the attach, and the
+deciding argument for how it is built was the false positive -- an application that announces a
+crash after an ordinary reboot is one nobody believes a second time.
 
-1. **Close the boot loop for a plugin that crashes while *processing*.** The breadcrumb brackets
-   loading, and only loading. A plugin that faults in `process` does it on the audio thread,
-   seconds after the session has restored the rack and reattached -- outside anything that is
-   watching -- and because being attached is restored too, the next start does the same thing
-   again. Every attempt takes the machine's audio with it for as long as it lasts.
-
-   This needs a policy decision rather than a mechanism, which is why it is not already written.
-   The breadcrumb pattern does not transfer: there is no call to bracket, so "survived" has to be
-   defined in time -- attach, and clear the mark once some number of seconds or blocks have gone
-   by without dying. That threshold is a judgement about how long a bad plugin takes to fault,
-   and picking it wrongly either never protects anything or drops protection for a slow crash.
-   The cheaper alternative is not to restore the attach when the last start ended badly at all --
-   come up detached, say why, and let the user press Attach. Worth a decision before code.
-2. **Restore NeuralAmpModeler.** The one real plugin here whose state is a *path* -- it references
-   a model file on disk -- so it is the case where "the blob round-tripped" and "the plugin came
-   back working" can differ. Cheap to check now that ZL Equalizer 2 has been.
+Restoring NeuralAmpModeler was the last item here and is done (section 4, and item 66): a state
+that is a *path* comes back working, and a path that no longer resolves is invisible to the host
+by construction. Nothing follows from it that is worth building, which is why the list below is
+now ordinary component work with nothing numbered above it.
 
 Engine work still outstanding, roughly in order of how much it will be missed:
 
-- **Act on `restartComponent`.** At minimum honour `kParamValuesChanged` and
-  `kLatencyChanged`; currently every flag is drained and discarded.
-- Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
-  cannot compensate for it.
+1. **Act on `restartComponent`.** At minimum honour `kParamValuesChanged` and
+   `kLatencyChanged`; currently every flag is drained and discarded.
+2. Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
+   cannot compensate for it.
 
 Scanner work still outstanding:
 
@@ -745,9 +788,15 @@ UI work still outstanding, none of it blocking:
 
 Worth doing at some point, none of it blocking:
 
+- **Save the session from `WM_QUERYENDSESSION` too, not only from `closeEvent`.** The shell now
+  hears that message (item 65), and a restart with it left open still loses whatever changed since
+  the last clean exit -- which is section 4's last "not proven" line about saving. What needs
+  thinking about first is the budget: the message has a few seconds before Windows stops waiting,
+  and `capture` asks every plugin in the rack for its state.
 - Decide whether `aip_ui` should set its own working directory. Plugins write files into it
-  (trap 22), and today that is wherever the shell was launched -- the repository root, under
-  `pixi run ui`. The scanner child was fixed this way (item 45); the shell was not, because
+  (trap 22 -- and the culprit is now known: NeuralAmpModeler, on instantiation), and today that is
+  wherever the shell was launched -- the repository root, under `pixi run ui`, where it turns the
+  ASCII hygiene test red. The scanner child was fixed this way (item 45); the shell was not, because
   `--vst3` accepts a relative path and moving the current directory would quietly change what one
   resolves to. Doing it after argument parsing is the obvious answer if it is worth doing.
 - Add `clang-format` to `pixi.toml` with a `format` task. It is listed as project hygiene in
@@ -1405,6 +1454,66 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     than latching. It also suppresses `setBreakOnViolation`: a violation that was asked for is not
     a bug, and trapping on it would make the probe unusable in an interactive session.
 
+65. **A plugin that faults while processing costs the attach, not every future start.** The other
+    half of item 56, and the half with no call to bracket. A fault inside `process` happens on the
+    audio thread, seconds or hours after the rack was built, and because being attached is
+    restored with the session the next start walks straight back into it -- taking the machine's
+    audio with it every time round.
+
+    Two mechanisms were possible and the project owner chose between them on 2026-08-22. The
+    rejected one times the attach: treat "it survived N seconds" as proof and clear the mark then.
+    It needs a threshold that is a guess about how fast a bad plugin faults, and a wrong guess
+    either protects nothing or withholds protection from a slow crash. The chosen one has no
+    threshold at all -- a run that ended badly while attached simply does not get an automatic
+    attach on the next start. The shell comes up detached, says so, and waits to be asked.
+
+    So `config::AttachGuard` writes a mark when the shell attaches and removes it when the shell
+    detaches or exits, and `config::shouldReattach` is the one place that decides -- attached in
+    the file, endpoint still present, previous run ended tidily. Policy in `config/` rather than
+    `ui/` for the same reason as item 56: none of the three questions needs a window.
+
+    **The false positive is the part worth reading.** The project owner asked for this and
+    immediately named the failure mode it must not have: applications that announce a crash the
+    morning after a perfectly ordinary Windows restart. The cause is always the same -- the mark
+    is cleared only on the application's own quit path, and a shutdown does not go through it.
+    Windows asks first, though. Every top-level window is sent `WM_QUERYENDSESSION`, and an
+    application killed for answering too slowly is killed *after* that message. So the shell
+    watches for it with a native event filter and clears the mark from inside the message, which
+    is early enough even when it never gets to run another line (`ui/src/session_end_filter.h`).
+    `WM_ENDSESSION` is handled too: true means the same news without the question first, false
+    means the shutdown was called off and the mark goes back on, because the shell is still
+    attached. A native filter rather than `QSessionManager` because it runs before Qt decides what
+    to do with the message and does not depend on Qt's session management being configured in.
+
+    Two ends stay outside all of this and are reported as unclean: losing power, and being killed
+    from Task Manager. For the first that is arguably the truth -- the shell really was processing
+    audio when it stopped -- and the cost either way is one press of Attach.
+
+    The dialog is deliberate, not a log line. Everything else this shell reports goes to the log
+    view; this is the one thing where the user has already lost their sound to a crash they did
+    not see, and a start that is quiet *on purpose* has to say so where they are looking.
+
+66. **The shell does not try to notice a plugin whose state points at something that has gone.**
+    Not laziness: there is no way to. Established on 2026-08-22 against NeuralAmpModeler, whose
+    state is a model file's absolute path (section 4). Restore it with the path broken and every
+    signal a host can read says success -- `setState` accepts, the parameters come back, the rack
+    builds, and asking the plugin for its state again returns the failed blob **byte for byte**,
+    so even a round-trip comparison sees nothing wrong. The plugin knows perfectly well; it writes
+    `(FAILED)` next to the model name in its own editor and tells the host nothing, because VST3
+    gives it nowhere to tell the host anything.
+
+    Which settles the design question the other way from how it was posed. The tempting mechanism
+    -- read the state back after restoring and warn when it differs -- was measured before being
+    written and detects exactly nothing here, while a plugin that legitimately re-serializes
+    differently would trip it every time. So: no mechanism, and the limitation is written down in
+    section 4 instead. What the user gets is the plugin's own editor, which is where a missing
+    model is legible anyway.
+
+    Worth remembering for the *portable* case (item 46), which is where this stops being
+    hypothetical: a session file carried to another machine brings absolute paths for the plugin
+    bundles, which the shell reports when they fail, and absolute paths *inside* plugin state,
+    which it cannot.
+
 ---
 
 ## 8. Traps already paid for
@@ -1529,10 +1638,15 @@ integration. These are the ones found while implementing. Re-discovering any is 
     `--vst3` accepts a relative path, so changing it there is a decision with a visible
     consequence rather than a free one.
 
-    Which plugin does it is unidentified. Six candidates were scanned individually afterwards --
-    every GPU/CUDA one on the machine, including the one that crashes -- and none reproduced it
-    through the scanner, so it is likely written at a stage a scan never reaches: an editor being
-    opened, or processing starting.
+    **It is NeuralAmpModeler**, identified on 2026-08-22 after it turned `ctest` red a second
+    time. Three runs of the shell, each in a throwaway working directory: empty rack, nothing
+    written; NAM in the rack with no editor opened, `device_info.txt` appears; ZL Equalizer 2 in
+    the rack, nothing written. So it is written when the plugin is *instantiated*, not when its
+    editor opens or when audio starts -- which also explains why the earlier hunt through the
+    GPU/CUDA plugins found nothing, and why a scan never reproduces it: the scanner child works in
+    the temp directory (item 45), where the file lands unnoticed. The shell does not, which is the
+    open decision in section 5 -- and it now has a concrete case behind it rather than an
+    anonymous one.
 
 23. **CMake 4 will not configure a dependency whose version floor is below 3.5, and the escape
     hatch has a second half.** The pixi environment ships CMake 4.4; yaml-cpp 0.8.0 -- the newest

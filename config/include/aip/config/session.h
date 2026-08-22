@@ -10,12 +10,14 @@
 // for directly by the project owner on 2026-08-22, and the argument is that being attached is a
 // state the user put the application into, not a transient: a system-wide processor that forgets
 // it was processing is a processor you have to switch on every morning. The deliberate act stays
-// deliberate -- it is just that the decision is remembered rather than re-asked. What guards it is
-// narrower and lives in the shell: the reattach only happens if the endpoint that was in use is
-// still there (main_window.h).
+// deliberate -- it is just that the decision is remembered rather than re-asked. What guards it
+// is `shouldReattach` below, and it is deliberately here rather than in the window: whether a
+// saved attach should be acted on is a question about a session, a device list and how the last
+// run ended, and none of the three needs a window to be reasoned about or tested.
 
 #pragma once
 
+#include "aip/config/attach_guard.h"
 #include "aip/config/file_stamp.h"
 #include "aip/config/load_guard.h"
 #include "aip/engine/engine.h"
@@ -132,5 +134,28 @@ std::size_t apply(const Session& session, engine::Engine& engine,
 std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
                                const std::vector<scanner::ScannedModule>& catalog,
                                std::vector<std::string>& notes);
+
+/// Whether a restored session should take over the machine's audio on its own, and what to say
+/// when it should not.
+struct ReattachDecision {
+    bool attach = false;
+    /// One line, meant for a person, empty when there is nothing worth saying -- which is the
+    /// case both when the shell is about to attach and when the last session was not attached in
+    /// the first place. A refusal always carries its reason.
+    std::string reason;
+};
+
+/// Three things have to be true before the shell attaches without being asked, and each of the
+/// last two is a way of not doing something worse than not attaching.
+///
+/// The session has to have been attached when it was saved. The endpoint it named has to still be
+/// present (`endpointPresent`): taking over whatever device happens to be default now, because
+/// the one the user chose has been unplugged, is processing the wrong stream on their behalf. And
+/// the previous run has to have ended tidily (`lastRun`, from `AttachGuard::takePrevious`) --
+/// a run that vanished while attached is the signature of a plugin faulting in `process`, and
+/// attaching again is how that becomes a boot loop that takes the machine's audio with it every
+/// time (attach_guard.h).
+[[nodiscard]] ReattachDecision shouldReattach(const Session& session, bool endpointPresent,
+                                              const UncleanAttach& lastRun);
 
 } // namespace aip::config

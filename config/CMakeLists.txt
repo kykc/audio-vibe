@@ -3,6 +3,7 @@
 # depend on Qt, so the whole of it is testable without a window.
 
 add_library(aip_config STATIC
+    src/attach_guard.cpp
     src/base64.cpp
     src/file_stamp.cpp
     src/load_guard.cpp
@@ -32,6 +33,7 @@ target_sources(aip_config PUBLIC
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
     FILES
+        include/aip/config/attach_guard.h
         include/aip/config/base64.h
         include/aip/config/file_stamp.h
         include/aip/config/load_guard.h

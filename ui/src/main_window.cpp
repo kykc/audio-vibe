@@ -2,6 +2,7 @@
 
 #include "window_chrome.h"
 
+#include "aip/config/attach_guard.h"
 #include "aip/config/load_guard.h"
 #include "aip/config/session_file.h"
 
@@ -13,6 +14,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRect>
@@ -22,6 +24,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 namespace aip::ui {
@@ -110,6 +113,17 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
         log(QStringLiteral("chain not built: %1").arg(error));
         rack_->refresh();
     });
+    // Directly connected, because it has to have happened by the time the message returns: a
+    // process that is about to be taken away has no later.
+    sessionEnd_ = new SessionEndFilter(this);
+    connect(sessionEnd_, &SessionEndFilter::sessionEnding, this, [this] {
+        if (attachGuard_) {
+            attachGuard_->clear();
+        }
+    });
+    // The shutdown was called off and the shell is still attached, so the mark goes back.
+    connect(sessionEnd_, &SessionEndFilter::sessionEndCancelled, this, &MainWindow::syncAttachMark);
+
     connect(&editors_, &EditorManager::message, this, &MainWindow::log);
     connect(&editors_, &EditorManager::openCountChanged, this, [this] { rack_->refresh(); });
     connect(rack_, &RackPanel::message, this, &MainWindow::log);
@@ -133,6 +147,12 @@ MainWindow::~MainWindow() {
 
 void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEditors,
                                      bool attach, bool scan) {
+    // First, and before anything can attach: the one thing here the user has to be told rather
+    // than left to find in the log.
+    if (uncleanAttach_.present) {
+        reportUncleanAttach();
+    }
+
     if (scan) {
         // What the first Add would have done, without needing anyone to click Add. The catalog is
         // the one part of the session whose cost is visible -- minutes on a machine with plugins
@@ -238,6 +258,7 @@ void MainWindow::toggleAttach() {
     if (host_.attached()) {
         host_.detach();
         log(QStringLiteral("detached"));
+        syncAttachMark();
         updateStatus();
         return;
     }
@@ -254,6 +275,9 @@ void MainWindow::toggleAttach() {
         return;
     }
     log(QStringLiteral("attaching to %1").arg(endpointBox_->currentText()));
+    // Written before the first block can arrive, which is the point: what this defends against
+    // faults on the audio thread, and by then there is nobody left to write anything down.
+    syncAttachMark();
     updateStatus();
 }
 
@@ -265,6 +289,16 @@ void MainWindow::loadSession() {
     if (sessionPath_.empty()) {
         sessionPath_ = config::resolveLoadPath();
     }
+
+    // Both marks live next to the session file, and both are wanted even when there is no file
+    // there yet: a clean install that attaches and then dies has the same problem as any other
+    // run, and the file it *would* be saved to is where the next start will come looking.
+    const std::filesystem::path markRoot =
+        sessionPath_.empty() ? config::resolveSavePath(sessionPath_) : sessionPath_;
+    // Taken before the guard below can write over it, and taken rather than read: a mark that
+    // outlived being acted on would suppress every reattach this shell ever made again.
+    uncleanAttach_ = config::AttachGuard::takePrevious(markRoot);
+    attachGuard_ = std::make_unique<config::AttachGuard>(markRoot);
 
     std::error_code ec;
     if (sessionPath_.empty() || !std::filesystem::exists(sessionPath_, ec)) {
@@ -322,10 +356,55 @@ void MainWindow::loadSession() {
 
     applySavedGeometry(session.window);
     const bool endpointStillHere = selectSavedEndpoint(session.endpointId, session.endpointName);
-    sessionWantsAttach_ = session.attached && endpointStillHere;
-    if (session.attached && !endpointStillHere) {
-        log(QStringLiteral("not reattaching: the endpoint this session was using is gone"));
+    // The policy is in `config/`, not here: what makes an automatic attach a bad idea is a
+    // property of the session, the device list and how the last run ended, and none of the three
+    // needs a window to be decided or tested.
+    const config::ReattachDecision decision =
+        config::shouldReattach(session, endpointStillHere, uncleanAttach_);
+    sessionWantsAttach_ = decision.attach;
+    if (!decision.reason.empty()) {
+        log(QString::fromStdString(decision.reason));
     }
+}
+
+void MainWindow::syncAttachMark() {
+    if (!attachGuard_) {
+        return;
+    }
+    if (!host_.attached()) {
+        attachGuard_->clear();
+        return;
+    }
+
+    // The endpoint out of the list rather than the combo box's label, which carries a
+    // "  (default)" suffix that is about this run's device list and not about the device.
+    std::string name;
+    const int index = endpointBox_->currentIndex();
+    if (index >= 0 && static_cast<std::size_t>(index) < endpoints_.size()) {
+        name = QString::fromStdWString(endpoints_[static_cast<std::size_t>(index)].friendlyName)
+                   .toStdString();
+    }
+    attachGuard_->mark(name);
+}
+
+void MainWindow::reportUncleanAttach() {
+    const QString endpoint = uncleanAttach_.endpointName.empty()
+                                 ? QStringLiteral("an endpoint")
+                                 : QString::fromStdString(uncleanAttach_.endpointName);
+    log(QStringLiteral("the previous run was attached to %1 and did not shut down cleanly")
+            .arg(endpoint));
+    QMessageBox::warning(
+        this, QStringLiteral("The last run did not shut down cleanly"),
+        QStringLiteral(
+            "This shell was attached to %1 when it last stopped, and it did not close normally."
+            "\n\n"
+            "A plugin that faults while it is processing takes the machine's audio with it, and "
+            "attaching again on its own would do that every time the shell started -- so this "
+            "start is detached. Press Attach when you are ready to try again."
+            "\n\n"
+            "If the machine lost power, or the shell was ended from Task Manager, nothing is "
+            "wrong and there is nothing to do.")
+            .arg(endpoint));
 }
 
 std::size_t MainWindow::blockDangerousEntries(config::Session& session) {
@@ -434,6 +513,11 @@ bool MainWindow::selectSavedEndpoint(const std::string& endpointId,
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     saveSession();
+    // Under its own power, so nothing that happens during teardown -- a plugin that faults on its
+    // way out, say -- is an end the next start needs to be warned about.
+    if (attachGuard_) {
+        attachGuard_->clear();
+    }
     QMainWindow::closeEvent(event);
 }
 
@@ -448,6 +532,7 @@ void MainWindow::onLinkStateChanged(int state, int reason) {
         // Say so, because otherwise the client just looks broken.
         log(QStringLiteral("another client took the stream over; detach and attach to try again"));
     }
+    syncAttachMark();
     updateStatus();
 }
 
