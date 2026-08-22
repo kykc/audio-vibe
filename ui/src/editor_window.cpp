@@ -1,12 +1,14 @@
 #include "editor_window.h"
 
 #include "window_chrome.h"
+#include "window_placement.h"
 
 #include "pluginterfaces/base/funknownimpl.h"
 #include "pluginterfaces/gui/iplugviewcontentscalesupport.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
 
 #include <QCloseEvent>
+#include <QMoveEvent>
 #include <QResizeEvent>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -14,6 +16,7 @@
 #include <windows.h>
 
 #include <cmath>
+#include <optional>
 
 namespace Vst = Steinberg::Vst;
 using Steinberg::kResultTrue;
@@ -108,6 +111,10 @@ EditorWindow* EditorWindow::create(engine::PluginInstance& instance, QWidget* pa
     if (!window->embed(error)) {
         return nullptr;
     }
+
+    // Placed before it is shown, not after: the size is known by now, and a window that arrives
+    // somewhere and then moves is worse to look at than one that arrives late.
+    window->placeOnOwner();
 
     // Attaching needs the container's window to exist, and that only happens once shown.
     window->show();
@@ -264,7 +271,38 @@ bool EditorWindow::onPluginResizeRequest(Steinberg::IPlugView& view,
         resize(width, height);
     }
     inPluginResize_ = false;
+
+    // A plugin is entitled to change its mind about its size long after it was attached -- an
+    // editor with a panel that folds out, or one that finishes building itself asynchronously.
+    // Growing out of the top-left corner would walk such a window off the centre it opened on.
+    placeOnOwner();
     return true;
+}
+
+void EditorWindow::placeOnOwner() {
+    if (!autoPlace_) {
+        return;
+    }
+    centerOnOwner(*this);
+    placed_ = true;
+}
+
+void EditorWindow::moveEvent(QMoveEvent* event) {
+    QWidget::moveEvent(event);
+    if (!autoPlace_ || !placed_) {
+        return;
+    }
+    // Asking whether the window is *still* centred rather than whether this particular move was
+    // one of ours. The platform reports geometry changes through the event queue, so an event
+    // saying where the window was two moves ago can arrive after the move that superseded it --
+    // remembering the last position we asked for and comparing against that disarms on the first
+    // such straggler. The invariant does not care what order anything arrived in.
+    const std::optional<QPoint> centered = centeredOnOwner(*this);
+    if (centered.has_value() && frameGeometry().topLeft() != *centered) {
+        // So somebody else moved it, which in practice means the user dragged it. Where it sits is
+        // now their business; a plugin resizing itself from here on resizes in place.
+        autoPlace_ = false;
+    }
 }
 
 void EditorWindow::resizeEvent(QResizeEvent* event) {

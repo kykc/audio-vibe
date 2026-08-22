@@ -1514,6 +1514,40 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     bundles, which the shell reports when they fail, and absolute paths *inside* plugin state,
     which it cannot.
 
+67. **An editor window opens centred on the shell's, and its position is not remembered.**
+    Asked for by the project owner on 2026-08-22. Two decisions in it, and the second is the one
+    with content.
+
+    Not remembering positions is the easy half: an editor belongs to its plugin's window, not to a
+    spot on the desktop, and a saved position is wrong as soon as the shell is on another monitor
+    or the plugin has changed its own size. So there is nothing in the session file about editors,
+    and `ui/src/window_placement.h` computes the position instead.
+
+    The hard half was where the arbitrary-looking placement came from, because Qt does centre a
+    window on its transient parent and appeared to be doing so. It was centring the *wrong size*.
+    Both editor windows force their native window into existence in their constructors --
+    `hideTitleBarIcon` needs an HWND -- and at that point the widget is still 100 x 30, so what Qt
+    centred was a placeholder. The real size arrives afterwards and grows out of that top-left
+    corner. Measured: two editors of different sizes opened at the *same* top-left, 57 x 34 up and
+    left of the shell's centre, which is exactly half a default-sized window.
+
+    Which is also why placing once at open is not enough, and this is the part worth keeping. The
+    project owner's own question was how to know when the editor is ready -- and the answer is that
+    we do not need to know, because the position is recomputed for every size the plugin asks for.
+    NeuralAmpModeler is the case that requires it: it reports 750 x 530 before being attached, and
+    then asks for 937 x 655 from its own event loop, well after `EditorWindow::create` has
+    returned. There is no VST3 signal for "finished settling" to wait for.
+
+    That following stops the first time the user moves the window, and how it detects that is
+    deliberate. The obvious mechanism -- remember the position we last asked for, and treat any
+    other as the user's -- does not work: the platform reports geometry changes through the event
+    queue, so a move event carrying a superseded position arrives after the move that superseded
+    it, and the first straggler disarms the placement. What is tested instead is the invariant: is
+    the window *still* centred, recomputed from scratch, clamping included. Nothing in that depends
+    on what order anything arrived in. `placed_` exists for the same reason from the other side --
+    before the first placement the window is not centred on anything, and the move that
+    `hideTitleBarIcon` causes was disarming the feature before it had run once.
+
 ---
 
 ## 8. Traps already paid for

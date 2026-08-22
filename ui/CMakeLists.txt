@@ -36,6 +36,8 @@ add_executable(aip_ui WIN32
     src/plug_frame.h
     src/window_chrome.cpp
     src/window_chrome.h
+    src/window_placement.cpp
+    src/window_placement.h
 )
 
 set_target_properties(aip_ui PROPERTIES AUTOMOC ON)

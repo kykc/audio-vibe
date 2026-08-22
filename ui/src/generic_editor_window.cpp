@@ -1,6 +1,7 @@
 #include "generic_editor_window.h"
 
 #include "window_chrome.h"
+#include "window_placement.h"
 
 #include <QCloseEvent>
 #include <QGridLayout>
@@ -89,6 +90,9 @@ GenericEditorWindow* GenericEditorWindow::create(engine::PluginInstance& instanc
     if (!window->build(error)) {
         return nullptr;
     }
+    // After `build`, which is where the height is settled, and before the window is shown. Unlike
+    // a plugin's own editor this one never changes size on its own, so once is enough.
+    centerOnOwner(*window);
     window->show();
     return window.release();
 }

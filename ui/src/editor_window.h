@@ -65,6 +65,7 @@ public:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
 
 private:
     explicit EditorWindow(engine::PluginInstance& instance, QWidget* parent);
@@ -73,6 +74,17 @@ private:
     bool attachView(QString& error);
     bool onPluginResizeRequest(Steinberg::IPlugView& view,
                               const Steinberg::ViewRect& size) override;
+
+    /// Centres the window on the shell's, while it is still ours to place: before it is shown, and
+    /// again for every size the plugin asks for after that.
+    ///
+    /// The second half is what makes this work rather than nearly work, and NeuralAmpModeler is
+    /// the proof. It reports 750 x 530 before being attached and then asks for 937 x 655 from its
+    /// own event loop, long after `create` has returned -- so centring only at open leaves that
+    /// editor visibly off, because a size the plugin grows into grows out of the top-left corner.
+    /// Which is the answer to "how do we know when the editor is ready": we do not need to. There
+    /// is no such signal in VST3 to read, and following every size it asks for costs a `move`.
+    void placeOnOwner();
 
     /// `ViewRect` is not necessarily in the same units as `QWidget` geometry. A plugin that
     /// implements `IPlugViewContentScaleSupport` has been told the display scale and scales its
@@ -98,6 +110,15 @@ private:
     /// not bounce a new size straight back at it. Two participants each honouring the other is
     /// how a host and a plugin resize each other forever.
     bool inPluginResize_ = false;
+    /// False once the user has moved the window, after which its position is theirs and a resize
+    /// from the plugin no longer drags it back to the centre.
+    bool autoPlace_ = true;
+    /// Whether `placeOnOwner` has run yet, which is the only thing that makes the check above
+    /// meaningful. Before it has, the window is wherever the platform put it and is not centred on
+    /// anything -- and it moves while it is being built, because `hideTitleBarIcon` changes the
+    /// frame style and the client area shifts under it. Without this, that move disarmed the
+    /// placement before it had happened once.
+    bool placed_ = false;
 };
 
 } // namespace aip::ui
