@@ -46,6 +46,23 @@ namespace aip::engine {
 [[nodiscard]] Steinberg::Vst::SpeakerArrangement speakerArrangementFor(
     std::uint32_t channelCount) noexcept;
 
+/// A plugin's own persistent state, exactly as the plugin wrote it and opaque to us.
+///
+/// Two blobs, because a split component/controller plugin keeps two. The component's state is
+/// the one that matters -- it is what makes the audio come back the way the user left it. The
+/// controller's is the editor's own business: which page was open, how the analyser was scaled,
+/// anything the plugin does not consider part of its sound. A plugin whose component *is* its
+/// controller has only the first; `controller` stays empty for one of those and nothing tries to
+/// restore it, because a single object cannot have two meanings for `setState`.
+struct PluginState {
+    std::vector<char> component;
+    std::vector<char> controller;
+
+    [[nodiscard]] bool empty() const noexcept {
+        return component.empty() && controller.empty();
+    }
+};
+
 class PluginInstance {
 public:
     /// Control thread. Instantiates the component, initialises it against `hostContext`, pairs
@@ -83,6 +100,36 @@ public:
     [[nodiscard]] const StreamFormat& format() const noexcept { return format_; }
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
+
+    /// The module this instance came from, as the SDK resolved it -- which is absolute, and
+    /// therefore what a session file should record rather than whatever relative path a caller
+    /// happened to pass in.
+    [[nodiscard]] const std::string& path() const noexcept { return module_->path(); }
+
+    [[nodiscard]] const VST3::UID& classId() const noexcept { return classId_; }
+
+    /// The class id in the form `scanner/` reports and `insertPluginByClassId` accepts, which is
+    /// also the only form worth writing to a text file.
+    [[nodiscard]] std::string classIdString() const { return classId_.toString(); }
+
+    // ------------------------------------------------------------- the plugin's own state -----
+
+    /// Control thread. Asks the plugin for its state. False means it gave us nothing: legal, and
+    /// not a failure worth putting in front of a user -- an effect with no parameters has no
+    /// state to save, and a plugin is entitled to decline. `out` is cleared either way.
+    [[nodiscard]] bool saveState(PluginState& out) const;
+
+    /// Control thread, on an instance that has **not** been prepared yet. False means the plugin
+    /// rejected a blob it was given, which is worth reporting: it usually means the state came
+    /// from a different version of the plugin.
+    ///
+    /// The ordering obligation is real. VST3 permits `setState` on an active component and hosts
+    /// do it -- that is what preset recall during playback is -- but a plugin is entitled to
+    /// expect it before `setupProcessing`, and restoring state into an instance that has already
+    /// negotiated its busses is a needlessly hostile way to find out which plugins disagree.
+    /// `Engine::insertPluginWithState` is the path that gets this right; asserted here so a
+    /// second caller cannot get it wrong quietly.
+    [[nodiscard]] bool loadState(const PluginState& state);
 
     /// Null when the plugin exposes no edit controller, which is legal for an effect with no
     /// parameters. There is nothing to drain in that case.
@@ -177,6 +224,7 @@ private:
 
     PluginModule::Ptr module_;
     std::string name_;
+    VST3::UID classId_;
 
     Steinberg::IPtr<Steinberg::Vst::IComponent> component_;
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> processor_;

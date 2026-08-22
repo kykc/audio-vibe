@@ -53,16 +53,24 @@ enable_testing()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-# Third-party source dependencies come in through FetchContent only (sec. 6.1). This one is
-# fetched at the top level so that engine/, scanner/ and tests/ all share one copy.
+# Third-party source dependencies come in through FetchContent only (sec. 6.1). The SDK is
+# fetched at the top level so that engine/, scanner/ and tests/ all share one copy; yaml-cpp has
+# a single consumer in config/, and is here so that both third-party pins are in one place.
 include(vst3sdk)
+include(yamlcpp)
 
 add_subdirectory(protocol)
 add_subdirectory(rt)
 add_subdirectory(ipc)
 add_subdirectory(engine)
 add_subdirectory(scanner)
+# After scanner/: aip_config links it for ScannedModule, which is part of what a session holds.
+add_subdirectory(config)
 add_subdirectory(ui)
 add_subdirectory(tools/valet_probe)
 add_subdirectory(tools/editor_spike)
 add_subdirectory(tests)
+
+# After the subdirectories: it names aip_ui and aip_scan, and it reads QT6_INSTALL_PREFIX, which
+# ui/'s find_package sets.
+include(package)

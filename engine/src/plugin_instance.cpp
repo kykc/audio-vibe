@@ -6,6 +6,7 @@
 #include "pluginterfaces/vst/vstspeaker.h"
 
 #include <algorithm>
+#include <cassert>
 #include <vector>
 
 using Steinberg::kResultOk;
@@ -108,6 +109,7 @@ std::unique_ptr<PluginInstance> PluginInstance::create(PluginModule::Ptr module,
 
     std::unique_ptr<PluginInstance> instance(new PluginInstance());
     instance->module_ = std::move(module);
+    instance->classId_ = classId;
 
     for (const PluginClass& info : instance->module_->audioEffects()) {
         if (info.id == classId) {
@@ -216,6 +218,65 @@ void PluginInstance::disconnect() noexcept {
         controllerConnection_->disconnect();
         controllerConnection_ = nullptr;
     }
+}
+
+bool PluginInstance::saveState(PluginState& out) const {
+    out.component.clear();
+    out.controller.clear();
+
+    bool any = false;
+    if (component_) {
+        Steinberg::MemoryStream stream;
+        if (component_->getState(&stream) == kResultOk && stream.getSize() > 0) {
+            out.component.assign(stream.getData(), stream.getData() + stream.getSize());
+            any = true;
+        }
+    }
+    // Only for a split plugin. A single object implementing both interfaces has exactly one
+    // `setState`, and it means the component's -- asking it twice would be asking the same
+    // question and restoring it twice would be handing the same blob back under a second name.
+    if (controller_ && !singleComponent_) {
+        Steinberg::MemoryStream stream;
+        if (controller_->getState(&stream) == kResultOk && stream.getSize() > 0) {
+            out.controller.assign(stream.getData(), stream.getData() + stream.getSize());
+            any = true;
+        }
+    }
+    return any;
+}
+
+bool PluginInstance::loadState(const PluginState& state) {
+    // See the header: this belongs before prepare(). The assert is the whole enforcement, which
+    // is deliberate -- it is live in the configuration we develop in (sec. 6.4) and costs
+    // nothing in the one we ship.
+    assert(!prepared_ && "loadState must run before prepare()");
+
+    bool ok = true;
+    if (component_ && !state.component.empty()) {
+        // MemoryStream's read constructor borrows the memory rather than owning it, which is
+        // why this const_cast is safe as well as necessary: nothing writes through it.
+        Steinberg::MemoryStream stream(const_cast<char*>(state.component.data()),
+                                       static_cast<Steinberg::TSize>(state.component.size()));
+        if (component_->setState(&stream) != kResultOk) {
+            ok = false;
+        }
+        // The controller gets the same blob, exactly as it does at instantiation. Without this a
+        // split plugin restores its sound and opens its editor showing defaults -- the two
+        // halves are separate objects and neither tells the other anything.
+        if (controller_ && !singleComponent_) {
+            stream.seek(0, Steinberg::IBStream::kIBSeekSet, nullptr);
+            controller_->setComponentState(&stream);
+        }
+    }
+
+    if (controller_ && !singleComponent_ && !state.controller.empty()) {
+        Steinberg::MemoryStream stream(const_cast<char*>(state.controller.data()),
+                                       static_cast<Steinberg::TSize>(state.controller.size()));
+        if (controller_->setState(&stream) != kResultOk) {
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {

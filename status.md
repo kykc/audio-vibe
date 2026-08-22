@@ -1,17 +1,21 @@
 # Project status
 
-**Updated:** 2026-08-22, after the Scanner milestone: `scanner/`, out-of-process plugin probing
-with a resumable child, proven against fixtures that crash and hang on purpose and then against
-all 22 plugins installed on this machine -- three of which would have killed the shell -- and then
-wired in behind the shell's plugin picker, which has had a surface pass and works. Earlier the
-same day, a parameter gesture in ZL Equalizer 2's own editor was checked by hand and held, counter
-and audio both, which makes this the first day the chain has been *heard*. Before that, 2026-08-21,
-the UI milestone: the Qt 6 Widgets shell (`ui/`), parameter
-delivery from a plugin's editor into its processor, and two real third-party plugin editors hosted
-side by side while the chain processes system audio. Before that, the same day: the Engine
-milestone, the first real third-party plugin (ZL Equalizer 2, which found and fixed a side-chain
-bus defect), the sec. 5.1 editor-hosting spike, and the rack/chain split that makes chain
-mutation non-destructive.
+**Updated:** 2026-08-22, after the Session milestone: `config/`, a single YAML file holding the
+rack, each plugin's own state, the scan report, the window geometry and the last endpoint --
+portable next to the executable, AppData otherwise -- proven by a full round trip through the real
+shell, out and back in byte-identical, and by a second start that reused a cached scan instead of
+spending two minutes redoing it. Earlier the same day, the Scanner milestone: `scanner/`,
+out-of-process plugin probing with a resumable child, proven against fixtures that crash and hang
+on purpose and then against all 22 plugins installed on this machine -- three of which would have
+killed the shell -- and then wired in behind the shell's plugin picker, which has had a surface
+pass, works, and has since been run while the shell was attached without costing a block. Earlier
+the same day, a parameter gesture in ZL Equalizer 2's own editor was checked by hand and held,
+counter and audio both, which makes this the first day the chain has been *heard*. Before that,
+2026-08-21, the UI milestone: the Qt 6 Widgets shell (`ui/`), parameter delivery from a plugin's
+editor into its processor, and two real third-party plugin editors hosted side by side while the
+chain processes system audio. Before that, the same day: the Engine milestone, the first real
+third-party plugin (ZL Equalizer 2, which found and fixed a side-chain bus defect), the sec. 5.1
+editor-hosting spike, and the rack/chain split that makes chain mutation non-destructive.
 
 **Purpose of this file.** To let a work session be thrown away and a fresh one started without
 losing the plot. It records *where we stand* -- what is built, what is proven, what is next, and
@@ -46,13 +50,14 @@ deferred and blocks nothing.
 **Where we are:** the IPC foundation, the VST3 host, a working GUI and the plugin scanner are all
 finished and verified against the real deployed APO -- the scanner against this machine's whole
 plugin population instead. A real VST3 plugin chain runs inside the `audiodg.exe` block loop,
-driven from a window, with the plugins' own editors on screen. What is missing is that the shell
-does not call the scanner yet, and nothing anywhere is saved between runs.
+driven from a window, with the plugins' own editors on screen, and it all comes back after a
+restart. What is missing is that only the fixture plugin's state has been round-tripped -- no
+third-party plugin has been through a save and reload yet.
 
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 44, ~4 s, and NOTHING skipped
+pixi run test          # expect: 100% tests passed out of 76, ~7 s, and NOTHING skipped
 ```
 
 **Read the skip count, not just the pass line.** `pixi run test` (RelWithDebInfo) must skip
@@ -63,7 +68,7 @@ sec. 7.4.6 violation detector, which is compiled out of Release by design:
 pixi run -- cmake --build --preset release && pixi run -- ctest --preset release
 ```
 
-Both configurations build and both suites pass as of 2026-08-21. See section 8 items 17, 19 and 20
+Both configurations build and both suites pass as of 2026-08-22. See section 8 items 17, 19 and 20
 for why that sentence is worth a check rather than an assumption -- twice now, this suite has
 reported green while the most important test in it did not run.
 
@@ -74,6 +79,13 @@ pixi run ui                                 # the shell; pick an endpoint and pr
 pixi run probe                              # pass-through, console
 valet_probe --inspect --plugin <path.vst3>  # load and prepare only; never attaches
 valet_probe --plugin <path.vst3> --seconds 30
+```
+
+To hand the thing to someone who has none of this installed:
+
+```
+pixi run package       # build/package -- a folder that runs on a machine with no pixi,
+                       # no Qt and no Visual Studio. Copy it anywhere.
 ```
 
 The shell also takes a command line, for checking a state without clicking through to it. Note
@@ -115,8 +127,9 @@ components rather than numbered, so the two schemes cannot be confused.
 | IPC foundation | `protocol/`, `rt/`, `ipc/`, conformance harness, probe tool | Done and verified |
 | **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
-| **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Untried while attached** |
-| Installer | `installer/` -- WiX v7 | Not started |
+| **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Scanned once while attached, with no dropouts** |
+| **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob** |
+| Installer | `installer/` -- WiX v7 | Not started. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
 "Done for a single linear chain, mutable while running" is deliberate: the engine holds an
@@ -125,17 +138,20 @@ reordered and bypassed while audio flows -- without disturbing the plugins not b
 What it does *not* yet do is listed in section 5.
 
 "Done for a first cut" for the UI means: it attaches, it drives the rack, it hosts editors, and it
-puts every counter that matters on screen. What it has no notion of is a session (nothing is
-saved), or any control of its own -- the only way to change a parameter is the plugin's own editor.
+puts every counter that matters on screen. What it has no control of its own -- the only way to
+change a parameter is still the plugin's own editor.
 The shell now goes through the scanner to add a plugin: the picker lists scanned classes with
 vendor and category, greys out what could not be loaded with the reason in its tooltip, and probes
-a browsed bundle in a child before accepting it. What it still has no notion of is a session.
+a browsed bundle in a child before accepting it. It also has a session now: the rack it had, with
+every plugin's state, comes back when it starts.
 
 "Done for a first cut" for the scanner means: a scan probes every candidate out of process, a
 plugin that faults or hangs costs its own entry and nothing else, and the report carries enough
-about each class for a shell to show it. What it has no notion of is persistence -- every scan is
-from cold, because where a cache would be written is part of the config question that has not been
-answered yet (section 5).
+about each class for a shell to show it. The report is now kept between runs, in the session file,
+and each entry is checked against a stamp of the bundle it describes -- total size and newest
+write time, read from directory metadata -- so the first Add after a launch probes only what has
+been installed or updated since. An unchanged machine costs a directory walk and no child
+processes at all.
 
 ---
 
@@ -159,10 +175,19 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             retirement), engine (owns the rack; insert/remove/move/bypass, rebuild, publish,
             service). plugin_instance also carries the parameter ring that delivers an editor's
             edits to the processor (item 26)
+config/     session.h (the Session struct -- rack entries, cached scan report, window geometry,
+            last endpoint -- and capture/apply against an Engine), session_file (the two
+            locations, and the YAML reader and writer), base64 (wrapped on the way out,
+            whitespace-tolerant on the way back), load_guard (the breadcrumb that lets the next
+            start survive a plugin that kills this one), file_stamp (size and newest write time
+            over a
+            bundle, from directory metadata, which is what decides whether a cached scan entry is
+            still true). No Qt: all of it is testable without a window on screen
 ui/         src/ only -- an executable, nothing links it. main (OLE apartment, command line),
             main_window (the shell: endpoint attach, counters, log), rack_panel (a direct view of
-            the engine's rack; no second model), plugin_catalog (one scan report, held in memory
-            for the lifetime of the window, and the progress dialog that fills it),
+            the engine's rack; no second model), plugin_catalog (the scan report, carried across
+            runs in the session file and re-probed per entry only where a bundle's stamp has
+            changed, plus the progress dialog that fills it),
             plugin_picker (scanned classes with vendor and category; unusable modules greyed out
             with the reason; Rescan; a browsed bundle probed in a child before it is accepted),
             engine_host (names the GUI thread as *the* control thread; the
@@ -177,13 +202,20 @@ scanner/    both halves of the out-of-process probe, in one directory because th
             half: spawns aip_scan, feeds it a work list, reads records, times it out, resumes
             past whatever killed it). aip_scan is the executable; aip_scanner is the library,
             and only its parent half is what `ui/` will link
-cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
-tests/      53 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
+cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for.
+            yamlcpp.cmake -- yaml-cpp 0.8.0, pinned the same way, static, plus the two policy
+            overrides CMake 4 needs to configure it at all (trap 23).
+            package.cmake + package_impl.cmake -- the portable folder: a dependency walk for the
+            DLLs, an explicit list for the Qt plugins nothing imports, and the redistributable
+            CRT. No windeployqt (trap 24)
+tests/      76 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
             built from the SDK), fixtures/aip_hostile_plugin (two that misbehave on purpose --
             one faults inside GetPluginFactory, one never returns from it). conformance,
-            engine, planar, protocol_layout, realtime_safety, scanner, source_hygiene,
-            spsc_queue
+            config, engine, planar, protocol_layout, realtime_safety, scanner, source_hygiene,
+            spsc_queue. The test plugin carries real state -- three parameters behind a magic
+            number, and a blob whose magic does not match is refused -- so both halves of a
+            session restore are observable rather than inferred
 tools/      valet_probe -- console client against the real APO, with --plugin, --inspect and
             --scan (--inspect loads, instantiates and prepares plugins *in the probe* and
             reports bus layout, parameter count, latency and split-vs-single, without attaching
@@ -318,8 +350,42 @@ Proven, and re-checkable by running the suite:
   and bytes outside ASCII all round-trip, and the escaped form stays inside 0x20-0x7E.
 - A truncated record stream names the module that was in flight, which is the mechanism the
   crash attribution rests on.
-- Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`
-  and `scanner/` included.
+- **A plugin comes back holding what it held.** Two instances of the fixture, given different
+  non-default parameters, captured, written to YAML, read back, and rebuilt in a *fresh* Engine:
+  each returns with its own value and the one parameter nobody touched is still at its default.
+  The fixture implements real `getState`/`setState` for this, so the assertion is about the
+  plugin's state and not about our own bookkeeping. Negative control run: making
+  `PluginInstance::loadState` a no-op fails it.
+- A plugin that **refuses** a state blob is still loaded, reported, and left at its defaults --
+  the case a user meets after updating a plugin whose format changed. The fixture checks a magic
+  number to make that reachable on demand. Negative control: the same no-op fails this one too,
+  from the other side.
+- A session naming a plugin that is no longer installed loses that entry and *only* that entry:
+  the ones after it are still built, and built at the right positions rather than around a hole.
+- Base64 round-trips every length from 0 to 256 bytes over every byte value -- a NUL, a byte that
+  is not valid UTF-8 and a newline included -- survives being wrapped and unwrapped, and rejects
+  a truncated quantum, a foreign character, and padding in the middle rather than inventing
+  bytes for any of them.
+- The cached scan report survives the file: status, per-class detail and the stamp, for a module
+  that loaded and for one that hung. Keeping the *failures* matters as much as keeping the
+  successes -- re-probing a plugin that hangs costs the full 60-second deadline every time.
+- The breadcrumb names what was being loaded, is gone once the load returns, is gone when the
+  guard is destroyed with a mark outstanding -- a clean shutdown mid-load is not a crash -- and is
+  *consumed* when it is read, so an entry it blocked can be tried again by clearing one flag.
+- What killed the last start is blocked and nothing else is; a module the scan report calls
+  crashed or timed out is blocked without a breadcrumb at all; a blocked entry is skipped,
+  reported, and still written back to the file with its reason.
+- A cached entry with no stamp is dropped on read rather than trusted, and an invalid stamp never
+  compares equal even to itself. That is the one property a cache must have here: an entry that
+  cannot be checked against the file system has to be re-probed, not believed.
+- A bundle stamps identically twice and differently after one byte is appended to one file inside
+  it -- checked by copying the fixture bundle and editing the copy.
+- A session survives being written and read back: rack order, bypass flags, both state blobs,
+  window geometry and endpoint id. A file from a future format version is refused with the
+  version in the message rather than half-read; an *empty* file is not an error, because an empty
+  file next to the executable is the documented way to ask for portable mode.
+- Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`,
+  `scanner/` and `config/` included.
 
 Proven against the real deployed APO on the development machine:
 
@@ -374,6 +440,70 @@ Proven against the real deployed APO on the development machine:
   the report, and a plugin chosen from it is added. Reported as working as expected. Note the
   standard of evidence -- a quick look, not a systematic pass, and the awkward cases below were not
   reached.
+- **A scan while attached does not interrupt the audio.** Checked by hand by the project owner on
+  2026-08-22: with the shell attached and a chain running, a full scan of this machine's plugin
+  population -- around two minutes, most of it the two 60 s timeouts -- produced no audible
+  artifacts and left `timeouts` at zero. That is the evidence item 44 was missing. The progress
+  dialog's hand-pumped event loop does keep `EngineHost`'s servicing tick firing, and starting a
+  succession of child processes while loading every plugin on the machine does not perturb the
+  valet thread. Note the standard of evidence, and note what it does not cover: no format change
+  was driven during the scan, so the tick is shown to keep *running*, not shown to still act on a
+  rebuild.
+- **The shell saves a session and starts from it.** Checked end to end on 2026-08-22, driving
+  the real `aip_ui`: started with `--vst3` and a fresh `--config`, closed with a WM_CLOSE, started
+  again with *only* `--config`, and closed again. The second file is byte-identical to the first
+  -- same rack, same class id, same state blob, same window geometry, same endpoint -- which it
+  could only be if the whole session had been read back into a real Engine and captured out of it
+  again. Note what this does *not* cover: the fixture plugin was the only one in the rack.
+- **A real third-party plugin's state survives a restart.** Checked by the project owner on
+  2026-08-22 with ZL Equalizer 2: set up, closed, reopened, state intact. The file says what that
+  cost -- around 37 kB of base64 holding the plugin's own serialization, which is JUCE's
+  `ParaState` XML of all 610 parameters followed by its `JUCEPrivateData` block. That is a real
+  plugin's own format, versioned and opaque to us, so this is the first evidence that what
+  round-trips is the *plugin's* state and not our bookkeeping about it.
+- **The split component/controller path ran, and the plugin declined.** ZL Equalizer 2 is a split
+  plugin, and there is no `controllerState` in the file: its `IEditController::getState` gave
+  nothing back, which is normal for a JUCE wrapper -- JUCE keeps everything, editor size included,
+  in the component blob. So the decline is handled and costs nothing. What has still never
+  happened is a *non-empty* controller blob making the round trip; see below.
+- **The portable folder runs with none of the build environment present.** `pixi run package`
+  on 2026-08-22 produced 30 DLLs plus the Qt plugins, 71 MB; copied out of the build tree to a
+  temporary directory and run from a shell with *no* pixi environment on `PATH`, `aip_ui.exe`
+  came up, enumerated the endpoint and rewrote its own `aip_config.yaml` in place -- which is both
+  halves at once, since a session file next to the executable is what portable mode means.
+  `aip_scan.exe` runs from the same folder too, probing the fixture and printing its wire format,
+  so the scanner has its child where it looks for it (item 42).
+- **A plugin that kills the shell costs one start, not the application.** Driven end to end on
+  2026-08-22 with `aip_crash_plugin`, the fixture that faults inside `GetPluginFactory` -- in the
+  loader's own call, before any of our code is on the stack. A session naming it takes the shell
+  down (exit 139) and leaves the breadcrumb holding its path; the next start reads it, skips that
+  entry, comes up, and writes `blocked: true` with the reason into the file; the start after that
+  comes up too. Clearing `blocked` by hand really does try it again -- it crashes again, which is
+  the negative control that proves the entry is retried rather than permanently dropped -- and the
+  start after *that* re-blocks it. The whole cycle, both directions.
+- **The scan report prevents the first crash as well.** Same fixture, a session with no breadcrumb
+  but a catalog entry marking the module `crashed`: the shell comes up on the *first* start with
+  the entry blocked and `the plugin scan reports it as crashed` written into the file. That is the
+  scanner's value being spent where it was always meant to be -- a child process died finding this
+  out, once, and nothing here has to die again to act on it.
+- **The shell reattaches to what it was attached to.** Checked end to end on 2026-08-22 against
+  the real APO: started with `--attach`, closed, and the file recorded `attached: true`; started
+  again with *no* flags and closed, and the file still said `attached: true` -- which it can only
+  do if the shell attached on its own, because the flag is written from what the link is actually
+  doing at closing time rather than from what the file said on the way in. Negative control run:
+  editing the file to `attached: false` and starting again leaves it false.
+- **The scan report is reused instead of redone.** Measured on 2026-08-22 with the real
+  `aip_ui --scan` against this machine's plugin population: a cold start with no session file
+  probed all of them and wrote 21 cached entries; a second start from that file produced the same
+  21 entries with the shell alive for twelve seconds, which a full scan cannot do -- it needs
+  around 124 s here, most of it the two plugins that hang. Confirmed again by the project owner
+  the same day, from the real AppData session rather than a throwaway one: 21 catalog entries came
+  back, statuses and all -- including the module that crashes, carrying its own
+  `exited (code 0xC0000005) while probing this plugin`, which is exactly the entry that is most
+  expensive to rediscover. The twenty-second entry is a *dangling
+  symlink* in the VST3 folder pointing at a build output that no longer exists; it cannot be
+  stamped, so it is re-probed at every start and reported unusable, which is both correct and
+  cheap -- the load fails immediately.
 - The crashed plugin exited with code 3 -- a CRT `abort`, not a fault -- and it cost milliseconds.
   That is `suppressCrashDialogs` doing its job: without `_set_abort_behavior`, `abort` puts up a
   modal box and the crash becomes a 60-second timeout instead.
@@ -398,14 +528,11 @@ Proven against the real deployed APO on the development machine:
   a scan started while a previous one is somehow still running, a module exposing more than one
   class, and the greyed-out entries -- which need a machine whose broken plugins are the ones being
   looked at rather than scrolled past.
-- **That a scan does not stall the control plane.** The progress loop pumps the event queue
-  precisely so `EngineHost`'s servicing tick keeps firing (item 44), but nobody has run a scan
-  *while attached* to confirm that a format change is still acted on during one. This is the
-  interesting half of the UI wiring and the surface test did not cover it: item 44 is reasoning,
-  not evidence.
-- That a scan is safe to run *while attached*. Nothing forbids it and nothing about it touches the
-  valet thread, but a scan starts processes and loads DLLs, and no one has done it with audio
-  flowing.
+- **That a format change is acted on during a scan.** A scan while attached is now known not to
+  cost audio (see above), which was the half that could have caused a dropout. The other half is
+  untried: nothing has driven a format change while a scan was running, so item 44's claim that the
+  control plane keeps *working* -- as opposed to merely not blocking the audio -- remains reasoning.
+  It needs a rate change forced from Windows mid-scan.
 - That a plugin cannot corrupt the record stream. Records travel on a private pipe and the child's
   stdout and stderr go to the null device, which is the defence; it has not been tested against a
   plugin that actually prints.
@@ -434,9 +561,43 @@ Proven against the real deployed APO on the development machine:
 - The split component/controller path in a **test**. It is proven against a real plugin, which is
   a manual step; the automated suite still only sees our single-component fixture. Covering it
   hermetically needs a second plugin fixture.
-- Plugin state persistence. `IComponent::getState`/`setState` are not called by the engine at
-  all; a rebuilt chain starts from defaults, which the format-change test asserts rather than
-  works around.
+- **A plugin whose state points at something outside itself.** ZL Equalizer 2 round-trips (see
+  above), which retires the general question. NeuralAmpModeler does not: it references a model
+  file on disk, so its blob is a *path* as much as a state, and nothing has checked what happens
+  when that path is restored -- let alone when the model has moved since.
+- **A non-empty controller blob.** The split path runs and a decline is handled (see above), but
+  no plugin met so far has actually returned controller state, so the restore half of it --
+  `IEditController::setState` with real bytes -- has never executed. Every plugin in the automated
+  suite is single-component, where the controller blob is skipped by design (item 48), so the
+  suite cannot cover this either.
+- **Reattaching to an endpoint whose device has changed under it.** The reattach is suppressed
+  when the endpoint id is gone from the enumeration, which is the unplugged case. What has not
+  been tried is the same id coming back at a different format, or a device that enumerates but
+  will not produce blocks. Neither has a reason to fail; neither has been seen.
+- **A plugin that crashes *after* the rack is built.** The breadcrumb brackets loading and only
+  loading. A plugin that faults in `process` -- on the audio thread, seconds after the session has
+  reattached -- crashes the shell outside anything that is watching, and since being attached is
+  now restored too, it does so again on the next start. That is the same boot loop the breadcrumb
+  closes for loading, still open for processing (section 5).
+- **That the portable folder runs on another machine.** It runs here without the build
+  environment, which is the strongest thing that can be checked *here* -- but this machine has
+  Visual Studio, the Windows SDK and a Qt installation somewhere on it, and none of that can be
+  fully hidden from a process by removing a directory from `PATH`. The claim the folder is for is
+  "a machine that has none of this", and that machine has not been tried. The likeliest thing to
+  be missing is a CRT the redist copy does not cover.
+- That the breadcrumb survives losing power. It is flushed to the operating system, which outlives
+  a process that faults or is killed; it is not `fsync`, and it is not meant to be. The failure
+  being defended against is a plugin, not a power cut.
+- **That the stamp catches every way a plugin can change.** Size plus newest write time is a
+  heuristic. It cannot miss an installer or an updater, because both write files; what it would
+  miss is an edit that preserves both, which nothing that installs software does. Untested against
+  a real plugin update -- only against a byte appended to a copy of the fixture.
+- That the catalog behaves when a plugin is installed *while the shell is open*. The check happens
+  once per run, on the first Add; Rescan is the answer and always was, but nobody has confirmed
+  that the cached path does not make Rescan look like it did nothing.
+- That a session is saved when the shell does *not* close cleanly. The file is written from
+  `closeEvent` and nowhere else, so a crash or a kill loses whatever changed since the last
+  clean exit.
 - Multi-bus plugins beyond one main pair plus deactivated extras. Side-chains are now handled
   (see sec. 7 item 20) but nothing *drives* one, and a plugin whose main output is not bus 0 is
   not considered at all.
@@ -517,22 +678,33 @@ What `pixi run ui` does **not** cover, and so must not be mistaken for a clean b
 The de-risking steps that used to head this list -- a real third-party plugin, editor hosting, and
 a UI to drive them -- are all done, and all held. What remains is ordinary construction.
 
-The five-second manual check that used to head this list -- move a real knob, watch the counter --
-was done on 2026-08-22 against ZL Equalizer 2 and passed; it has moved to section 4. `scanner/`
-was built the same day, wired in behind the picker, and given a surface pass. One check is still
-outstanding ahead of the session file, and it is the one that could bite audibly.
+The manual checks that used to head this list are done as well, both on 2026-08-22. A knob moved
+in ZL Equalizer 2's own editor reached the processor and was heard, and a scan run while the shell
+was attached cost no audible artifacts and no timeouts -- the last outstanding check that could
+have bitten audibly. Both are in section 4 now. So is the session file, built the same day
+and checked twice by hand: ZL Equalizer 2's own state survives a restart, and the cached scan
+report comes back instead of costing two minutes. The shell is usable daily as of now.
 
-0. **Run a scan while attached.** The picker itself has had a surface pass and works. What that
-   pass did not cover is the one case where the wiring can be wrong in a way that matters: with the
-   shell attached and a chain running, press Rescan and watch the counters. `blocks` must keep
-   climbing and `timeouts` must stay at zero for the whole scan -- two minutes on this machine --
-   because the GUI thread is also the control thread (item 27) and the progress loop only keeps
-   servicing it by pumping the event queue (item 44). If that reasoning is wrong, this is where it
-   shows, and the symptom is a system-wide dropout rather than a cosmetic one.
-1. **Plugin state serialization**, and then a session file. `IComponent::getState` / `setState`.
-   The shell makes the absence conspicuous -- every restart is an empty rack -- and it is the last
-   thing standing between what exists and something usable daily. Note that this is *not* what
-   makes a parameter survive a format change; the rack owning the instances is (item 23).
+A session that crashes on load no longer costs the application -- that is section 7 item 56, and
+it is done and proven in both directions. What is left is the half of the same problem it does
+not reach.
+
+1. **Close the boot loop for a plugin that crashes while *processing*.** The breadcrumb brackets
+   loading, and only loading. A plugin that faults in `process` does it on the audio thread,
+   seconds after the session has restored the rack and reattached -- outside anything that is
+   watching -- and because being attached is restored too, the next start does the same thing
+   again. Every attempt takes the machine's audio with it for as long as it lasts.
+
+   This needs a policy decision rather than a mechanism, which is why it is not already written.
+   The breadcrumb pattern does not transfer: there is no call to bracket, so "survived" has to be
+   defined in time -- attach, and clear the mark once some number of seconds or blocks have gone
+   by without dying. That threshold is a judgement about how long a bad plugin takes to fault,
+   and picking it wrongly either never protects anything or drops protection for a slow crash.
+   The cheaper alternative is not to restore the attach when the last start ended badly at all --
+   come up detached, say why, and let the user press Attach. Worth a decision before code.
+2. **Restore NeuralAmpModeler.** The one real plugin here whose state is a *path* -- it references
+   a model file on disk -- so it is the case where "the blob round-tripped" and "the plugin came
+   back working" can differ. Cheap to check now that ZL Equalizer 2 has been.
 
 Engine work still outstanding, roughly in order of how much it will be missed:
 
@@ -547,8 +719,9 @@ Scanner work still outstanding:
   around a guess. Attach a debugger to the child, or run `aip_scan` on one of them by hand and see
   where it sits. The answer decides whether the default is too low or whether those plugins are
   simply unscannable, and it is the difference between a 4-second scan and a 124-second one here.
-- Persist a report, once section 5 item 1 has settled where configuration lives. Nothing in
-  `scanner/` writes anything today, deliberately.
+- Report the cache in the picker. It says "21 plugin(s), 4 unusable" and not how many of those
+  came from the cache or when they were probed, so a user who suspects the shell is wrong about a
+  plugin has nothing to look at before pressing Rescan.
 - Report which classes a module exposes when there is more than one. The report already carries
   them; nothing consumes the plural case, and no plugin here has exercised it.
 - Consider scanning in parallel. One child at a time is the simple, correct shape and 17 sound
@@ -567,8 +740,6 @@ UI work still outstanding, none of it blocking:
   are all already available from `PluginModule`/`PluginInstance`.
 - Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it.
 - Endpoint hot-swap while attached, which needs `ValetSupervisor` to grow it (see below).
-- Remembering window geometry and the last endpoint. `QSettings`, once there is a session format to
-  put it next to.
 - The sec. 5.2 "EQ/plot widgets" the design document mentions for `ui/`. Nothing needs them yet;
   they belong with whatever the project's own processing turns out to be, not with plugin hosting.
 
@@ -947,6 +1118,148 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     does *not* do: `ui/` still loads plugins in its own working directory, and the file that
     prompted this was written there rather than by a scan.
 
+46. **One YAML file holds everything, and where it lives decides the mode.** Asked for directly by
+    the project owner on 2026-08-22: a single text file, YAML, read from next to the executable
+    first and from `%APPDATA%/audio-ipc2/` otherwise; written back to whichever file it was read
+    from, and to AppData when there was nothing to read. So AppData is the default without being
+    hard-coded as one, and a user opts into portable mode by *putting a file next to the exe* --
+    even an empty one, which is why an empty file has to parse to an empty session rather than to
+    an error. There is no mode flag anywhere, and nothing to keep in sync: the file's own location
+    is the setting.
+
+47. **`config/` is its own component and does not depend on Qt.** It could have lived in `ui/`,
+    which is its only consumer. Keeping it out buys a seam the tests can reach: every assertion
+    about the file format, the two locations and the capture/apply round trip runs without a
+    window on screen, which is the difference between fourteen automated tests and a manual pass.
+    It depends on `engine/` because a saved rack is a rack of real plugins, and on nothing else.
+
+48. **A plugin's state is captured as two blobs, and the second one is skipped for a
+    single-component plugin.** `IComponent::getState` is the one that matters -- it is what makes
+    the audio come back the way it was left. `IEditController::getState` is the editor's own
+    business and is captured too, but only when the component and controller are separate objects.
+    The reason is a name clash: a single object implementing both interfaces has *one*
+    `setState`, and the SDK itself works around this by macro-renaming the controller's pair to
+    `set/getEditorState` while it includes the header. A plugin that did not take that workaround
+    would have one function behind both vtable slots, and handing it the controller blob would be
+    handing it the wrong data under a name it cannot distinguish. The cost is that a
+    single-component plugin does not remember which editor page it had open. That is worth
+    strictly less than not corrupting its processor state.
+
+49. **State is applied between instantiation and `prepare`, which is why
+    `insertPluginWithState` exists.** VST3 permits `setState` on an active component -- preset
+    recall during playback is exactly that -- but a plugin is entitled to expect it before
+    `setupProcessing`, and restoring into an instance that has already negotiated its busses is a
+    needlessly hostile way to discover which plugins disagree. Every other insertion path returns
+    with the instance already prepared, so this could not be a call the caller makes afterwards.
+    `PluginInstance::loadState` asserts the ordering rather than trusting it.
+
+50. **A plugin that refuses its state is still inserted, and the call still returns true.** The
+    rack is what the user built; one unreadable blob -- which is what a plugin update looks like
+    from here -- is not a reason to throw the rest of it away. `error` comes back non-empty on
+    success in that one case, which is the only place in `Engine` where that is true, and it is
+    how the shell says "your plugin is here but it starts from defaults" without calling it a
+    failure. The same principle runs through `config::apply`: a missing plugin, a bad class id and
+    a rejected blob each cost their own entry and nothing else.
+
+51. **A session file that cannot be read is never written over.** If `readSession` fails, the
+    shell blocks saving for the rest of the run and says so. The alternative is worse than it
+    looks: a file that fails to parse leaves an empty rack, and saving on the way out would write
+    that empty rack over the only copy of what the user is trying to recover. A hand-edit with a
+    typo in it should cost a restart, not a rack. Writing goes through a temporary file and a
+    rename for the same reason.
+
+52. **The session is written on close and nowhere else.** No autosave, no write-on-change. A rack
+    mutation costs a `getState` per plugin, and a plugin's `getState` is a real serialization --
+    doing it on every click would put that work behind the mouse. The cost is that a crash loses
+    whatever changed since the last clean exit, which is recorded in section 4 rather than
+    designed around.
+
+53. **The saved window geometry is checked against the screens that exist now.** A rectangle whose
+    centre is on no current screen is discarded and the default size used instead. An external
+    monitor that is not plugged in this time should not cost the user their window, and a window
+    restored off-screen is invisible in a way that also hides the fact that it is invisible.
+    `normalGeometry`, not `geometry`, is what gets saved: for a maximized window the second one is
+    the screen, and restoring that would make un-maximizing do nothing.
+
+54. **The cached scan report is validated per entry, not trusted or discarded wholesale.** Chosen
+    by the project owner on 2026-08-22 over "trust until Rescan". On the first Add after a launch
+    the standard locations are walked -- cheap, loads nothing -- each bundle is stamped from
+    directory metadata, and only bundles whose stamp disagrees with the cache go to a child
+    process. The requirement that decides it is item 43's, restated: a cache must never be the
+    reason a plugin someone just installed is invisible. Trusting the cache until the user presses
+    Rescan moves that failure from "every launch" to "until you remember", which is worse, because
+    it is intermittent.
+
+    Two details are load-bearing. A cached entry with **no** stamp is dropped rather than kept: an
+    entry that cannot be verified would be believed forever, so an invalid stamp deliberately does
+    not compare equal even to itself. And a bundle is stamped *after* it is probed, not before --
+    a plugin caught mid-install would otherwise be recorded under the stamp it had while it was
+    still being written, and never looked at again.
+
+    Observed on this machine: one of the 22 installed bundles is a dangling symlink to a build
+    output that no longer exists. It cannot be stamped, so it is re-probed at every start. That is
+    the right outcome -- it costs a failed `LoadLibrary` and the picker greys it out either way.
+
+55. **Being attached is part of the session, and is restored.** Asked for directly by the project
+    owner on 2026-08-22, reversing what `config/` was first written to do. The argument that this
+    replaces -- attaching takes over the machine's audio system-wide (sec. 3.7.1), so it must be a
+    deliberate act -- was answering the wrong question: it is an argument for the *first* attach
+    being asked for, and none at all for asking again every morning. Being attached is a state
+    someone put the application into, which is the definition of what a session file holds.
+
+    Two details keep it honest. The flag is written from `EngineHost::attached()` and not from the
+    button, because a link can end without anyone pressing anything -- another client takes the
+    stream (sec. 4.1), or the king goes away -- and a session that recorded "attached" after being
+    displaced would reattach into a fight it already lost. And the reattach is suppressed when the
+    endpoint the session named is no longer enumerated: taking over whatever device happens to be
+    default now, because the one the user chose is unplugged, is not restoring their state, it is
+    guessing at it with the whole machine's audio as the stake.
+
+56. **A session that kills the shell costs one start, not the application.** Two mechanisms, in
+    the order they are cheap. First the scan report: a module the catalog reports as anything but
+    usable is never loaded, because a child process already died finding that out (sec. 7.2) and
+    here it would take the shell instead. That covers every plugin a scan has met, at no cost.
+    Second, a breadcrumb, for everything else -- the path about to be loaded is written to a
+    sibling of the session file and flushed before the load, and cleared when the load returns.
+    Still there at the next start means it names what stopped the last one.
+
+    `scanner/` is the thorough answer and the wrong one here: probing every rack entry in a child
+    at every start costs a process per plugin for knowledge the catalog usually already has.
+
+    Three details. The breadcrumb is **consumed** when it is read, not merely read -- otherwise
+    the entry it names could never be retried, because clearing `blocked` by hand would be undone
+    by the same stale file at the next start, invisibly. A blocked entry is **kept in the file**,
+    at its position, rather than dropped: it is still part of the chain the user built, and this
+    way the reason is written where they can read it and clearing one flag is how they ask for a
+    retry. And the policy lives in `config/` rather than `ui/`, because what is dangerous is a
+    property of a session and a scan report and needs no window to be reasoned about or tested.
+
+    What it does not cover is a plugin that crashes *after* loading, which is section 5 item 1.
+
+57. **The portable folder is built by a dependency walk, not by a deployment tool.** Asked for by
+    the project owner on 2026-08-22: a folder that can be copied to another machine and run.
+    `file(GET_RUNTIME_DEPENDENCIES)` walks the import tables of both executables transitively and
+    resolves each name against the pixi environment, which is the only mechanism that gets the
+    conda-forge shape right -- Qt there is a dozen separate packages, and a Qt-aware tool ships Qt
+    and leaves them behind (trap 24). What a dependency walk cannot see is a plugin, because
+    nothing imports one: those are a list, and the list is a decision recorded in
+    `package_impl.cmake` next to the reason for each entry.
+
+    Three things go in that are not dependencies of anything. `aip_scan.exe`, because the scanner
+    looks for its child beside the running executable (item 42) and a package without it reports
+    every plugin on the machine as broken. A `qt.conf` pinning `Plugins = plugins`, because
+    otherwise Qt falls back to the prefix compiled into `Qt6Core` -- the path this machine's
+    environment happens to live at -- and a package tested here would load the developer's plugins
+    and pass while the same folder failed everywhere else. And an `aip_config.yaml`, because a
+    file next to the executable *is* portable mode (item 46): a folder you carry to another
+    machine should keep its settings in itself, and this is how that is said.
+
+58. **`--scan` exists so the catalog can be checked without a person clicking Add.** The command
+    line is for verification rather than daily use (ui/src/main.cpp), and the catalog is the one
+    part of the session whose cost is measured in minutes -- so "the cache is being used" had to
+    be something a run could demonstrate rather than something the code asserts about itself. It
+    does exactly what the first Add does and reports the summary through the log view.
+
 ---
 
 ## 8. Traps already paid for
@@ -1075,6 +1388,38 @@ integration. These are the ones found while implementing. Re-discovering any is 
     every GPU/CUDA one on the machine, including the one that crashes -- and none reproduced it
     through the scanner, so it is likely written at a stage a scan never reaches: an editor being
     opened, or processing starting.
+
+23. **CMake 4 will not configure a dependency whose version floor is below 3.5, and the escape
+    hatch has a second half.** The pixi environment ships CMake 4.4; yaml-cpp 0.8.0 -- the newest
+    release, from 2023 -- declares `cmake_minimum_required(VERSION 3.4)`, and CMake 4 removed
+    compatibility with anything below 3.5 outright. The configure fails inside the dependency
+    before a line of it is read. `CMAKE_POLICY_VERSION_MINIMUM 3.5` is the documented fix and it
+    works, but it then makes the subproject behave *as though it were written for 3.5* -- which
+    means CMP0077 is OLD, which means `option()` goes back to **clearing any normal variable of
+    the same name**. Every `set(YAML_CPP_BUILD_TOOLS OFF)` and its siblings are silently discarded
+    and the tools, contrib and clang-format targets switch themselves back on. CMake says so, in a
+    warning per variable that names the variable it just threw away and is easy to read as noise
+    from someone else's project. `CMAKE_POLICY_DEFAULT_CMP0077 NEW` is the other half.
+    `cmake/vst3sdk.cmake` needs neither -- the SDK's floor is 3.25 -- so the comment there saying
+    CMP0077 comes for free is true of the SDK and not of dependencies in general.
+
+24. **Two ways to package nothing at all.** Both cost a run that looks like it worked.
+
+    `windeployqt6` is the canonical Qt deployment tool and it fails on a conda-forge Qt with
+    `Unable to query qtpaths: Process failed to start`, then exits *successfully* having copied
+    nothing. The conda layout has `qtpaths6.exe` where the tool looks for `qtpaths`, so
+    `--qtpaths <prefix>/Library/bin/qtpaths6.exe` makes it run. It is still not enough: given that,
+    it copies Qt's own DLLs, ICU and the plugins, and none of the separate conda packages Qt6Core
+    and Qt6Gui import -- freetype, pcre2, zlib, libpng, zstd, double-conversion and the rest. That
+    is what `file(GET_RUNTIME_DEPENDENCIES)` gets right and a Qt-aware tool does not, which is why
+    `cmake/package.cmake` uses the dependency walk and lists the plugins by hand instead.
+
+    The second is ours. `find_package(Qt6 ...)` in `ui/CMakeLists.txt` sets `QT6_INSTALL_PREFIX`
+    in *that directory's* scope, so at the top level it is empty -- and a packaging script handed
+    an empty prefix does not fail. It skips a plugin directory that "does not exist", finds no Qt
+    to search, and reports `Qt6Core.dll` among the dependencies it expects *Windows* to provide.
+    The package is written, the task succeeds, and the folder does not run. Read the unresolved
+    list: a Qt DLL in it means the search directory was wrong, not that Windows has one.
 
 ---
 

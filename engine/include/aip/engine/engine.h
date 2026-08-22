@@ -85,6 +85,20 @@ public:
     [[nodiscard]] bool insertPluginByClassId(std::size_t index, const std::string& path,
                                              const std::string& classId, std::string& error);
 
+    /// Same again, handing the plugin back the state it was saved with. This exists as its own
+    /// entry point rather than as something the caller does afterwards because of *when* the
+    /// state has to be applied: between instantiation and `prepare`, and by the time any of the
+    /// calls above returns, the instance is already prepared (see PluginInstance::loadState).
+    ///
+    /// A plugin that rejects the state is still inserted, and the call still returns true --
+    /// a rack that restores imperfectly is worth more than a session that refuses to load. When
+    /// that happens `error` is non-empty on success, which is the one place in this class where
+    /// that is true, and it is how a shell reports "your plugin is here but it starts from
+    /// defaults" without calling it a failure.
+    [[nodiscard]] bool insertPluginWithState(std::size_t index, const std::string& path,
+                                             const std::string& classId, const PluginState& state,
+                                             std::string& error);
+
     /// Removes the plugin at `index` and destroys it, once the audio thread has provably let go.
     [[nodiscard]] bool removePlugin(std::size_t index);
 
@@ -158,6 +172,12 @@ private:
     };
 
     [[nodiscard]] PluginModule::Ptr moduleFor(const std::string& path, std::string& error);
+
+    /// The one insertion path; everything public above narrows down to it. `state` is optional
+    /// and applied before `prepare`.
+    [[nodiscard]] bool insertPluginImpl(std::size_t index, const std::string& path,
+                                        const VST3::UID& classId, const PluginState* state,
+                                        std::string& error);
 
     /// Publishes a view over every prepared, non-bypassed rack entry. Publishes nothing when no
     /// format is known yet. Returns false only if the audio thread failed to release the chain

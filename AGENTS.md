@@ -28,6 +28,7 @@ pixi run test         # ctest; also enforces the ASCII rule below
 pixi run ui           # the Qt shell: pick an endpoint, press Attach, add plugins
 pixi run probe        # console client; attach to the real APO on the default endpoint
 pixi run probe --scan # probe every installed plugin out of process; no APO involved
+pixi run package      # build/package -- a portable folder; no pixi, Qt or VS needed to run it
 ```
 
 `valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
@@ -39,11 +40,13 @@ you have no reason to trust -- `--inspect` does the same work *in* the probe, an
 that faults there takes the probe with it. `aip_scan` is also runnable by hand on a single
 suspect bundle and prints its own wire format.
 
-`aip_ui` takes `--vst3 <path>` (repeatable), `--editors` and `--attach`, so a state can be reached
-without clicking through to it. It is **`--vst3`, not `--plugin`**: Qt reserves `-plugin` and eats
-it out of `argv` with no diagnostic (status.md sec. 8 item 15). Pixi also strips quotes from
-forwarded arguments, so for a path with spaces run the executable directly with the pixi
-environment's `Library/bin` on `PATH` rather than going through `pixi run ui`.
+`aip_ui` takes `--vst3 <path>` (repeatable), `--editors`, `--attach`, `--config <path>` and
+`--scan`, so a state can be reached without clicking through to it. It is **`--vst3`, not
+`--plugin`**, and **`--config`, not `--session`**: Qt reserves both `-plugin` and `-session`, and
+eats them out of `argv` with no diagnostic (status.md sec. 8 item 15). `--config` is also the way
+out of a session file that will not load, or that names a plugin that brings the shell down. Pixi
+also strips quotes from forwarded arguments, so for a path with spaces run the executable directly
+with the pixi environment's `Library/bin` on `PATH` rather than going through `pixi run ui`.
 
 `design_doc.md` is the normative specification for this project. Read the relevant section
 before writing code; it records decisions that were made empirically and should not be
@@ -149,6 +152,8 @@ the resulting invalid escape sequence (C4129).
 protocol/   header-only C++20 -- protocol v1, single source of truth (client, APO, tests)
 ipc/        BufferValet, valet thread, thread promotion
 engine/     VST3 host: module loading, plugin chain, state, processing graph
+config/     the session file: the rack, plugin state, the scan cache, window, endpoint. YAML,
+            no Qt
 scanner/    separate executable -- out-of-process plugin probing (crash isolation)
 ui/         Qt 6 Widgets shell, plugin rack, editor hosting, EQ/plot widgets
 apo/        later stage -- the rewritten APO
@@ -172,7 +177,10 @@ and web UIs are disqualified (sec. 5.1, sec. 5.4). Embedding uses `QWindow::from
 Toolchain: **pixi** (`pixi.toml` + `pixi.lock` committed) providing `qt6-main`, `cmake`,
 `ninja`, `vs2022_win-64`, `catch2`. CMake with `CMakePresets.json`, **Ninja Multi-Config**
 generator, tests via Catch2 v3 + `ctest`. Third-party source deps via **`FetchContent` only** --
-no submodules, no vcpkg, no Conan.
+no submodules, no vcpkg, no Conan. Two of them: the VST3 SDK and yaml-cpp, both pinned by URL and
+SHA256 in `cmake/`. Note that CMake 4 refuses a dependency declaring a floor below 3.5, and that
+the fix for it re-enables the policy that makes `option()` discard your settings -- status.md
+sec. 8 item 23 before adding a third.
 
 `vs2022_win-64` *activates* a local MSVC install (MSVC is not redistributable), so `cl.exe`
 resolves inside `pixi run` with no `vcvars` and no Developer Command Prompt. Visual Studio 2022+

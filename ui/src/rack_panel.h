@@ -35,6 +35,11 @@ public:
     /// updated.
     void refresh();
 
+    /// The scan cache, which lives here but is loaded and saved by MainWindow along with the rest
+    /// of the session. Exposed rather than moved because this is still the only panel that scans,
+    /// and a catalog owned by the window would be a second thing to keep in step with this one.
+    [[nodiscard]] PluginCatalog& catalog() noexcept { return catalog_; }
+
 Q_SIGNALS:
     void message(const QString& text);
 
@@ -53,8 +58,9 @@ private:
     EditorManager& editors_;
 
     /// Held here, and nowhere else, because this is the only panel that adds a plugin. It caches
-    /// one scan for the lifetime of the window: the first Add triggers it, the picker's Rescan
-    /// button replaces it, and closing the shell throws it away (status.md sec. 5).
+    /// one scan report and now outlives the window: the session file carries it, the first Add
+    /// after a launch checks it against the file system and probes only what changed, and the
+    /// picker's Rescan button throws the whole thing away and starts again.
     PluginCatalog catalog_;
 
     QListWidget* list_ = nullptr;

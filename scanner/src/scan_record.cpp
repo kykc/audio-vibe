@@ -65,7 +65,9 @@ void appendFlag(std::string& out, const char* key, bool value) {
     out += '\n';
 }
 
-[[nodiscard]] ScanStatus statusFromString(const std::string& text) noexcept {
+} // namespace
+
+ScanStatus scanStatusFromString(const std::string& text) noexcept {
     if (text == "ok") {
         return ScanStatus::Ok;
     }
@@ -80,8 +82,6 @@ void appendFlag(std::string& out, const char* key, bool value) {
     }
     return ScanStatus::LoadFailed;
 }
-
-} // namespace
 
 const char* toString(ScanStatus status) noexcept {
     switch (status) {
@@ -228,7 +228,7 @@ bool RecordReader::consumeLine(const std::string& line) {
         info.id = unescapeField(value);
         pending_.classes.push_back(std::move(info));
     } else if (key == "end") {
-        pending_.status = statusFromString(value);
+        pending_.status = scanStatusFromString(value);
         completed_ = std::move(pending_);
         pending_ = ScannedModule{};
         inFlight_ = false;

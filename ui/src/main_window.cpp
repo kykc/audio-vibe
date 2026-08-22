@@ -2,15 +2,27 @@
 
 #include "window_chrome.h"
 
+#include "aip/config/load_guard.h"
+#include "aip/config/session_file.h"
+
+#include "aip/scanner/scan_result.h"
+
+#include <QApplication>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRect>
+#include <QScreen>
 #include <QTime>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <algorithm>
+#include <utility>
 
 namespace aip::ui {
 
@@ -42,9 +54,21 @@ const char* exitReasonName(ipc::ValetExitReason reason) {
     return "?";
 }
 
+/// Paths cross this boundary as wide strings, not as `toStdString()`. A user name with a
+/// character outside the local code page is enough to make the narrow form name a different file,
+/// or no file at all.
+std::filesystem::path toPath(const QString& text) {
+    return text.isEmpty() ? std::filesystem::path{} : std::filesystem::path(text.toStdWString());
+}
+
+QString fromPath(const std::filesystem::path& path) {
+    return QString::fromStdWString(path.wstring());
+}
+
 } // namespace
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), host_(this), editors_(this) {
+MainWindow::MainWindow(const QString& configPath, QWidget* parent)
+    : QMainWindow(parent), host_(this), editors_(this), sessionPath_(toPath(configPath)) {
     // Deliberately blank. Repeating the application's own name back at the user in its own title
     // bar is a habit modern Windows applications have dropped, and with the icon gone too the
     // caption is left as nothing but its buttons.
@@ -88,6 +112,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), host_(this), edit
     refreshEndpoints();
     updateStatus();
     resize(760, 620);
+
+    // Last, and deliberately so: it reports through the log view, selects an entry in the endpoint
+    // combo box, and overrides the default size above -- none of which exist until here.
+    loadSession();
 }
 
 MainWindow::~MainWindow() {
@@ -99,7 +127,16 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEditors,
-                                     bool attach) {
+                                     bool attach, bool scan) {
+    if (scan) {
+        // What the first Add would have done, without needing anyone to click Add. The catalog is
+        // the one part of the session whose cost is visible -- minutes on a machine with plugins
+        // that hang -- so being able to fill it, close, and start again is what makes "the cache
+        // is being used" checkable rather than asserted.
+        rack_->catalog().ensureScanned(this);
+        log(QStringLiteral("catalog: %1").arg(rack_->catalog().summary()));
+    }
+
     for (const QString& path : pluginPaths) {
         std::string error;
         if (!host_.engine().appendPlugin(path.toStdString(), error)) {
@@ -118,8 +155,13 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
         }
     }
 
-    if (attach) {
-        // The default endpoint, which is what `refreshEndpoints` has already selected.
+    // `--attach` means the endpoint `refreshEndpoints` selected, which is the default one; the
+    // session route means the endpoint it restored. Both end up here, and the guard matters --
+    // toggleAttach() is a toggle, so calling it while attached would detach.
+    if ((attach || sessionWantsAttach_) && !host_.attached()) {
+        if (sessionWantsAttach_ && !attach) {
+            log(QStringLiteral("reattaching: this session was attached when it closed"));
+        }
         toggleAttach();
     }
     updateStatus();
@@ -208,6 +250,186 @@ void MainWindow::toggleAttach() {
     }
     log(QStringLiteral("attaching to %1").arg(endpointBox_->currentText()));
     updateStatus();
+}
+
+// ---------------------------------------------------------------------------------- the session
+
+void MainWindow::loadSession() {
+    // An explicit --config wins outright and is adopted whether or not the file is there: naming
+    // a file that does not exist yet is how a session is started somewhere of the user's choosing.
+    if (sessionPath_.empty()) {
+        sessionPath_ = config::resolveLoadPath();
+    }
+
+    std::error_code ec;
+    if (sessionPath_.empty() || !std::filesystem::exists(sessionPath_, ec)) {
+        const std::filesystem::path target = config::resolveSavePath(sessionPath_);
+        log(QStringLiteral("no session yet; this one will be saved to %1").arg(fromPath(target)));
+        return;
+    }
+
+    config::Session session;
+    std::string error;
+    if (!config::readSession(sessionPath_, session, error)) {
+        // Nothing is written for the rest of the run. See sessionSaveBlocked_: the file is the
+        // only copy of the rack the user built, and saving an empty one over it on the way out
+        // would destroy the thing they are about to try to recover.
+        sessionSaveBlocked_ = true;
+        log(QStringLiteral("session not loaded: %1").arg(QString::fromStdString(error)));
+        log(QStringLiteral("nothing will be saved over it -- fix or delete the file"));
+        return;
+    }
+
+    // The catalog before the rack, for two reasons. It is the expensive half of the file, so
+    // adopting it is what stops the next Add from re-probing every plugin on the machine -- and it
+    // is also what the next line consults to decide which rack entries are safe to load at all.
+    rack_->catalog().adopt(session.catalog);
+    blockDangerousEntries(session);
+
+    // The breadcrumb lives next to the file being restored, so a start that never finishes leaves
+    // the name of what it was loading behind for the next one.
+    config::LoadGuard guard(sessionPath_);
+
+    std::vector<std::string> problems;
+    const std::size_t restored = config::apply(session, host_.engine(), problems, &guard);
+
+    // Whatever was skipped is held so that saving can put it back where it was. Dropping it would
+    // mean a plugin that crashed once vanishing from the user's chain with no record of why.
+    blockedEntries_.clear();
+    for (std::size_t i = 0; i < session.rack.size(); ++i) {
+        if (session.rack[i].blocked) {
+            blockedEntries_.emplace_back(i, session.rack[i]);
+        }
+    }
+    for (const std::string& problem : problems) {
+        log(QStringLiteral("session: %1").arg(QString::fromStdString(problem)));
+    }
+    rack_->refresh();
+    log(QStringLiteral("session: %1 of %2 plugin(s) restored from %3")
+            .arg(restored)
+            .arg(session.rack.size())
+            .arg(fromPath(sessionPath_)));
+    if (!session.catalog.empty()) {
+        log(QStringLiteral("session: %1 scanned plugin(s) remembered; the next Add re-probes only "
+                           "what has changed")
+                .arg(session.catalog.size()));
+    }
+
+    applySavedGeometry(session.window);
+    const bool endpointStillHere = selectSavedEndpoint(session.endpointId, session.endpointName);
+    sessionWantsAttach_ = session.attached && endpointStillHere;
+    if (session.attached && !endpointStillHere) {
+        log(QStringLiteral("not reattaching: the endpoint this session was using is gone"));
+    }
+}
+
+std::size_t MainWindow::blockDangerousEntries(config::Session& session) {
+    // What the previous start was loading when it stopped. Taken before anything is loaded,
+    // because the guard is about to write over it -- and taken rather than read, so that clearing
+    // `blocked` in the file is enough to get the plugin tried again.
+    const std::string casualty = config::LoadGuard::takePreviousCasualty(sessionPath_);
+
+    std::vector<std::string> notes;
+    const std::size_t blocked = config::blockUnsafeEntries(session, casualty,
+                                                           rack_->catalog().modules(), notes);
+    for (const std::string& note : notes) {
+        log(QStringLiteral("session: %1").arg(QString::fromStdString(note)));
+    }
+    return blocked;
+}
+
+void MainWindow::saveSession() {
+    if (sessionSaveBlocked_) {
+        return;
+    }
+
+    const std::filesystem::path target = config::resolveSavePath(sessionPath_);
+
+    config::Session session;
+    config::capture(host_.engine(), session);
+    session.catalog = rack_->catalog().snapshot();
+
+    // Put back what was never loaded, at the position it had. `capture` can only see the rack the
+    // engine holds, and a blocked entry is deliberately not in it -- but it is still part of the
+    // chain the user built, and the file is where the reason it did not load is written down.
+    for (const auto& [index, entry] : blockedEntries_) {
+        const std::size_t at = std::min(index, session.rack.size());
+        session.rack.insert(session.rack.begin() + static_cast<std::ptrdiff_t>(at), entry);
+    }
+
+    // normalGeometry(), not geometry(): for a maximized window the second one is the screen, and
+    // saving that means un-maximizing after a restart puts the window back full-screen-sized.
+    const QRect bounds = normalGeometry();
+    session.window.x = bounds.x();
+    session.window.y = bounds.y();
+    session.window.width = bounds.width();
+    session.window.height = bounds.height();
+    session.window.maximized = isMaximized();
+
+    const int index = endpointBox_->currentIndex();
+    if (index >= 0 && static_cast<std::size_t>(index) < endpoints_.size()) {
+        const ipc::RenderEndpoint& endpoint = endpoints_[static_cast<std::size_t>(index)];
+        session.endpointId = QString::fromStdWString(endpoint.guid).toStdString();
+        session.endpointName = QString::fromStdWString(endpoint.friendlyName).toStdString();
+    }
+    // Read from the host rather than from the button, because the link can end without anyone
+    // pressing anything: another client takes the stream (sec. 4.1), or the king goes away. A
+    // session that recorded "attached" after being displaced would reattach into a fight.
+    session.attached = host_.attached();
+
+    std::string error;
+    if (!config::writeSession(target, session, error)) {
+        log(QStringLiteral("session not saved: %1").arg(QString::fromStdString(error)));
+    }
+}
+
+void MainWindow::applySavedGeometry(const config::WindowGeometry& geometry) {
+    if (!geometry.valid()) {
+        return;
+    }
+
+    const QRect bounds(geometry.x, geometry.y, geometry.width, geometry.height);
+    // A saved position is only good while the screen it was on is still there. Restoring onto a
+    // monitor that is not plugged in this time puts the window somewhere the user cannot reach it
+    // and cannot see that they cannot reach it.
+    if (QApplication::screenAt(bounds.center()) == nullptr) {
+        log(QStringLiteral("saved window position is off-screen now; using the default"));
+        return;
+    }
+
+    setGeometry(bounds);
+    if (geometry.maximized) {
+        // Before show(), so the geometry above becomes the normal one to fall back to when the
+        // user un-maximizes rather than being replaced by it.
+        setWindowState(windowState() | Qt::WindowMaximized);
+    }
+}
+
+bool MainWindow::selectSavedEndpoint(const std::string& endpointId,
+                                     const std::string& endpointName) {
+    if (endpointId.empty()) {
+        return false;
+    }
+
+    const QString wanted = QString::fromStdString(endpointId);
+    for (std::size_t i = 0; i < endpoints_.size(); ++i) {
+        if (QString::fromStdWString(endpoints_[i].guid) == wanted) {
+            endpointBox_->setCurrentIndex(static_cast<int>(i));
+            return true;
+        }
+    }
+
+    // Left on the default, which refreshEndpoints() already selected. Worth a line: attaching is
+    // one button press, and the user should not find out afterwards that it went somewhere else.
+    log(QStringLiteral("the endpoint this session used (%1) is not available; the default is "
+                       "selected instead")
+            .arg(endpointName.empty() ? wanted : QString::fromStdString(endpointName)));
+    return false;
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    saveSession();
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::onLinkStateChanged(int state, int reason) {

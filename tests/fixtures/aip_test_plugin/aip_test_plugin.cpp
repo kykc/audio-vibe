@@ -18,6 +18,13 @@
 //   Meter  (id 2)  the parameter those callbacks report; its value is the block's first sample
 //   Offset (id 3)  a constant added *after* the gain; 0 by default
 //
+// It also has real state: `getState` writes a magic number and the three writable parameters,
+// `setState` reads them back, and a blob whose magic does not match is *refused*. Both halves
+// matter to the host. Without persistence a session test could only assert that a plugin comes
+// back, not that it comes back as it was; without the refusal there would be nothing to point
+// Engine::insertPluginWithState's "loaded, but would not take its state" path at, and that path
+// is the one a user meets after updating a plugin.
+//
 // Offset exists so that two instances do not commute: gain-then-offset and offset-then-gain give
 // different numbers, which is what lets a test tell a correctly ordered chain from a reversed
 // one. Two gains alone cannot -- multiplication does not care about order, so a rack that ran
@@ -34,6 +41,7 @@
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 
 #include "pluginterfaces/base/fstrdefs.h"
+#include "pluginterfaces/base/ibstream.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "public.sdk/source/main/pluginfactory.h"
 
@@ -69,6 +77,14 @@ constexpr int32 kMaxSupportedChannels = 8;
 /// Written to the output when the host hands us a bus that claims channels but has a null
 /// buffer. Chosen to be impossible to reach by arithmetic on any test signal.
 constexpr float kNullBusStamp = -12345.0f;
+
+/// Leads every state blob. A plugin that reads someone else's state and carries on regardless is
+/// a plugin that restores garbage silently, so this one checks before it trusts.
+constexpr int32 kStateMagic = 0x41495031; // "AIP1"
+
+/// Gain, Edits and Offset, in that order. Meter is read-only and derived, so saving it would be
+/// saving a measurement.
+constexpr int32 kStateParameterCount = 3;
 
 class TestPlugin : public SingleComponentEffect {
 public:
@@ -141,6 +157,54 @@ public:
             offsetNormalized.store(value, std::memory_order_relaxed);
         }
         return result;
+    }
+
+    // IComponent's setState/getState, not IEditController's. SingleComponentEffect renames the
+    // controller pair to set/getEditorState behind a macro precisely because the two clash, so
+    // overriding these names here reaches the component half and only the component half -- which
+    // is the half a host asks for when it saves a session.
+    tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
+        if (state == nullptr) {
+            return kInvalidArgument;
+        }
+
+        int32 magic = 0;
+        int32 read = 0;
+        if (state->read(&magic, sizeof(magic), &read) != kResultOk || read != sizeof(magic) ||
+            magic != kStateMagic) {
+            return kResultFalse;
+        }
+
+        double values[kStateParameterCount] = {};
+        if (state->read(values, sizeof(values), &read) != kResultOk || read != sizeof(values)) {
+            return kResultFalse;
+        }
+
+        setParamNormalized(kGainId, values[0]);
+        setParamNormalized(kEditsId, values[1]);
+        setParamNormalized(kOffsetId, values[2]);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API getState(IBStream* state) SMTG_OVERRIDE {
+        if (state == nullptr) {
+            return kInvalidArgument;
+        }
+
+        int32 magic = kStateMagic;
+        double values[kStateParameterCount] = {getParamNormalized(kGainId),
+                                               getParamNormalized(kEditsId),
+                                               getParamNormalized(kOffsetId)};
+        int32 written = 0;
+        if (state->write(&magic, sizeof(magic), &written) != kResultOk ||
+            written != sizeof(magic)) {
+            return kResultFalse;
+        }
+        if (state->write(values, sizeof(values), &written) != kResultOk ||
+            written != sizeof(values)) {
+            return kResultFalse;
+        }
+        return kResultOk;
     }
 
     tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {

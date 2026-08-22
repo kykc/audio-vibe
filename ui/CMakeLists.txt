@@ -42,6 +42,8 @@ target_include_directories(aip_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(aip_ui PRIVATE
     aip_common
+    # The session file: what the shell remembers between runs (status.md sec. 5).
+    aip_config
     aip_engine
     aip_ipc
     # The parent half only: ui/ asks for a scan, aip_scan does the loading (sec. 7.2).

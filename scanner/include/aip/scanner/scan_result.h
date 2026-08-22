@@ -40,6 +40,12 @@ enum class ScanStatus {
 
 [[nodiscard]] const char* toString(ScanStatus status) noexcept;
 
+/// The inverse, for reading a status back out of anything that stored one as text -- the wire
+/// format between the two halves of a scan, and the cached report in the session file. Anything
+/// unrecognised reads as `LoadFailed`, which is the safe direction: an entry we cannot understand
+/// is one the picker greys out rather than one it offers.
+[[nodiscard]] ScanStatus scanStatusFromString(const std::string& text) noexcept;
+
 /// One `kVstAudioEffectClass` inside a module, as the host sees it.
 struct ScannedClass {
     /// `VST3::UID::toString()` form. Round-trips through `VST3::UID::fromString`.

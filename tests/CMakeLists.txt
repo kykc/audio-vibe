@@ -23,6 +23,7 @@ target_include_directories(aip_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aip_harness PUBLIC aip_common aip_ipc aip_protocol aip_rt)
 
 add_executable(aip_tests
+    config_test.cpp
     conformance_test.cpp
     engine_test.cpp
     planar_test.cpp
@@ -51,6 +52,7 @@ target_compile_definitions(aip_tests PRIVATE
 add_dependencies(aip_tests aip_test_plugin aip_crash_plugin aip_hang_plugin aip_scan)
 
 target_link_libraries(aip_tests PRIVATE
+    aip_config
     aip_engine
     aip_harness
     aip_scanner

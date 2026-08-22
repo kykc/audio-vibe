@@ -179,8 +179,33 @@ bool Engine::insertPluginByClassId(std::size_t index, const std::string& path,
     return insertPlugin(index, path, *parsed, error);
 }
 
+bool Engine::insertPluginWithState(std::size_t index, const std::string& path,
+                                   const std::string& classId, const PluginState& state,
+                                   std::string& error) {
+    error.clear();
+    if (classId.empty()) {
+        PluginModule::Ptr module = moduleFor(path, error);
+        if (!module) {
+            return false;
+        }
+        return insertPluginImpl(index, path, module->audioEffects().front().id, &state, error);
+    }
+    const VST3::Optional<VST3::UID> parsed = VST3::UID::fromString(classId);
+    if (!parsed) {
+        error = classId + " is not a class id";
+        return false;
+    }
+    return insertPluginImpl(index, path, *parsed, &state, error);
+}
+
 bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId,
                           std::string& error) {
+    return insertPluginImpl(index, path, classId, nullptr, error);
+}
+
+bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
+                              const VST3::UID& classId, const PluginState* state,
+                              std::string& error) {
     error.clear();
     PluginModule::Ptr module = moduleFor(path, error);
     if (!module) {
@@ -200,6 +225,14 @@ bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3
         return false;
     }
 
+    // State first, prepare second. That order is the plugin's to expect, not ours to choose
+    // (PluginInstance::loadState). A refusal is carried out to the caller and otherwise ignored:
+    // the plugin is loaded and simply starts from its defaults.
+    std::string stateWarning;
+    if (state != nullptr && !state->empty() && !instance->loadState(*state)) {
+        stateWarning = instance->name() + ": rejected its saved state";
+    }
+
     // Prepared before it is inserted, and inserted before anything is published: a plugin that
     // cannot take the current format is reported without disturbing what is already running.
     if (builtFormat_.valid() && !instance->prepare(builtFormat_, error)) {
@@ -208,7 +241,11 @@ bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3
 
     rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),
                  RackEntry{std::move(instance), false});
-    return publishRack();
+    const bool published = publishRack();
+    if (published) {
+        error = stateWarning;
+    }
+    return published;
 }
 
 bool Engine::removePlugin(std::size_t index) {
