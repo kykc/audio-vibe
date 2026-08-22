@@ -105,8 +105,8 @@ void RackPanel::updateButtons() {
 }
 
 void RackPanel::addPlugin() {
-    const QString path = choosePluginPath(this);
-    if (path.isEmpty()) {
+    const PluginChoice choice = choosePlugin(this, catalog_);
+    if (choice.isEmpty()) {
         return;
     }
 
@@ -116,14 +116,18 @@ void RackPanel::addPlugin() {
     const std::size_t position =
         index < 0 ? host_.engine().pluginCount() : static_cast<std::size_t>(index) + 1;
 
+    // The plugin has already been loaded once, in a scanner child, and survived it. That is not a
+    // guarantee -- it is loading again, here, in the process that matters -- but it is the whole
+    // difference between adding a plugin and gambling the session on one.
     std::string error;
-    if (!host_.engine().insertPlugin(position, path.toStdString(), error)) {
+    if (!host_.engine().insertPluginByClassId(position, choice.path.toStdString(),
+                                              choice.classId.toStdString(), error)) {
         Q_EMIT message(QStringLiteral("could not add %1: %2")
-                           .arg(path, QString::fromStdString(error)));
+                           .arg(choice.path, QString::fromStdString(error)));
         refresh();
         return;
     }
-    Q_EMIT message(QStringLiteral("added %1 at position %2").arg(path).arg(position + 1));
+    Q_EMIT message(QStringLiteral("added %1 at position %2").arg(choice.path).arg(position + 1));
     refresh();
     list_->setCurrentRow(static_cast<int>(position));
 }

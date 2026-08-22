@@ -163,6 +163,22 @@ bool Engine::insertPlugin(std::size_t index, const std::string& path, std::strin
     return insertPlugin(index, path, module->audioEffects().front().id, error);
 }
 
+bool Engine::insertPluginByClassId(std::size_t index, const std::string& path,
+                                   const std::string& classId, std::string& error) {
+    error.clear();
+    // An empty id means "whichever class the module offers first", which is what a caller that
+    // never looked inside the module wants and what appendPlugin has always done.
+    if (classId.empty()) {
+        return insertPlugin(index, path, error);
+    }
+    const VST3::Optional<VST3::UID> parsed = VST3::UID::fromString(classId);
+    if (!parsed) {
+        error = classId + " is not a class id";
+        return false;
+    }
+    return insertPlugin(index, path, *parsed, error);
+}
+
 bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId,
                           std::string& error) {
     error.clear();

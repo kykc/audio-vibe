@@ -14,6 +14,7 @@
 //   valet_probe --gain 0.5      apply a gain instead of passing through
 //   valet_probe --plugin P      run a VST3 plugin chain instead of a gain; repeatable
 //   valet_probe --inspect       load and prepare the plugins, report, and exit; no APO involved
+//   valet_probe --scan          probe every installed plugin out of process, report, and exit
 //   valet_probe --seconds 10    run for a fixed time instead of until Ctrl+C
 //
 // `--plugin` is the only mode in which anything from `engine/` is involved, and it is mutually
@@ -29,6 +30,7 @@
 #include "aip/ipc/valet_thread.h"
 #include "aip/protocol/layout.h"
 #include "aip/rt/realtime_guard.h"
+#include "aip/scanner/scanner.h"
 
 #include <windows.h>
 
@@ -36,6 +38,7 @@
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -131,6 +134,7 @@ const wchar_t* asWide(const Steinberg::Vst::TChar* text) {
 struct Options {
     bool list = false;
     bool inspect = false;
+    bool scan = false;
     int endpointIndex = -1; // -1 means "the default endpoint"
     float gain = 1.0f;
     int seconds = 0; // 0 means "until Ctrl+C"
@@ -139,7 +143,7 @@ struct Options {
 
 const char* kUsage =
     "Usage: valet_probe [--list] [--endpoint N] [--gain G] [--plugin PATH]... [--inspect]"
-    " [--seconds S]";
+    " [--scan] [--seconds S]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
     for (int i = 1; i < argc; ++i) {
@@ -156,6 +160,8 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.plugins.emplace_back(argv[++i]);
         } else if (std::strcmp(arg, "--inspect") == 0) {
             out.inspect = true;
+        } else if (std::strcmp(arg, "--scan") == 0) {
+            out.scan = true;
         } else if (std::strcmp(arg, "--seconds") == 0 && hasValue) {
             out.seconds = std::atoi(argv[++i]);
         } else {
@@ -299,6 +305,55 @@ int runInspection(const Options& options) {
     return 0;
 }
 
+/// Probes every installed plugin the way the shell will: out of process, one entry per bundle,
+/// and a plugin that faults costs its own entry and nothing else (sec. 7.2).
+///
+/// The difference from `--inspect` is the whole point of `scanner/`. `--inspect` does the same
+/// probing *in this process*, which is fine for a plugin already known to be sound and fatal for
+/// one that is not -- and "which of my plugins is not" is exactly the question a scan answers.
+int runScan(const Options& options) {
+    const std::vector<std::string> paths = options.plugins.empty()
+                                               ? engine::PluginModule::installedModulePaths()
+                                               : options.plugins;
+    if (paths.empty()) {
+        std::puts("No VST3 plugins found in the standard search locations.");
+        return 0;
+    }
+    std::printf("Scanning %zu bundle(s) out of process.\n\n", paths.size());
+
+    const auto started = std::chrono::steady_clock::now();
+    const scanner::ScanReport report = scanner::scanModules(
+        paths, scanner::ScanOptions{},
+        [](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
+            std::printf("[%3zu/%3zu] %-11s %s\n", done, total, scanner::toString(module.status),
+                        module.path.c_str());
+            for (const scanner::ScannedClass& info : module.classes) {
+                std::printf("            %s  [%s %s]  %d params, %d in / %d out%s%s\n",
+                            info.name.c_str(), info.vendor.c_str(), info.version.c_str(),
+                            info.parameterCount, info.mainInputChannels, info.mainOutputChannels,
+                            info.hasEditor ? ", editor" : "",
+                            info.prepared ? "" : ", NOT PREPARED");
+                if (!info.error.empty()) {
+                    std::printf("            -- %s\n", info.error.c_str());
+                }
+            }
+            if (!module.error.empty()) {
+                std::printf("            -- %s\n", module.error.c_str());
+            }
+        });
+
+    const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started);
+    std::printf("\n%zu usable, %zu unloadable, %zu crashed, %zu timed out"
+                " -- %d scanner process(es), %.1f s\n",
+                report.countWith(scanner::ScanStatus::Ok),
+                report.countWith(scanner::ScanStatus::LoadFailed),
+                report.countWith(scanner::ScanStatus::Crashed),
+                report.countWith(scanner::ScanStatus::TimedOut), report.childProcesses,
+                seconds.count());
+    std::puts("Nothing was attached; no audio was touched.");
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -317,6 +372,10 @@ int main(int argc, char** argv) {
 
     if (options.inspect) {
         return runInspection(options);
+    }
+
+    if (options.scan) {
+        return runScan(options);
     }
 
     const std::vector<ipc::RenderEndpoint> endpoints = ipc::enumerateRenderEndpoints();

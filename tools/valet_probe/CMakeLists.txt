@@ -9,7 +9,13 @@ target_link_libraries(valet_probe PRIVATE
     aip_engine
     aip_ipc
     aip_protocol
+    # --scan drives the parent half of scanner/ by hand, which is the only way to point it at a
+    # real machine's plugin population rather than at fixtures.
+    aip_scanner
     # The allocation hooks must be in the executable itself for the detector to observe
     # anything (sec. 7.4.6); running the probe with them live is a cheap real-world check.
     aip_rt_hooks
 )
+
+# --scan starts aip_scan; nothing links it, so nothing would otherwise build it first.
+add_dependencies(valet_probe aip_scan)

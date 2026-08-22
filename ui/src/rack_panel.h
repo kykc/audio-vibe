@@ -15,6 +15,7 @@
 
 #include "editor_manager.h"
 #include "engine_host.h"
+#include "plugin_catalog.h"
 
 #include <QString>
 #include <QWidget>
@@ -50,6 +51,11 @@ private:
 
     EngineHost& host_;
     EditorManager& editors_;
+
+    /// Held here, and nowhere else, because this is the only panel that adds a plugin. It caches
+    /// one scan for the lifetime of the window: the first Add triggers it, the picker's Rescan
+    /// button replaces it, and closing the shell throws it away (status.md sec. 5).
+    PluginCatalog catalog_;
 
     QListWidget* list_ = nullptr;
     QPushButton* addButton_ = nullptr;

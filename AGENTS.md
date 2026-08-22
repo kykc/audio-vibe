@@ -27,10 +27,17 @@ pixi run build        # RelWithDebInfo -- the only usable configuration (sec. 6.
 pixi run test         # ctest; also enforces the ASCII rule below
 pixi run ui           # the Qt shell: pick an endpoint, press Attach, add plugins
 pixi run probe        # console client; attach to the real APO on the default endpoint
+pixi run probe --scan # probe every installed plugin out of process; no APO involved
 ```
 
 `valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
 against the real APO, and `--list` / `--endpoint N` to pick a different endpoint.
+
+`--scan` is the one mode that loads no plugin into the probe itself: it drives `scanner/`,
+which starts `aip_scan.exe` and probes out of process. Use it, not `--inspect`, on a plugin
+you have no reason to trust -- `--inspect` does the same work *in* the probe, and a plugin
+that faults there takes the probe with it. `aip_scan` is also runnable by hand on a single
+suspect bundle and prints its own wire format.
 
 `aip_ui` takes `--vst3 <path>` (repeatable), `--editors` and `--attach`, so a state can be reached
 without clicking through to it. It is **`--vst3`, not `--plugin`**: Qt reserves `-plugin` and eats

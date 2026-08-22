@@ -11,6 +11,10 @@ include(Catch)
 # The VST3 plugin the engine tests host. Sets AIP_TEST_PLUGIN_PATH in this scope.
 add_subdirectory(fixtures/aip_test_plugin)
 
+# The two that misbehave on purpose, for the scanner. Sets AIP_CRASH_PLUGIN_PATH and
+# AIP_HANG_PLUGIN_PATH.
+add_subdirectory(fixtures/aip_hostile_plugin)
+
 add_library(aip_harness STATIC
     harness/synthetic_king.cpp
 )
@@ -24,6 +28,7 @@ add_executable(aip_tests
     planar_test.cpp
     protocol_layout_test.cpp
     realtime_safety_test.cpp
+    scanner_test.cpp
     source_hygiene_test.cpp
     spsc_queue_test.cpp
 )
@@ -36,12 +41,19 @@ target_compile_definitions(aip_tests PRIVATE AIP_SOURCE_DIR="${CMAKE_SOURCE_DIR}
 # output directory is per-configuration.
 target_compile_definitions(aip_tests PRIVATE AIP_TEST_PLUGIN_PATH="${AIP_TEST_PLUGIN_PATH}")
 
-# Nothing links the plugin, so nothing would otherwise build it before the tests run.
-add_dependencies(aip_tests aip_test_plugin)
+target_compile_definitions(aip_tests PRIVATE
+    AIP_CRASH_PLUGIN_PATH="${AIP_CRASH_PLUGIN_PATH}"
+    AIP_HANG_PLUGIN_PATH="${AIP_HANG_PLUGIN_PATH}")
+
+# Nothing links any of these, so nothing would otherwise build them before the tests run. aip_scan
+# is the one that would fail most confusingly: the scanner tests would report every plugin as
+# broken, which is precisely what a scanner reports when it cannot find its own child.
+add_dependencies(aip_tests aip_test_plugin aip_crash_plugin aip_hang_plugin aip_scan)
 
 target_link_libraries(aip_tests PRIVATE
     aip_engine
     aip_harness
+    aip_scanner
     Catch2::Catch2WithMain
     psapi              # GetProcessMemoryInfo, for the flat-RSS half of the sec. 7.4.3 criterion
     # The global allocation hooks must be linked into the executable itself for the real-time

@@ -78,6 +78,13 @@ public:
     [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path,
                                     const VST3::UID& classId, std::string& error);
 
+    /// Same, naming the class in its `VST3::UID::toString()` form -- which is what `scanner/`
+    /// reports, and the only form a caller that is deliberately not an SDK host can hold. Keeping
+    /// the parse here rather than at the call site is the point: `ui/` should not have to include
+    /// a VST3 header to say which of a module's classes it means.
+    [[nodiscard]] bool insertPluginByClassId(std::size_t index, const std::string& path,
+                                             const std::string& classId, std::string& error);
+
     /// Removes the plugin at `index` and destroys it, once the audio thread has provably let go.
     [[nodiscard]] bool removePlugin(std::size_t index);
 

@@ -1,6 +1,12 @@
 # Project status
 
-**Updated:** 2026-08-21, after the UI milestone: the Qt 6 Widgets shell (`ui/`), parameter
+**Updated:** 2026-08-22, after the Scanner milestone: `scanner/`, out-of-process plugin probing
+with a resumable child, proven against fixtures that crash and hang on purpose and then against
+all 22 plugins installed on this machine -- three of which would have killed the shell -- and then
+wired in behind the shell's plugin picker, which has had a surface pass and works. Earlier the
+same day, a parameter gesture in ZL Equalizer 2's own editor was checked by hand and held, counter
+and audio both, which makes this the first day the chain has been *heard*. Before that, 2026-08-21,
+the UI milestone: the Qt 6 Widgets shell (`ui/`), parameter
 delivery from a plugin's editor into its processor, and two real third-party plugin editors hosted
 side by side while the chain processes system audio. Before that, the same day: the Engine
 milestone, the first real third-party plugin (ZL Equalizer 2, which found and fixed a side-chain
@@ -37,10 +43,11 @@ userspace client is the **valet** (consumer). See `AGENTS.md` for the full summa
 untouched; the new client attaches to it as a protocol v1 valet. Every APO-side decision is
 deferred and blocks nothing.
 
-**Where we are:** the IPC foundation, the VST3 host and a working GUI are all finished and verified
-against the real deployed APO. A real VST3 plugin chain runs inside the `audiodg.exe` block loop,
-driven from a window, with the plugins' own editors on screen. Nothing of the plugin scanner
-exists yet.
+**Where we are:** the IPC foundation, the VST3 host, a working GUI and the plugin scanner are all
+finished and verified against the real deployed APO -- the scanner against this machine's whole
+plugin population instead. A real VST3 plugin chain runs inside the `audiodg.exe` block loop,
+driven from a window, with the plugins' own editors on screen. What is missing is that the shell
+does not call the scanner yet, and nothing anywhere is saved between runs.
 
 Prove the tree is healthy in one command:
 
@@ -108,7 +115,7 @@ components rather than numbered, so the two schemes cannot be confused.
 | IPC foundation | `protocol/`, `rt/`, `ipc/`, conformance harness, probe tool | Done and verified |
 | **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
-| Scanner | `scanner/` -- out-of-process plugin probing | Not started. Next up; see section 5 |
+| **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Untried while attached** |
 | Installer | `installer/` -- WiX v7 | Not started |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
@@ -119,8 +126,16 @@ What it does *not* yet do is listed in section 5.
 
 "Done for a first cut" for the UI means: it attaches, it drives the rack, it hosts editors, and it
 puts every counter that matters on screen. What it has no notion of is a session (nothing is
-saved), a plugin list that survives a crash (no scanner yet), or any control of its own -- the only
-way to change a parameter is the plugin's own editor.
+saved), or any control of its own -- the only way to change a parameter is the plugin's own editor.
+The shell now goes through the scanner to add a plugin: the picker lists scanned classes with
+vendor and category, greys out what could not be loaded with the reason in its tooltip, and probes
+a browsed bundle in a child before accepting it. What it still has no notion of is a session.
+
+"Done for a first cut" for the scanner means: a scan probes every candidate out of process, a
+plugin that faults or hangs costs its own entry and nothing else, and the report carries enough
+about each class for a shell to show it. What it has no notion of is persistence -- every scan is
+from cold, because where a cache would be written is part of the config question that has not been
+answered yet (section 5).
 
 ---
 
@@ -146,21 +161,34 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             edits to the processor (item 26)
 ui/         src/ only -- an executable, nothing links it. main (OLE apartment, command line),
             main_window (the shell: endpoint attach, counters, log), rack_panel (a direct view of
-            the engine's rack; no second model), plugin_picker (installed .vst3s, from the SDK's
-            own search paths), engine_host (names the GUI thread as *the* control thread; the
+            the engine's rack; no second model), plugin_catalog (one scan report, held in memory
+            for the lifetime of the window, and the progress dialog that fills it),
+            plugin_picker (scanned classes with vendor and category; unusable modules greyed out
+            with the reason; Rescan; a browsed bundle probed in a child before it is accepted),
+            engine_host (names the GUI thread as *the* control thread; the
             100 ms servicing tick), editor_manager (which editors are open, and the guarantee
             none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
             plug_frame (IPlugFrame), window_chrome (title-bar icon removal, item 35)
             aip_ui.rc + assets/ -- the application icon, attached to the executable
+scanner/    both halves of the out-of-process probe, in one directory because they share a wire
+            format. scan_result.h (the SDK-free report the parent deals in), scan_record
+            (the line format and its reader), probe_worker (the child half: loads, instantiates,
+            prepares, asks for an editor -- the code that is allowed to die), scanner (the parent
+            half: spawns aip_scan, feeds it a work list, reads records, times it out, resumes
+            past whatever killed it). aip_scan is the executable; aip_scanner is the library,
+            and only its parent half is what `ui/` will link
 cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls for
-tests/      44 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
+tests/      53 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
-            built from the SDK). conformance, engine, planar, protocol_layout,
-            realtime_safety, source_hygiene, spsc_queue
-tools/      valet_probe -- console client against the real APO, with --plugin and --inspect
-            (--inspect loads, instantiates and prepares plugins and reports bus layout,
-            parameter count, latency and split-vs-single, without attaching to anything;
-            it is the shape `scanner/` needs, one process further out)
+            built from the SDK), fixtures/aip_hostile_plugin (two that misbehave on purpose --
+            one faults inside GetPluginFactory, one never returns from it). conformance,
+            engine, planar, protocol_layout, realtime_safety, scanner, source_hygiene,
+            spsc_queue
+tools/      valet_probe -- console client against the real APO, with --plugin, --inspect and
+            --scan (--inspect loads, instantiates and prepares plugins *in the probe* and
+            reports bus layout, parameter count, latency and split-vs-single, without attaching
+            to anything; --scan does the same work through `scanner/`, one process further out,
+            and is the only one of the two safe to point at a plugin you do not trust)
             editor_spike -- the sec. 5.1 de-risking spike: loads a plugin, embeds its editor in
             a Qt window, and can capture the result two ways. The embedding code here is what
             `ui/` should start from
@@ -274,8 +302,24 @@ Proven, and re-checkable by running the suite:
   `AIP_RT_CHECKS` off means the global `operator new`/`delete` replacements are gone, so the
   counters that make the sec. 7.4.3 criterion checkable exist only in RelWithDebInfo.
 - MMCSS "Pro Audio" promotion succeeds on the valet thread (sec. 4.6).
+- **A plugin that faults costs one entry, not the scan.** `aip_crash_plugin` dereferences null
+  inside `GetPluginFactory` -- in the loader's own call, before any of our code is on the stack.
+  The scan records it as `Crashed`, starts a second child, and probes the plugin behind it
+  properly. Negative control checked directly rather than by inference: run `aip_scan` on that
+  bundle by hand and the process dies with an access violation after emitting exactly its `begin`
+  record, which is the wreckage the parent is written to read.
+- **A plugin that hangs costs one entry either.** `aip_hang_plugin` never returns from
+  `GetPluginFactory`; with the deadline turned down to 1.5 s the child is terminated, the entry is
+  recorded as `TimedOut`, and the scan continues in a fresh child. Same negative control: by hand,
+  the process sits there until something kills it.
+- Every requested path gets an entry whatever happens -- including when the child executable
+  cannot be started at all -- and progress is reported as entries land rather than at the end.
+- A record field survives every byte a plugin might put in a name: backslashes, newlines, a NUL,
+  and bytes outside ASCII all round-trip, and the escaped form stays inside 0x20-0x7E.
+- A truncated record stream names the module that was in flight, which is the mechanism the
+  crash attribution rests on.
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`
-  included.
+  and `scanner/` included.
 
 Proven against the real deployed APO on the development machine:
 
@@ -307,20 +351,72 @@ Proven against the real deployed APO on the development machine:
   does and does not say: the detector counts everything on the valet thread, so it is evidence
   that *this* plugin is also clean -- another plugin may not be, and that would be its defect
   rather than ours (sec. 7.4.5). Rerun without `--plugin` to separate the two.
+- **A parameter gesture in a real plugin's own editor, and the first audible processing.** Checked
+  by hand on 2026-08-22: with the shell attached, a control dragged in ZL Equalizer 2's editor made
+  `parameters delivered` climb in the Counters group, and the machine's own audio changed as
+  expected. Two things at once. The counter closes the last untested link in the `performEdit` path
+  -- the one place where a real editor's calling thread could have been classified as the audio
+  thread and routed the wrong way (sec. 7 item 26). The audio is the first evidence in this project
+  that the chain does something *heard*, rather than something counted; every real-APO run before
+  this was deliberately at unity or flat. Note the standard of evidence: a report from the project
+  owner at first glance, not a measurement and not a test. The automated suite still exercises the
+  edit path against the fixture only, and nothing has compared output against a reference.
+- **The scanner survives this machine's real plugin population, which the fixtures could only
+  simulate.** `valet_probe --scan` over all 22 installed bundles on 2026-08-22: 17 usable, 2
+  unloadable (`LoadLibraryW` denied), **1 crashed and 2 hung**, in 4 child processes -- one for the
+  scan plus exactly one more per abnormal exit, which is the cost model the design predicts. Read
+  that figure the right way round: three of this machine's own plugins would have taken the shell
+  down or wedged it if `plugin_picker` had loaded them in-process, and one of them is a plugin the
+  project owner works on. The scanner is not insurance against a hypothetical hostile plugin; the
+  population it has to survive is already installed here.
+- **The picker drives the scanner from the shell.** A surface pass by the project owner on
+  2026-08-22: Add opens the picker, a scan runs behind its progress dialog, the list comes out of
+  the report, and a plugin chosen from it is added. Reported as working as expected. Note the
+  standard of evidence -- a quick look, not a systematic pass, and the awkward cases below were not
+  reached.
+- The crashed plugin exited with code 3 -- a CRT `abort`, not a fault -- and it cost milliseconds.
+  That is `suppressCrashDialogs` doing its job: without `_set_abort_behavior`, `abort` puts up a
+  modal box and the crash becomes a 60-second timeout instead.
 
 **Not** proven -- do not assume any of these:
 
-- Audible processing on real hardware. Everything against the real APO has been at unity gain or
-  a flat EQ, on purpose: a real change would alter the machine's actual audio output.
-- **A parameter gesture on a *real* plugin.** The path is proven by test against the fixture and
-  the counter for it is on screen, but nobody has yet dragged a control in ZL Equalizer 2's own
-  editor and watched `parameters delivered` climb. That is a five-second manual check and it is the
-  first thing to do next session: attach, open an editor, move something, read the Counters group.
-  It was skipped deliberately rather than forgotten -- moving an EQ band changes the machine's real
-  audio output, which is the same line everything else here has stayed on the safe side of.
-- More than two third-party plugins. ZL Equalizer 2 and NeuralAmpModeler are proven end to end;
-  they are one JUCE-wrapped and one iPlug2-wrapped plugin, and the population they stand for is not
-  obviously well represented by two.
+- **Audio quality.** A single EQ move sounded right at first glance (see above), which establishes
+  that the chain is audible and not obviously broken. It says nothing about correctness: no null
+  test against a reference, no check for clicks at a rebuild or a bypass toggle, no sustained
+  listening. The project owner has this queued as a separate extensive pass.
+- A parameter gesture on a plugin *other than* ZL Equalizer 2. One real editor is now checked (see
+  above); NeuralAmpModeler and anything iPlug2-wrapped is not.
+- **That the two plugins which timed out would ever have finished.** Virtuoso and
+  `fx_multizone_gpua_cu_wrapped` made no progress for 60 s and were terminated; nobody has waited
+  longer to find out whether they are slow or stuck. The 60 s default is a judgement, not a
+  measurement, and it is the one number in `scanner/` most likely to be wrong -- too low and a
+  working plugin is reported broken, too high and a scan of this machine takes minutes. It already
+  does: that scan took 124 s, of which 120 s was those two waits.
+- **The picker under anything but a quick pass.** A surface test on 2026-08-22 found it working
+  (see above), which retires the question of whether the Qt layer is wired up at all. It does not
+  retire the awkward cases, none of which a quick pass would reach: Cancel part way through a scan,
+  a scan started while a previous one is somehow still running, a module exposing more than one
+  class, and the greyed-out entries -- which need a machine whose broken plugins are the ones being
+  looked at rather than scrolled past.
+- **That a scan does not stall the control plane.** The progress loop pumps the event queue
+  precisely so `EngineHost`'s servicing tick keeps firing (item 44), but nobody has run a scan
+  *while attached* to confirm that a format change is still acted on during one. This is the
+  interesting half of the UI wiring and the surface test did not cover it: item 44 is reasoning,
+  not evidence.
+- That a scan is safe to run *while attached*. Nothing forbids it and nothing about it touches the
+  valet thread, but a scan starts processes and loads DLLs, and no one has done it with audio
+  flowing.
+- That a plugin cannot corrupt the record stream. Records travel on a private pipe and the child's
+  stdout and stderr go to the null device, which is the defence; it has not been tested against a
+  plugin that actually prints.
+- That asking for an editor view is safe in a process with no message loop. Every plugin scanned
+  here tolerated `createView` followed by a release, but the child has no UI thread and a plugin
+  entitled to expect one has not been met yet. `--no-editor` exists for when it is.
+- More than two third-party plugins *hosted*. The scanner has now instantiated and prepared
+  seventeen of this machine's plugins, which is real coverage of the loading path -- but hosting is
+  a different matter, and ZL Equalizer 2 and NeuralAmpModeler are still the only two carried
+  through a chain and an editor. They are one JUCE-wrapped and one iPlug2-wrapped plugin, and the
+  population they stand for is not obviously well represented by two.
 - Any rack mutation *from the shell* while attached. Insert, remove, move and bypass are proven by
   test at the engine level and the buttons are wired to exactly those calls, but no one has clicked
   them with audio flowing. Removing a plugin whose editor is open is the interesting one, because it
@@ -338,8 +434,6 @@ Proven against the real deployed APO on the development machine:
 - The split component/controller path in a **test**. It is proven against a real plugin, which is
   a manual step; the automated suite still only sees our single-component fixture. Covering it
   hermetically needs a second plugin fixture.
-- Anything at all about *how it sounds*. Every real-APO run has been at unity or with a flat EQ,
-  on purpose, and the evidence is block counters rather than audio.
 - Plugin state persistence. `IComponent::getState`/`setState` are not called by the engine at
   all; a rebuilt chain starts from defaults, which the format-change test asserts rather than
   works around.
@@ -423,19 +517,19 @@ What `pixi run ui` does **not** cover, and so must not be mistaken for a clean b
 The de-risking steps that used to head this list -- a real third-party plugin, editor hosting, and
 a UI to drive them -- are all done, and all held. What remains is ordinary construction.
 
-0. **Five seconds of manual checking, first.** Attach, open a plugin's editor, drag a control, and
-   watch `parameters delivered` in the Counters group climb. The mechanism is tested against the
-   fixture but no human has moved a real knob yet; see section 4. If it does *not* climb, the
-   suspect is `ParameterEdit::Origin` -- a plugin whose editor edits arrive from a thread we
-   classify as the audio thread would be routed the wrong way.
-1. **`scanner/` -- out-of-process plugin probing (sec. 7.2).** A short-lived executable per scan
-   that enumerates `Module::getModulePaths()`, loads each candidate, records class info, and
-   reports it back; crash isolation is the whole point, so a plugin that faults must cost one
-   scan entry, not the session. `valet_probe --inspect` is already most of the child process --
-   promoting it means giving it a machine-readable output and a parent that survives its death.
-   The shell wants it: `ui/src/plugin_picker.cpp` lists the paths the SDK finds but loads each one
-   in-process when the user picks it, so a plugin that faults on load takes the session with it.
-2. **Plugin state serialization**, and then a session file. `IComponent::getState` / `setState`.
+The five-second manual check that used to head this list -- move a real knob, watch the counter --
+was done on 2026-08-22 against ZL Equalizer 2 and passed; it has moved to section 4. `scanner/`
+was built the same day, wired in behind the picker, and given a surface pass. One check is still
+outstanding ahead of the session file, and it is the one that could bite audibly.
+
+0. **Run a scan while attached.** The picker itself has had a surface pass and works. What that
+   pass did not cover is the one case where the wiring can be wrong in a way that matters: with the
+   shell attached and a chain running, press Rescan and watch the counters. `blocks` must keep
+   climbing and `timeouts` must stay at zero for the whole scan -- two minutes on this machine --
+   because the GUI thread is also the control thread (item 27) and the progress loop only keeps
+   servicing it by pumping the event queue (item 44). If that reasoning is wrong, this is where it
+   shows, and the symptom is a system-wide dropout rather than a cosmetic one.
+1. **Plugin state serialization**, and then a session file. `IComponent::getState` / `setState`.
    The shell makes the absence conspicuous -- every restart is an empty rack -- and it is the last
    thing standing between what exists and something usable daily. Note that this is *not* what
    makes a parameter survive a format change; the rack owning the instances is (item 23).
@@ -446,6 +540,20 @@ Engine work still outstanding, roughly in order of how much it will be missed:
   `kLatencyChanged`; currently every flag is drained and discarded.
 - Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
   cannot compensate for it.
+
+Scanner work still outstanding:
+
+- **Find out what the two timed-out plugins are actually doing**, before tuning the 60 s deadline
+  around a guess. Attach a debugger to the child, or run `aip_scan` on one of them by hand and see
+  where it sits. The answer decides whether the default is too low or whether those plugins are
+  simply unscannable, and it is the difference between a 4-second scan and a 124-second one here.
+- Persist a report, once section 5 item 1 has settled where configuration lives. Nothing in
+  `scanner/` writes anything today, deliberately.
+- Report which classes a module exposes when there is more than one. The report already carries
+  them; nothing consumes the plural case, and no plugin here has exercised it.
+- Consider scanning in parallel. One child at a time is the simple, correct shape and 17 sound
+  plugins cost about 4 seconds -- but a machine with a hundred, or one where several hang, would
+  benefit. Not urgent, and it makes the crash accounting materially harder.
 
 UI work still outstanding, none of it blocking:
 
@@ -466,6 +574,11 @@ UI work still outstanding, none of it blocking:
 
 Worth doing at some point, none of it blocking:
 
+- Decide whether `aip_ui` should set its own working directory. Plugins write files into it
+  (trap 22), and today that is wherever the shell was launched -- the repository root, under
+  `pixi run ui`. The scanner child was fixed this way (item 45); the shell was not, because
+  `--vst3` accepts a relative path and moving the current directory would quietly change what one
+  resolves to. Doing it after argument parsing is the obvious answer if it is worth doing.
 - Add `clang-format` to `pixi.toml` with a `format` task. It is listed as project hygiene in
   sec. 6.1 but is not in the toolchain, so the 100-column limit is currently hand-maintained.
 - Exercise the probe against a second endpoint and across a Windows-driven format change.
@@ -756,6 +869,84 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     all use `include/aip/<component>/`. Nothing links `ui/`; a public/private split with one side
     empty is just ceremony. `tools/editor_spike` set the precedent.
 
+37. **One scanner child per *scan*, made resumable -- not one per plugin.** Sec. 7.2 says "one
+    short-lived scanner process per scan", and per-plugin isolation seems to argue for one process
+    per candidate. It does not have to: the child announces each bundle before it touches it, so a
+    parent reading the record stream always knows what was on the table when the child stopped. A
+    crash therefore costs one entry and one relaunch, and a clean machine costs exactly one
+    process. Measured on this machine: 22 bundles, 3 of them fatal, 4 processes. One process per
+    plugin would have been 22 with nothing gained.
+
+38. **The wire format is one record per line, not JSON.** The child may stop mid-sentence at any
+    instant -- that is its job. JSON cannot be read without its closing bracket, so a plugin that
+    faults would make the *earlier* entries unreadable too; line records are complete the moment
+    their newline lands. Values are escaped to printable ASCII (`\\` and `\xHH`) because plugin
+    names, vendors and paths are third-party text under no obligation to be ASCII or even valid
+    UTF-8, and a newline in one would end its record early. Note this is not sec. 6.6 spreading:
+    that rule governs our files, this one governs a transport that must not fail on exactly the
+    plugins the scanner exists to survive. Unknown keys are ignored, so the two ends can differ in
+    version without either being taught about the other.
+
+39. **Every abnormal child exit consumes exactly one entry.** If the child announced a bundle, that
+    bundle is charged. If it died before announcing anything -- a missing DLL, a policy blocking
+    the executable -- the *next* entry is charged anyway, even though it is innocent. This is not
+    sloppiness, it is the loop's termination guarantee: a child that dies instantly would otherwise
+    be relaunched against an unchanged work list for ever. Charging an innocent plugin is visible
+    and recoverable; a scan that never ends is neither. A child that exits cleanly between entries
+    having made progress is charged nothing, because progress is what rules out the loop.
+
+40. **Records travel on a private inherited handle; the child's stdout goes to the null device.**
+    Plugins print. A banner written to stdout during `initialize` would land in the middle of a
+    record and corrupt the entries either side of it, so the record stream gets a pipe of its own
+    and the plugin gets stdout to itself. Handles rather than stdio also mean there is no CRT
+    buffer to flush and none to lose in a fault. The child is given an explicit
+    `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` rather than blanket inheritance, because the shell holds
+    the valet's shared-memory and event handles (sec. 4.2) and a process about to be killed for
+    hanging has no business holding duplicates of them.
+
+41. **The child suppresses every dialog Windows would put up for a crash.** `SetErrorMode`, an
+    unhandled-exception filter that terminates, `_set_abort_behavior` and an invalid-parameter
+    handler. Every one of those paths otherwise **blocks on user input**, which turns a crash the
+    parent handles in milliseconds into a hang it can only resolve by timing out -- and, in an
+    unattended scan, into a process sitting there indefinitely. This is not defensive tidiness: the
+    one plugin that crashed on this machine exited via `abort` (code 3), so without
+    `_set_abort_behavior` that entry would have cost 60 seconds instead of milliseconds.
+
+42. **The parent looks for `aip_scan.exe` next to the running executable first**, and only then at
+    the `AIP_SCAN_EXECUTABLE` compile definition. The first is what will be true once installed;
+    the second exists because Ninja Multi-Config gives every target its own output directory, so in
+    a build tree `aip_scan.exe` is not next to `aip_ui.exe`. Same escape hatch, and same reasoning,
+    as `AIP_TEST_PLUGIN_PATH` in `tests/`. `locateChildExecutable` is public so the failure can be
+    reported as itself: a missing scanner and a machine full of broken plugins otherwise produce
+    the same report.
+
+43. **The shell's plugin catalog is in memory only, and scans on the first Add rather than at
+    start-up.** Asked for directly by the project owner on 2026-08-22: scan when the cache is empty
+    and on demand, and defer persistence until real state persistence exists. So every launch is a
+    fresh install as far as the shell is concerned, and the picker's Rescan button is the "on
+    demand" half. Scanning at start-up was rejected for a reason worth keeping: a shell that spends
+    two minutes scanning before it will draw is worse than one that scans when first asked for a
+    plugin, and on this machine that is not a hypothetical two minutes. The catalog lives in
+    `RackPanel` because that is the only panel that adds a plugin -- no singleton, no global.
+
+44. **The scan's progress dialog pumps the event loop by hand rather than using a QThread.**
+    `std::async` for the scan, a one-slot progress snapshot behind a mutex, and
+    `QApplication::processEvents` on a 50 ms tick. Smaller than queued signals for one worker and
+    one modal dialog, but the reason it is *right* rather than merely smaller is that
+    `EngineHost`'s servicing tick is a `QTimer`: pumping the loop keeps it firing, so a chain goes
+    on being serviced and a format change goes on being acted upon throughout a scan that may last
+    minutes. Blocking the GUI thread outright would stall the control plane for the whole scan --
+    which, since the GUI thread *is* the control thread (item 27), is not a UI nicety but a
+    correctness property. Untested with audio flowing; see section 4.
+
+45. **The scanner child runs in the temp directory, not the caller's.** Plugins write files into
+    the current directory (trap 22), and a scan loads every plugin on the machine, so a scan run
+    from any directory that matters would collect all of that litter at once. Nothing legitimate
+    resolves against the current directory in a scanner child -- a plugin finds its own resources
+    through its module path, which the SDK's loader supplies -- so this costs nothing. Note what it
+    does *not* do: `ui/` still loads plugins in its own working directory, and the file that
+    prompted this was written there rather than by a scan.
+
 ---
 
 ## 8. Traps already paid for
@@ -865,6 +1056,25 @@ integration. These are the ones found while implementing. Re-discovering any is 
     shell with the pixi environment active, and if it dies without saying anything, that is the
     first suspect rather than the code. (Everything the shell has to say once it is up is in the
     Counters group and the log view underneath it, which is why they exist.)
+22. **A plugin writes files into the current directory, and the source-hygiene test finds them.**
+    On 2026-08-22 a 176-byte binary `device_info.txt` naming this machine's GPU appeared in the
+    repository root and turned `ctest` red on the sec. 6.6 ASCII check -- byte 0xEA at line 1,
+    column 131 of a file nobody in this project wrote. It arrived while the shell was being clicked
+    through, so the writer is a plugin loaded in-process by `aip_ui`, whose working directory is
+    wherever it was started -- the repository root, under `pixi run ui`.
+
+    Two things follow. First, **a red hygiene test is not necessarily your fault**; look at what
+    the offending file actually is before hunting for an em dash you typed. Second, the scanner
+    child is now given the temp directory as its working directory (item 45), because a scan loads
+    *every* plugin on the machine and would otherwise collect the litter of all of them at once.
+    The shell is not fixed the same way and still loads plugins in its own working directory:
+    `--vst3` accepts a relative path, so changing it there is a decision with a visible
+    consequence rather than a free one.
+
+    Which plugin does it is unidentified. Six candidates were scanned individually afterwards --
+    every GPU/CUDA one on the machine, including the one that crashes -- and none reproduced it
+    through the scanner, so it is likely written at a stage a scan never reaches: an editor being
+    opened, or processing starting.
 
 ---
 

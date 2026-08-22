@@ -17,6 +17,8 @@ add_executable(aip_ui WIN32
     src/main_window.h
     src/rack_panel.cpp
     src/rack_panel.h
+    src/plugin_catalog.cpp
+    src/plugin_catalog.h
     src/plugin_picker.cpp
     src/plugin_picker.h
     src/engine_host.cpp
@@ -42,10 +44,15 @@ target_link_libraries(aip_ui PRIVATE
     aip_common
     aip_engine
     aip_ipc
+    # The parent half only: ui/ asks for a scan, aip_scan does the loading (sec. 7.2).
+    aip_scanner
     aip_rt_hooks
     Qt6::Widgets
     Qt6::Gui
 )
+
+# aip_ui starts aip_scan; nothing links it, so nothing would otherwise build it first.
+add_dependencies(aip_ui aip_scan)
 
 # Qt's platform plugin lives outside the directory Qt6Core probes by default in a conda-forge
 # layout, and without it the process dies with "could not find or load the Qt platform plugin" --
