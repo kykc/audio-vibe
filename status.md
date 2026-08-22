@@ -838,6 +838,53 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     and the final bank is copied back. That is one `memcpy` of a few KB per block, uniform for
     every chain length, and it never hands a plugin the same pointer twice.
 
+11a. **Bus arrangement is negotiated in three tiers, and a plugin wider than the stream is padded
+    rather than refused.** In order, each tried only when the one before it fails:
+
+    1. the VST3 arrangement the endpoint's `dwChannelMask` names
+    2. `speakerArrangementFor(channelCount)` -- right cardinality, guessed speaker roles
+    3. the plugin's own fixed arrangement, if it is at least as wide as the stream, with the
+       surplus channels fed silence and their outputs discarded
+
+    Tier 3 is what makes a plugin built around one fixed wide bus loadable at all; Voxengo's are
+    the usual specimens, and before this they were refused outright. It goes one way only -- a
+    plugin *narrower* than the stream would have to drop channels, so that stays a refusal.
+
+    Two things about tier 3 are easy to get wrong and are covered by tests that fail without
+    them. `PluginInstance::process` must write `inputChannelCount()` pointers, not
+    `format().channelCount`: `HostProcessData` sizes those arrays from `getBusInfo` *after* the
+    negotiation, so a short loop leaves null pointers in the tail for the plugin to dereference.
+    And the padding must be re-zeroed before *each* plugin, not filled once, because every plugin
+    writes its own full output width into the destination bank -- so what was silence holds the
+    previous plugin's output by the time the next one reads it.
+
+    The banks are therefore sized to the widest bus any plugin in the chain settled on, computed
+    at construction, and `kMaxChannels` rose to 32 to bound what a plugin can demand. The
+    remaining hazard is a plugin whose detector links across the bus: it sees the padding as
+    silence and acts more gently than it should. `PluginInstance::padded()` and the scanner's
+    `class.padded` flag exist so that is discoverable rather than mysterious.
+
+11b. **The endpoint's speaker layout is read from the device, not carried on the wire.** Protocol
+    v1 has no channel-order field and sec. 4 is frozen, so tier 1 above would look like it needs
+    a v2. It does not: the object names are derived from `PKEY_AudioEndpoint_GUID` (sec. 4.2), so
+    a valet that can attach at all already knows which endpoint to ask, and
+    `PKEY_AudioEngine_DeviceFormat` on that device's property store carries the
+    `WAVEFORMATEXTENSIBLE`. `ipc::RenderEndpoint::channelMask` is that value; `Engine::
+    setChannelMask` holds it across format changes.
+
+    The mask is a *hint*, guarded so it can never be wrong rather than merely inaccurate: it is
+    discarded unless its population count equals the channel count in the block header, which is
+    read every block and is the authority. A stale or absent mask costs the tier-1 attempt and
+    nothing else.
+
+    The mapping itself is the identity on the bits -- VST3 numbered its first eighteen speakers
+    in the `SPEAKER_*` order -- with two corrections: masks with bits above 17 are discarded, and
+    one channel returns `kMono`, because Windows spells mono `SPEAKER_FRONT_CENTER` and that bit
+    is VST3's *centre* channel of a surround layout. This also fixed a standing wrongness: a
+    Windows 7.1 endpoint reports `KSAUDIO_SPEAKER_7POINT1_SURROUND` (side speakers, VST3
+    `k71Music`), and the count-based guess reaches for `k71Cine`, which puts the extra pair at
+    front-of-centre instead.
+
 12. **Chain retirement uses an epoch counter, not a grace period.** Sec. 7.4.3 step 4 says to
     destroy the replaced chain on the control thread "after a safe grace period"; a counter the
     audio thread raises before loading the chain pointer and lowers on the way out turns that into

@@ -37,6 +37,13 @@ bool EngineHost::attach(const ipc::RenderEndpoint& endpoint, QString& error) {
     }
     detach();
 
+    // The endpoint's speaker layout, before anything is prepared for it. This is the only place
+    // in the program that knows it -- protocol v1 carries no channel-order information and its
+    // header is frozen (sec. 4.3) -- and it is knowable here only because the object names are
+    // derived from the endpoint GUID, so an endpoint we can attach to is one we can also ask.
+    // Zero when the device reports a plain WAVEFORMATEX, which the engine treats as "guess".
+    engine_.setChannelMask(endpoint.channelMask);
+
     // Nothing below can fail: attaching is asynchronous by design. The supervisor starts detached
     // and stays that way until `audiodg.exe` has created the shared objects, which it only does
     // while something is playing on the endpoint.

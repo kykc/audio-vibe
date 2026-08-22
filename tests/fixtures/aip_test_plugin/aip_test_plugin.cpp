@@ -18,6 +18,10 @@
 //   Meter  (id 2)  the parameter those callbacks report; its value is the block's first sample
 //   Offset (id 3)  a constant added *after* the gain; 0 by default
 //
+// Its main busses are declared mono and accept anything up to eight channels, which is the shape
+// of plugin that catches a host skipping the negotiation altogether: one that asks for nothing
+// and runs on whatever the plugin came up with gets a mono bus and a stereo stream.
+//
 // It also has real state: `getState` writes a magic number and the three writable parameters,
 // `setState` reads them back, and a blob whose magic does not match is *refused*. Both halves
 // matter to the host. Without persistence a session test could only assert that a plugin comes
@@ -29,6 +33,13 @@
 // different numbers, which is what lets a test tell a correctly ordered chain from a reversed
 // one. Two gains alone cannot -- multiplication does not care about order, so a rack that ran
 // them backwards would produce byte-identical output and the test would pass anyway.
+//
+// The module carries a *second* class, `AIP Wide Plugin`, which exists for one reason: it will
+// not accept any bus arrangement other than its own eight channels. That is the shape of plugin
+// -- common enough, Voxengo's are the usual specimens -- that a host either pads up to or refuses
+// outright, and the padding path in PluginInstance::prepare has nothing to test against without
+// one. It sums its whole input bus into every output channel, so a host that lets the padding
+// channels carry anything but silence produces a different number rather than a subtler failure.
 //
 // It also carries a default-active stereo side-chain input it never asks the host to disable,
 // copying what a JUCE-wrapped plugin does (ZL Equalizer 2 was the specimen). That combination --
@@ -49,6 +60,7 @@
 #include <cmath>
 
 #define AIP_TEST_PLUGIN_NAME "AIP Test Plugin"
+#define AIP_WIDE_PLUGIN_NAME "AIP Wide Plugin"
 #define AIP_TEST_PLUGIN_VENDOR "audio-ipc2"
 
 namespace aip::testplugin {
@@ -100,10 +112,14 @@ public:
             return result;
         }
 
-        addAudioInput(STR16("Input"), SpeakerArr::kStereo);
+        // Mono by default, though it will take anything up to kMaxSupportedChannels. The
+        // default is deliberately *not* what the tests run at: a plugin whose declared
+        // arrangement differs from the stream's is the only kind that can tell a host which
+        // asked for what it wanted from a host which merely accepted what it was offered.
+        addAudioInput(STR16("Input"), SpeakerArr::kMono);
         // Default-active, and never disabled below. See the note at the top of the file.
         addAudioInput(STR16("Sidechain"), SpeakerArr::kStereo, kAux);
-        addAudioOutput(STR16("Output"), SpeakerArr::kStereo);
+        addAudioOutput(STR16("Output"), SpeakerArr::kMono);
 
         parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5,
                                 ParameterInfo::kCanAutomate, kGainId);
@@ -315,6 +331,79 @@ private:
 
 const FUID TestPlugin::cid(0xA1B2C301, 0x4E5F6071, 0x82934455, 0x66778899);
 
+/// The only width `WidePlugin` will discuss.
+constexpr int32 kWideChannels = 8;
+
+/// A plugin with one fixed, wide bus and no opinion about anything else.
+///
+/// Every channel of the output is its own input channel plus the sum of the *whole* input bus.
+/// That is deliberately sensitive to the padding: at a stereo stream the host pads six channels
+/// with silence, so the sum is the two real channels and nothing else -- and if any of those six
+/// carried leftovers from a previous plugin instead, every output channel would say so. A chain
+/// of two of these is therefore a direct test of whether the host re-zeroes the padding between
+/// plugins or merely filled it once.
+///
+/// No parameters and no state: the point of this class is the negotiation, and everything else is
+/// already covered by TestPlugin.
+class WidePlugin : public SingleComponentEffect {
+public:
+    static const FUID cid;
+
+    static FUnknown* createInstance(void*) {
+        return static_cast<IAudioProcessor*>(new WidePlugin());
+    }
+
+    tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
+        const tresult result = SingleComponentEffect::initialize(context);
+        if (result != kResultOk) {
+            return result;
+        }
+        addAudioInput(STR16("Input"), SpeakerArr::k71Cine);
+        addAudioOutput(STR16("Output"), SpeakerArr::k71Cine);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API canProcessSampleSize(int32 symbolicSampleSize) SMTG_OVERRIDE {
+        return symbolicSampleSize == kSample32 ? kResultTrue : kResultFalse;
+    }
+
+    // Eight channels or nothing. Which eight is not our business -- the host is free to name them
+    // whatever the endpoint calls them -- but the count is not negotiable, and a refusal here
+    // leaves the bus at the k71Cine it was created with, which is what the host reads back.
+    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
+                                          SpeakerArrangement* outputs,
+                                          int32 numOuts) SMTG_OVERRIDE {
+        if (numIns != 1 || numOuts != 1 || inputs[0] != outputs[0] ||
+            SpeakerArr::getChannelCount(inputs[0]) != kWideChannels) {
+            return kResultFalse;
+        }
+        return SingleComponentEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+    }
+
+    tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {
+        if (data.numInputs < 1 || data.numOutputs < 1 || data.numSamples <= 0) {
+            return kResultOk;
+        }
+        const int32 inChannels = data.inputs[0].numChannels;
+        const int32 outChannels = data.outputs[0].numChannels;
+
+        for (int32 s = 0; s < data.numSamples; ++s) {
+            Sample32 busSum = 0.f;
+            for (int32 c = 0; c < inChannels; ++c) {
+                busSum += data.inputs[0].channelBuffers32[c][s];
+            }
+            for (int32 c = 0; c < outChannels; ++c) {
+                const Sample32 own =
+                    c < inChannels ? data.inputs[0].channelBuffers32[c][s] : Sample32{0.f};
+                data.outputs[0].channelBuffers32[c][s] = own + busSum;
+            }
+        }
+        return kResultOk;
+    }
+};
+
+const FUID WidePlugin::cid(0xA1B2C302, 0x4E5F6071, 0x82934455, 0x66778899);
+
 } // namespace aip::testplugin
 
 BEGIN_FACTORY_DEF(AIP_TEST_PLUGIN_VENDOR, "https://example.invalid",
@@ -323,5 +412,11 @@ BEGIN_FACTORY_DEF(AIP_TEST_PLUGIN_VENDOR, "https://example.invalid",
 DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::TestPlugin::cid), PClassInfo::kManyInstances,
            kVstAudioEffectClass, AIP_TEST_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0",
            kVstVersionString, aip::testplugin::TestPlugin::createInstance)
+
+// Second, and second on purpose: `Engine::appendPlugin` takes a module's *first* audio-effect
+// class, so every existing test goes on getting TestPlugin without saying so.
+DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::WidePlugin::cid), PClassInfo::kManyInstances,
+           kVstAudioEffectClass, AIP_WIDE_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0",
+           kVstVersionString, aip::testplugin::WidePlugin::createInstance)
 
 END_FACTORY

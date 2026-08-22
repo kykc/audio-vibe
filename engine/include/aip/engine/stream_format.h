@@ -32,8 +32,14 @@ struct StreamFormat {
 /// in cache-friendly territory.
 inline constexpr std::int32_t kDefaultMaxFrames = 4096;
 
-/// Ceiling on channel count. Protocol v1's 1 MiB mapping allows more, but a chain sized for an
-/// implausible channel count would waste memory that must be resident and touched.
-inline constexpr std::uint32_t kMaxChannels = 16;
+/// Ceiling on channel count. Protocol v1's 1 MiB mapping allows more, and the packed geometry
+/// word carries up to 255 (ChainProcessor), so this is a memory choice rather than a protocol
+/// one: every channel a chain is sized for costs two scratch banks that must be resident and
+/// touched before the audio thread reaches them.
+///
+/// 32 rather than 16 because a chain's banks are sized for the *widest bus a plugin settled on*,
+/// not for the stream (PluginChain), and a plugin with a fixed wide bus is exactly the case that
+/// motivates the padding path in PluginInstance::prepare.
+inline constexpr std::uint32_t kMaxChannels = 32;
 
 } // namespace aip::engine

@@ -43,8 +43,34 @@ namespace aip::engine {
 /// protocol's planar payload to line up (sec. 4.3) -- protocol v1 carries no channel-order
 /// information at all -- so counts without a standard layout fall back to the low `n` speaker
 /// bits, which is arbitrary but has the right cardinality.
+///
+/// This is tier 2 of the negotiation: a guess with the right cardinality, used when the device
+/// declines to say what its channels mean.
 [[nodiscard]] Steinberg::Vst::SpeakerArrangement speakerArrangementFor(
     std::uint32_t channelCount) noexcept;
+
+/// Maps a Windows `dwChannelMask` onto the VST3 speaker arrangement that means the same thing,
+/// and is tier 1 of the negotiation: the only path that gets channel *roles* right rather than
+/// merely getting the count right.
+///
+/// The mapping is the identity on the bits, which is not a coincidence -- VST3 numbered its
+/// first eighteen speakers to match the `SPEAKER_*` order exactly, from `kSpeakerL` at bit 0
+/// through `kSpeakerTrr` at bit 17. So this function is mostly validation:
+///
+///   * a mask whose population count disagrees with `channelCount` is discarded. The device
+///     format describes what the endpoint is *configured* for, and the count in front of the
+///     audio thread is read from the block header every block; when they disagree the header
+///     wins and the mask is not about this stream.
+///   * a mask with bits above 17 set is discarded. Windows defines no speaker there, so
+///     whatever it is, it is not something we can translate.
+///   * one channel returns `kMono`. Windows spells mono `SPEAKER_FRONT_CENTER`, which maps
+///     bit-wise onto `kSpeakerC` -- a *centre* channel of a surround layout, not a mono stream.
+///     Plugins overwhelmingly expect `kMono`, and the identity would quietly deny mono plugins
+///     the arrangement they are looking for.
+///
+/// Returns `kEmpty` when the mask is unusable, which is the caller's signal to fall to tier 2.
+[[nodiscard]] Steinberg::Vst::SpeakerArrangement speakerArrangementForMask(
+    std::uint32_t channelMask, std::uint32_t channelCount) noexcept;
 
 /// A plugin's own persistent state, exactly as the plugin wrote it and opaque to us.
 ///
@@ -87,10 +113,26 @@ public:
     /// `process()` will use, then `setActive(true)` and `setProcessing(true)`. This is the
     /// sanctioned place for a plugin to allocate (sec. 7.4.3, step 1).
     ///
-    /// Fails if the plugin will not accept `format.channelCount` on its main busses. That is a
-    /// refusal, not a fallback: silently processing a different channel count would corrupt the
-    /// planar payload.
-    [[nodiscard]] bool prepare(const StreamFormat& format, std::string& error);
+    /// `channelMask` is the endpoint's `dwChannelMask` (`ipc::RenderEndpoint::channelMask`), or
+    /// zero when the device did not say. It only ever selects *which* arrangement of
+    /// `format.channelCount` channels is asked for first; it can never change how many channels
+    /// are processed, so a stale or absent mask costs accuracy of channel roles and nothing else.
+    ///
+    /// The arrangement is negotiated in three tiers, each tried only when the one before it
+    /// fails:
+    ///
+    ///   1. the arrangement the device's mask names -- the only tier that gets channel roles
+    ///      right, and the reason `channelMask` is threaded down this far
+    ///   2. `speakerArrangementFor(format.channelCount)` -- right cardinality, guessed roles
+    ///   3. whatever fixed arrangement the plugin insists on, provided it is *at least*
+    ///      `format.channelCount` wide, with the surplus channels fed silence and their outputs
+    ///      discarded. See `inputChannelCount`.
+    ///
+    /// Fails if the plugin will not accept at least `format.channelCount` channels on its main
+    /// busses. That is a refusal, not a fallback: a plugin narrower than the stream would have to
+    /// drop channels, and silently dropping channels corrupts the planar payload.
+    [[nodiscard]] bool prepare(const StreamFormat& format, std::uint32_t channelMask,
+                               std::string& error);
 
     /// Reverses `prepare`. Idempotent.
     void unprepare() noexcept;
@@ -98,6 +140,34 @@ public:
     [[nodiscard]] bool prepared() const noexcept { return prepared_; }
 
     [[nodiscard]] const StreamFormat& format() const noexcept { return format_; }
+
+    /// Channels the plugin settled on for its main input and output bus, which is what `process`
+    /// requires its `inputs` and `outputs` arrays to be wide -- *not* `format().channelCount`.
+    ///
+    /// These are equal to `format().channelCount` for every plugin that accepted the stream's
+    /// width, which is nearly all of them. They exceed it for a plugin with a fixed wider bus
+    /// (tier 3 above): channels `[format().channelCount, inputChannelCount())` are padding the
+    /// caller must supply as silence, and the matching output channels carry whatever the plugin
+    /// made of that silence and are to be discarded.
+    ///
+    /// The numbers come from the prepared AudioBusBuffers rather than from the arrangement we
+    /// negotiated, because it is the buffers that size the channel pointer arrays `process`
+    /// writes into -- and a plugin whose `getBusInfo` disagrees with its own arrangement would
+    /// otherwise have us write past them.
+    ///
+    /// Zero until `prepare` has succeeded. The two may differ from each other.
+    [[nodiscard]] std::uint32_t inputChannelCount() const noexcept { return inputChannels_; }
+
+    [[nodiscard]] std::uint32_t outputChannelCount() const noexcept { return outputChannels_; }
+
+    /// True when the plugin was given a wider bus than the stream and is being fed silence in
+    /// the surplus channels. Worth surfacing: it is the condition under which a plugin that
+    /// links its detector across channels sees a quieter signal than the stream actually
+    /// carries, and the only visible symptom is that it acts too gently.
+    [[nodiscard]] bool padded() const noexcept {
+        return prepared_ && (inputChannels_ > format_.channelCount ||
+                             outputChannels_ > format_.channelCount);
+    }
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
 
@@ -182,9 +252,14 @@ public:
 
     // ------------------------------------------------------------------ audio thread ---------
 
-    /// Runs one block. `inputs` and `outputs` are arrays of `format().channelCount` channel
-    /// pointers, each with at least `frames` floats; they must not alias, because VST3 makes no
-    /// promise that a plugin tolerates in-place processing.
+    /// Runs one block. `inputs` is an array of `inputChannelCount()` channel pointers and
+    /// `outputs` of `outputChannelCount()`, each with at least `frames` floats; they must not
+    /// alias, because VST3 makes no promise that a plugin tolerates in-place processing.
+    ///
+    /// Those widths are the plugin's, not the stream's. Sizing either array to
+    /// `format().channelCount` when the plugin settled on a wider bus hands the plugin the null
+    /// pointers HostProcessData left in the tail of its channel array, on the audio thread,
+    /// inside `audiodg.exe`.
     ///
     /// Allocation-free and lock-free on our side of the call. Not `noexcept` by accident: it is
     /// noexcept because unwinding through the audio thread is forbidden (sec. 7.4.1), and a
@@ -238,6 +313,12 @@ private:
     StreamFormat format_;
     bool prepared_ = false;
     bool fullBusNegotiation_ = false;
+    /// The negotiated main-bus widths. See inputChannelCount().
+    std::uint32_t inputChannels_ = 0;
+    std::uint32_t outputChannels_ = 0;
+    /// Silence bits for the padding channels of the main input bus, computed once by prepare()
+    /// so process() only has to store them. Zero whenever the plugin took the stream's width.
+    std::uint64_t inputSilenceFlags_ = 0;
 
     /// Zeroed backing for every channel of every bus we do not drive. See prepare().
     std::vector<float> unusedBus_;

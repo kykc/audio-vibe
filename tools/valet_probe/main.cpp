@@ -280,7 +280,10 @@ int runInspection(const Options& options) {
             std::puts("       -- as instantiated --");
             reportBusses(*component, processor);
 
-            if (!instance->prepare(format, error)) {
+            // No channel mask: `--inspect` runs before any endpoint is chosen, and inventing one
+            // would make the report describe a device the user never named. The engine falls back
+            // to a guess of the right cardinality, which is what an inspection wants anyway.
+            if (!instance->prepare(format, 0, error)) {
                 std::printf("       PREPARE FAILED at %u Hz x%u ch: %s\n", format.sampleRate,
                             format.channelCount, error.c_str());
                 ++failures;
@@ -405,6 +408,12 @@ int main(int argc, char** argv) {
     std::printf("Endpoint : %ls\n", target.friendlyName.c_str());
     std::printf("GUID     : %ls\n", target.guid.c_str());
     std::printf("Objects  : %ls\n", protocol::objectBaseName(target.guid).c_str());
+    if (target.channelMask != 0) {
+        std::printf("Speakers : 0x%08x (%u channels configured)\n", target.channelMask,
+                    target.deviceChannelCount);
+    } else {
+        std::puts("Speakers : not reported; plugins get a guessed arrangement");
+    }
     if (options.plugins.empty()) {
         std::printf("Gain     : %.3f\n", static_cast<double>(options.gain));
     } else {
@@ -430,6 +439,9 @@ int main(int argc, char** argv) {
     // and publishes nothing.
     GainProcessor gainProcessor(options.gain);
     engine::Engine host;
+    // Unlike `--inspect`, this path has an endpoint, so the plugins can be told what its channels
+    // actually mean rather than being handed a guess of the right cardinality.
+    host.setChannelMask(target.channelMask);
 
     for (const std::string& path : options.plugins) {
         std::string error;

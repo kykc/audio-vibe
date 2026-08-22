@@ -188,6 +188,7 @@ std::string encodeModuleBody(const ScannedModule& module) {
         appendRecord(out, "class.mainout", info.mainOutputChannels);
         appendFlag(out, "class.prepared", info.prepared);
         appendFlag(out, "class.fullbusses", info.fullBusNegotiation);
+        appendFlag(out, "class.padded", info.padded);
         if (!info.error.empty()) {
             appendRecord(out, "class.error", info.error);
         }
@@ -265,6 +266,8 @@ bool RecordReader::consumeLine(const std::string& line) {
             info.prepared = toBool(value);
         } else if (key == "class.fullbusses") {
             info.fullBusNegotiation = toBool(value);
+        } else if (key == "class.padded") {
+            info.padded = toBool(value);
         } else if (key == "class.error") {
             info.error = unescapeField(value);
         }

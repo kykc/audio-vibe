@@ -163,10 +163,22 @@ TEST_CASE("scanning a working plugin reports what the host would see", "[scanner
     REQUIRE(report.modules.size() == 1);
     CAPTURE(report.modules[0].error);
     REQUIRE(report.modules[0].status == scanner::ScanStatus::Ok);
-    REQUIRE(report.modules[0].classes.size() == 1);
+    REQUIRE(report.modules[0].classes.size() == 2);
     REQUIRE(report.modules[0].classes[0].name == "AIP Test Plugin");
     REQUIRE(report.modules[0].classes[0].prepared);
     REQUIRE(report.modules[0].classes[0].parameterCount > 0);
+    CHECK_FALSE(report.modules[0].classes[0].padded);
+
+    // The second class takes eight channels or nothing, and the probe format is stereo. It is
+    // still reported as prepared, because the host pads it rather than refusing it -- and
+    // `padded` is what tells a shell the difference, which matters for any plugin whose
+    // behaviour depends on the whole bus rather than on each channel separately.
+    REQUIRE(report.modules[0].classes[1].name == "AIP Wide Plugin");
+    CAPTURE(report.modules[0].classes[1].error);
+    REQUIRE(report.modules[0].classes[1].prepared);
+    CHECK(report.modules[0].classes[1].padded);
+    // Read before the negotiation, so this is what the class declares, not what it settled for.
+    CHECK(report.modules[0].classes[1].mainInputChannels == 8);
     // One process for a clean list, which is sec. 7.2's "one short-lived scanner process per
     // scan". The per-plugin cost only appears when a plugin makes it appear.
     REQUIRE(report.childProcesses == 1);
@@ -188,7 +200,7 @@ TEST_CASE("a plugin that faults costs one entry, not the scan", "[scanner]") {
     // crash was probed properly, by a second child.
     REQUIRE(report.modules[1].path == AIP_TEST_PLUGIN_PATH);
     REQUIRE(report.modules[1].status == scanner::ScanStatus::Ok);
-    REQUIRE(report.modules[1].classes.size() == 1);
+    REQUIRE(report.modules[1].classes.size() == 2);
     REQUIRE(report.modules[1].classes[0].name == "AIP Test Plugin");
 
     REQUIRE(report.childProcesses == 2);
@@ -208,7 +220,7 @@ TEST_CASE("a plugin that hangs costs one entry, not the scan", "[scanner]") {
     REQUIRE_FALSE(report.modules[0].error.empty());
 
     REQUIRE(report.modules[1].status == scanner::ScanStatus::Ok);
-    REQUIRE(report.modules[1].classes.size() == 1);
+    REQUIRE(report.modules[1].classes.size() == 2);
 
     REQUIRE(report.childProcesses == 2);
 }

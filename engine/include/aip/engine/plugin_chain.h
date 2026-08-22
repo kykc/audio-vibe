@@ -22,6 +22,18 @@
 //
 // One copy per block, never an aliased input and output, and the same code path for every chain
 // length.
+//
+// Width. The banks are as wide as the *widest bus any plugin settled on*, which is the stream's
+// width for nearly every chain and more than that when one of the plugins insisted on a fixed
+// wider bus (PluginInstance::inputChannelCount). The surplus channels are padding:
+//
+//     channels [0, channelCount)  the stream, and the only ones ever written back
+//     channels [channelCount, W)  silence in, discarded out
+//
+// The padding is re-zeroed before each plugin runs rather than filled once, because each plugin
+// writes its *own* full output width into the destination bank -- so by the time the next plugin
+// reads that bank, what was silence holds whatever the previous plugin made of it. Filling once
+// would work for a one-plugin chain and quietly feed the second plugin a reverb tail.
 
 #pragma once
 
@@ -55,8 +67,12 @@ public:
         return *plugins_[index];
     }
 
+    /// Channels each scratch bank holds: the stream's width, or the widest bus a plugin in this
+    /// chain settled on if that is wider. Never less than `format().channelCount`.
+    [[nodiscard]] std::uint32_t bankChannelCount() const noexcept { return bankChannels_; }
+
     /// True when every plugin is prepared for this chain's format and the scratch banks are
-    /// allocated. A chain that is not runnable must not be published.
+    /// allocated wide enough for all of them. A chain that is not runnable must not be published.
     [[nodiscard]] bool runnable() const noexcept;
 
     // ------------------------------------------------------------------ audio thread ---------
@@ -79,12 +95,27 @@ private:
         void allocate(std::uint32_t channelCount, std::int32_t maxFrames);
     };
 
+    /// Audio thread. Zeroes channels `[format_.channelCount, upTo)` of `channels` for `frames`
+    /// samples. A memset of at most (W - channelCount) * frames floats, which is nothing beside
+    /// what the plugin is about to do with them -- and skipping it is how the padding stops
+    /// being silence after the first plugin in the chain.
+    void silencePadding(float* const* channels, std::uint32_t upTo,
+                        std::int32_t frames) const noexcept;
+
     StreamFormat format_;
     std::vector<PluginInstance*> plugins_;
+    /// The width of everything below. See bankChannelCount().
+    std::uint32_t bankChannels_ = 0;
     Bank banks_[2];
-    /// Refilled per block with pointers into the king's mapping. Preallocated so the audio
-    /// thread only ever stores into it.
+    /// Refilled per block: channels `[0, format_.channelCount)` point into the king's mapping,
+    /// the rest into `firstPad_`. Preallocated so the audio thread only ever stores into it.
     std::vector<float*> sharedChannels_;
+    /// Padding storage for the first plugin only, because its real channels live in the king's
+    /// mapping and that is exactly `format_.channelCount` wide -- there is nothing there to
+    /// borrow for the surplus. Its own storage rather than one shared zero buffer aliased across
+    /// every padding channel: a plugin that writes to its input would otherwise corrupt all of
+    /// them at once, and not aliasing buffers is the whole reason this class ping-pongs.
+    Bank firstPad_;
 };
 
 } // namespace aip::engine

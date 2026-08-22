@@ -90,7 +90,7 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
     for (RackEntry& entry : rack_) {
         // prepare() re-prepares in place -- same component, same parameters, new geometry. That
         // is the whole point of the rack outliving the chain.
-        if (!entry.instance->prepare(format, error)) {
+        if (!entry.instance->prepare(format, channelMask_, error)) {
             builtFormat_ = StreamFormat{};
             return false;
         }
@@ -235,7 +235,7 @@ bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
 
     // Prepared before it is inserted, and inserted before anything is published: a plugin that
     // cannot take the current format is reported without disturbing what is already running.
-    if (builtFormat_.valid() && !instance->prepare(builtFormat_, error)) {
+    if (builtFormat_.valid() && !instance->prepare(builtFormat_, channelMask_, error)) {
         return false;
     }
 

@@ -20,6 +20,7 @@
 
 #include <functiondiscoverykeys_devpkey.h>
 
+#include <mmreg.h>
 #include <propidl.h>
 #include <wrl/client.h>
 
@@ -41,6 +42,31 @@ std::wstring readStringProperty(IPropertyStore& store, const PROPERTYKEY& key) {
     return result;
 }
 
+// Reads the endpoint's configured stream format and pulls the speaker mask out of it. Best
+// effort by design: every failure path here leaves the mask zero, which callers must already
+// handle because a plain WAVEFORMATEX carries no mask at all.
+//
+// `PKEY_AudioEngine_DeviceFormat` is a VT_BLOB holding a WAVEFORMATEX, optionally extended to a
+// WAVEFORMATEXTENSIBLE -- the extension is what carries `dwChannelMask`. Both the outer blob
+// size and the format's own `cbSize` are checked before the wider struct is read, because the
+// property store is not a trusted source: it is whatever the driver wrote.
+void readDeviceFormat(IPropertyStore& store, RenderEndpoint& out) {
+    PROPVARIANT value{};
+    ::PropVariantInit(&value);
+    if (SUCCEEDED(store.GetValue(PKEY_AudioEngine_DeviceFormat, &value)) && value.vt == VT_BLOB &&
+        value.blob.pBlobData != nullptr && value.blob.cbSize >= sizeof(WAVEFORMATEX)) {
+        const auto* format = reinterpret_cast<const WAVEFORMATEX*>(value.blob.pBlobData);
+        out.deviceChannelCount = format->nChannels;
+        if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+            value.blob.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) &&
+            format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
+            const auto* extensible = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format);
+            out.channelMask = extensible->dwChannelMask;
+        }
+    }
+    ::PropVariantClear(&value);
+}
+
 bool describe(IMMDevice& device, RenderEndpoint& out) {
     ComPtr<IPropertyStore> store;
     if (FAILED(device.OpenPropertyStore(STGM_READ, &store))) {
@@ -48,6 +74,7 @@ bool describe(IMMDevice& device, RenderEndpoint& out) {
     }
     out.guid = readStringProperty(*store.Get(), PKEY_AudioEndpoint_GUID);
     out.friendlyName = readStringProperty(*store.Get(), PKEY_Device_FriendlyName);
+    readDeviceFormat(*store.Get(), out);
     return !out.guid.empty();
 }
 

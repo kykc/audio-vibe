@@ -89,9 +89,13 @@ namespace {
     if (options.prepare) {
         const engine::StreamFormat format{options.sampleRate, options.channelCount,
                                           engine::kDefaultMaxFrames};
-        out.prepared = instance->prepare(format, error);
+        out.prepared = instance->prepare(format, options.channelMask, error);
         if (out.prepared) {
             out.fullBusNegotiation = instance->fullBusNegotiation();
+            // Deliberately not overwriting mainInput/OutputChannels with the negotiated widths:
+            // see the note above about reading everything before prepare. What the class declares
+            // by default is the diagnostic; `padded` is what it settled for.
+            out.padded = instance->padded();
         } else {
             // A refusal is an answer, not a defect: a mono-only plugin has every right to decline
             // two channels. It is recorded on the class so the shell can grey it out and say why.

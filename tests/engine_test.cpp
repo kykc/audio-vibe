@@ -16,6 +16,7 @@
 #include "harness/wait_for.h"
 
 #include "aip/engine/engine.h"
+#include "aip/engine/plugin_instance.h"
 #include "aip/ipc/buffer_valet.h"
 #include "aip/ipc/valet_thread.h"
 #include "aip/rt/realtime_guard.h"
@@ -111,6 +112,16 @@ double getParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vs
     return controller->getParamNormalized(id);
 }
 
+/// The class id of the module's wide plugin, resolved rather than hardcoded: a UID written out
+/// by hand is a test that fails for the wrong reason the day the fixture is edited.
+std::string widePluginClassId() {
+    std::string error;
+    engine::PluginModule::Ptr module = engine::PluginModule::load(kTestPluginPath, error);
+    REQUIRE(module != nullptr);
+    REQUIRE(module->audioEffects().size() == 2);
+    return module->audioEffects()[1].id.toString();
+}
+
 } // namespace
 
 TEST_CASE("the test plugin module loads and exposes one audio effect", "[engine][module]") {
@@ -120,9 +131,12 @@ TEST_CASE("the test plugin module loads and exposes one audio effect", "[engine]
     INFO("path: " << kTestPluginPath << " error: " << error);
     REQUIRE(module != nullptr);
     CHECK(error.empty());
-    REQUIRE(module->audioEffects().size() == 1);
+    REQUIRE(module->audioEffects().size() == 2);
     CHECK(module->audioEffects().front().name == "AIP Test Plugin");
     CHECK(module->audioEffects().front().vendor == "audio-ipc2");
+    // Second, so that `appendPlugin` -- which takes the first audio effect -- goes on meaning
+    // TestPlugin everywhere below.
+    CHECK(module->audioEffects().back().name == "AIP Wide Plugin");
 }
 
 TEST_CASE("loading something that is not a plugin fails without throwing", "[engine][module]") {
@@ -772,4 +786,187 @@ TEST_CASE("republishing while audio is running retires the old chain safely", "[
     host.teardown();
     const std::vector<float> after = rig.run(in);
     CHECK(after == in);
+}
+
+
+// ------------------------------------------------------------------ bus arrangement tiers -----
+//
+// Three tiers, tried in order, each only when the one before it fails (PluginInstance::prepare):
+//
+//   1. the arrangement the endpoint's channel mask names
+//   2. a guess with the right cardinality
+//   3. the plugin's own fixed arrangement, if it is at least as wide as the stream, padded
+//
+// The tests below take them in that order.
+
+TEST_CASE("a device channel mask names the arrangement a count cannot guess", "[engine][busses]") {
+    namespace SpeakerArr = Steinberg::Vst::SpeakerArr;
+
+    // The identity on the bits, which is not a coincidence: VST3 numbered its first eighteen
+    // speakers in the SPEAKER_* order. These are the masks Windows actually hands out.
+    CHECK(engine::speakerArrangementForMask(0x00000003u, 2) == SpeakerArr::kStereo);
+    CHECK(engine::speakerArrangementForMask(0x0000003fu, 6) == SpeakerArr::k51);
+    CHECK(engine::speakerArrangementForMask(0x00000033u, 4) == SpeakerArr::k40Music);
+
+    // The one that matters. KSAUDIO_SPEAKER_7POINT1_SURROUND puts the extra pair at the *sides*;
+    // the count-based guess reaches for k71Cine, which puts them at front-of-centre. Same eight
+    // channels, different speakers -- and nothing but the mask can tell them apart.
+    CHECK(engine::speakerArrangementForMask(0x0000063fu, 8) == SpeakerArr::k71Music);
+    CHECK(engine::speakerArrangementFor(8) == SpeakerArr::k71Cine);
+    CHECK(engine::speakerArrangementForMask(0x0000063fu, 8) != engine::speakerArrangementFor(8));
+
+    // Windows spells mono SPEAKER_FRONT_CENTER, whose bit is VST3's *centre* channel. Passing
+    // that through would offer a mono plugin a one-channel surround layout.
+    CHECK(engine::speakerArrangementForMask(0x00000004u, 1) == SpeakerArr::kMono);
+
+    SECTION("a mask that does not describe this stream is discarded, not trusted") {
+        // The device is configured for 5.1 and the block header says stereo. The header wins:
+        // it is read every block, and the mask is a property of a device the stream may have
+        // stopped matching.
+        CHECK(engine::speakerArrangementForMask(0x0000003fu, 2) == SpeakerArr::kEmpty);
+        // No mask at all -- a plain WAVEFORMATEX, which is legal and common.
+        CHECK(engine::speakerArrangementForMask(0u, 2) == SpeakerArr::kEmpty);
+        // SPEAKER_ALL, and anything else above the eighteen speakers Windows names.
+        CHECK(engine::speakerArrangementForMask(0x80000003u, 2) == SpeakerArr::kEmpty);
+    }
+}
+
+TEST_CASE("a mask that agrees with the guess still gets negotiated", "[engine][busses]") {
+    // Tier 1 and tier 2 name the same arrangement for every stereo endpoint in the world, which
+    // makes "deduplicate the two candidates" the easiest thing in this file to get wrong: drop
+    // both as duplicates of each other and nothing is ever asked for, leaving the plugin on
+    // whatever arrangement it was created with. The fixture happens to default to stereo, so the
+    // audio would come out right and only a plugin defaulting to something else would ever
+    // notice -- by being refused for a width it would have accepted.
+    //
+    // The fixture declares mono busses and accepts up to eight channels, so a prepare that
+    // skipped both candidates would fall to tier 3, read mono back, and refuse the stereo stream
+    // outright. Getting two channels here is the evidence that stereo was actually asked for.
+    //
+    // KSAUDIO_SPEAKER_STEREO, which is what an ordinary pair of speakers reports.
+    engine::Engine host;
+    host.setChannelMask(0x00000003u);
+
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->inputChannelCount() == 2);
+    CHECK(plugin->outputChannelCount() == 2);
+    CHECK_FALSE(plugin->padded());
+
+    CHECK(host.channelMask() == 0x00000003u);
+}
+
+TEST_CASE("a plugin with one fixed wide bus is padded, not refused", "[engine][busses]") {
+    // The case this whole path exists for: a plugin built around one fixed eight-channel bus,
+    // asked to run on a stereo stream. Tiers 1 and 2 both get refused, and tier 3 meets it at its
+    // own width rather than telling the user it cannot be loaded.
+    constexpr std::int32_t kFrames = 32;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.insertPluginByClassId(0, kTestPluginPath, widePluginClassId(), error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->prepared());
+    CHECK(plugin->padded());
+    CHECK(plugin->inputChannelCount() == 8);
+    CHECK(plugin->outputChannelCount() == 8);
+    // The stream is still stereo. Padding is what the plugin sees, never what the king does.
+    CHECK(plugin->format().channelCount == 2);
+
+    Rig rig(host.blockProcessor(), L"engine-wide-one");
+
+    // Not signedRamp: its two channels are negatives of each other, so the plugin's bus sum would
+    // be zero and the padding could hold anything at all without changing a number.
+    std::vector<float> in(static_cast<std::size_t>(kFrames) * 2);
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        in[static_cast<std::size_t>(f) * 2] = static_cast<float>(f + 1);
+        in[static_cast<std::size_t>(f) * 2 + 1] = 2.f * static_cast<float>(f + 1);
+    }
+
+    const std::vector<float> out = rig.run(in);
+
+    // Each output channel is its own input plus the sum of the whole eight-channel bus. With the
+    // six padding channels genuinely silent that sum is a + b, so:
+    //
+    //     out0 = a + (a + b) = 2a + b    with a = k, b = 2k  ->  4k
+    //     out1 = b + (a + b) = a + 2b                        ->  5k
+    //
+    // Any padding channel carrying something other than zero raises both numbers.
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        const float k = static_cast<float>(f + 1);
+        REQUIRE(out[static_cast<std::size_t>(f) * 2] == Approx(4.f * k));
+        REQUIRE(out[static_cast<std::size_t>(f) * 2 + 1] == Approx(5.f * k));
+    }
+}
+
+TEST_CASE("the padding is silence again for every plugin, not just the first",
+          "[engine][busses]") {
+    // The bug this is here to catch: fill the padding once at the top of the block and it stops
+    // being silence the moment the first plugin writes its own full output width into the bank.
+    // The second plugin then reads whatever the first one made of it.
+    //
+    // The fixture makes that visible rather than subtle. Plugin one writes a + b into all six of
+    // its padding outputs, so a host that does not re-zero hands plugin two six copies of it.
+    constexpr std::int32_t kFrames = 16;
+
+    engine::Engine host;
+    std::string error;
+    const std::string wide = widePluginClassId();
+    REQUIRE(host.insertPluginByClassId(0, kTestPluginPath, wide, error));
+    REQUIRE(host.insertPluginByClassId(1, kTestPluginPath, wide, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    Rig rig(host.blockProcessor(), L"engine-wide-two");
+
+    std::vector<float> in(static_cast<std::size_t>(kFrames) * 2);
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        in[static_cast<std::size_t>(f) * 2] = static_cast<float>(f + 1);
+        in[static_cast<std::size_t>(f) * 2 + 1] = 2.f * static_cast<float>(f + 1);
+    }
+
+    const std::vector<float> out = rig.run(in);
+
+    // With a = k and b = 2k, plugin one leaves (4k, 5k) on the stream channels and 3k on each of
+    // its six padding outputs. Re-zeroed, plugin two sees a bus sum of 9k:
+    //
+    //     out0 = 4k + 9k = 13k
+    //     out1 = 5k + 9k = 14k
+    //
+    // Left alone, its bus sum would be 9k + 6 * 3k = 27k and the first channel would read 31k.
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        const float k = static_cast<float>(f + 1);
+        REQUIRE(out[static_cast<std::size_t>(f) * 2] == Approx(13.f * k));
+        REQUIRE(out[static_cast<std::size_t>(f) * 2 + 1] == Approx(14.f * k));
+    }
+}
+
+TEST_CASE("a plugin narrower than the stream is still refused", "[engine][busses]") {
+    // Padding goes one way only. A plugin wider than the stream is fed silence it can ignore; a
+    // plugin narrower than the stream would have to drop channels, and there is no honest way to
+    // do that -- so this stays a refusal, reported before anything is published.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+
+    // TestPlugin refuses any arrangement above eight channels and sits at stereo when it does.
+    const engine::StreamFormat wideStream{48000, 16, engine::kDefaultMaxFrames};
+    CHECK_FALSE(host.rebuild(wideStream, error));
+    CHECK_FALSE(error.empty());
+    INFO("refusal: " << error);
+    CHECK(error.find("accepts at most") != std::string::npos);
+
+    // Nothing published, and the rack survives to be rebuilt at a width the plugin will take.
+    CHECK(host.chainProcessor().current() == nullptr);
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    CHECK(host.chainProcessor().current() != nullptr);
 }

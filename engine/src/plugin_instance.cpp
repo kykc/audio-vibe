@@ -72,7 +72,77 @@ void transferComponentState(Vst::IComponent& component, Vst::IEditController& co
     controller.setComponentState(&stream);
 }
 
+// Describes every bus, with everything but the main pair set to `kEmpty`, and falls back to
+// describing only the main pair. Two attempts because plugins disagree about which description
+// they will accept, and the disagreement is not predictable from anything we can query:
+//
+//   * a plugin with a side-chain generally rejects a partial description outright -- it cannot
+//     tell "leave the rest alone" from "the rest do not exist" -- and wants all of them, with
+//     `kEmpty` marking the ones we do not drive. `kEmpty` is VST3's way of saying a bus is not
+//     connected, which is exactly true here (protocol v1 carries one stream, sec. 4.3), and is
+//     what makes the plugin disable it.
+//   * a plugin that considers a bus mandatory refuses `kEmpty` on it, and would rather be told
+//     about one bus than about a disabled one.
+//
+// `fullBusNegotiation` reports which of the two it was, because the difference is real: it is a
+// side-chain the plugin has disabled versus one it merely ignores.
+bool trySetArrangement(Vst::IAudioProcessor& processor, Steinberg::int32 inBusCount,
+                       Steinberg::int32 outBusCount, Vst::SpeakerArrangement input,
+                       Vst::SpeakerArrangement output, bool& fullBusNegotiation) {
+    std::vector<Vst::SpeakerArrangement> inputs(static_cast<std::size_t>(inBusCount),
+                                                Vst::SpeakerArr::kEmpty);
+    std::vector<Vst::SpeakerArrangement> outputs(static_cast<std::size_t>(outBusCount),
+                                                 Vst::SpeakerArr::kEmpty);
+    inputs[0] = input;
+    outputs[0] = output;
+
+    if (processor.setBusArrangements(inputs.data(), inBusCount, outputs.data(), outBusCount) ==
+        kResultOk) {
+        fullBusNegotiation = true;
+        return true;
+    }
+    fullBusNegotiation = false;
+    return processor.setBusArrangements(&input, 1, &output, 1) == kResultOk;
+}
+
+// What the plugin's main busses currently report, which is the only way to ask a VST3 plugin
+// what it wants: there is no "describe your capabilities" call, only trial and inspection. After
+// a refused `setBusArrangements` this is the arrangement the plugin kept, i.e. the one it is
+// telling us it insists on.
+bool readMainArrangements(Vst::IAudioProcessor& processor, Vst::SpeakerArrangement& input,
+                          Vst::SpeakerArrangement& output) {
+    input = 0;
+    output = 0;
+    return processor.getBusArrangement(Vst::kInput, 0, input) == kResultOk &&
+           processor.getBusArrangement(Vst::kOutput, 0, output) == kResultOk;
+}
+
 } // namespace
+
+Vst::SpeakerArrangement speakerArrangementForMask(std::uint32_t channelMask,
+                                                  std::uint32_t channelCount) noexcept {
+    // Bits 0..17 are the eighteen speakers Windows names; VST3 numbers the same eighteen in the
+    // same order, so below that line the mask *is* the arrangement. Anything above it is not a
+    // speaker position we can translate, and `SPEAKER_ALL` (bit 31) is the common way to see one.
+    constexpr std::uint32_t kTranslatableSpeakers = 0x0003ffffu;
+
+    if (channelMask == 0 || (channelMask & ~kTranslatableSpeakers) != 0) {
+        return Vst::SpeakerArr::kEmpty;
+    }
+    // Not std::popcount: the count has to agree with the block header, which is the authority on
+    // how wide this stream is, and a disagreement means the device format is not describing it.
+    std::uint32_t bits = 0;
+    for (std::uint32_t m = channelMask; m != 0; m &= m - 1) {
+        ++bits;
+    }
+    if (bits != channelCount) {
+        return Vst::SpeakerArr::kEmpty;
+    }
+    if (channelCount == 1) {
+        return Vst::SpeakerArr::kMono;
+    }
+    return static_cast<Vst::SpeakerArrangement>(channelMask);
+}
 
 Vst::SpeakerArrangement speakerArrangementFor(std::uint32_t channelCount) noexcept {
     switch (channelCount) {
@@ -279,7 +349,8 @@ bool PluginInstance::loadState(const PluginState& state) {
     return ok;
 }
 
-bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
+bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMask,
+                             std::string& error) {
     error.clear();
     unprepare();
 
@@ -301,46 +372,79 @@ bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
         return false;
     }
 
-    // Describe *every* bus, not just the main pair. A plugin with a side-chain -- and a great
-    // many effects have one, default-active -- rejects a partial description outright: it cannot
-    // tell "leave the rest alone" from "the rest do not exist". `kEmpty` is VST3's way of saying
-    // a bus is not connected, which is exactly true here (protocol v1 carries one stream, sec.
-    // 4.3), and is what makes the plugin disable it.
-    Vst::SpeakerArrangement arrangement = speakerArrangementFor(format.channelCount);
-    std::vector<Vst::SpeakerArrangement> inputs(static_cast<std::size_t>(inBusCount),
-                                                Vst::SpeakerArr::kEmpty);
-    std::vector<Vst::SpeakerArrangement> outputs(static_cast<std::size_t>(outBusCount),
-                                                 Vst::SpeakerArr::kEmpty);
-    inputs[0] = arrangement;
-    outputs[0] = arrangement;
+    const Steinberg::int32 wanted = static_cast<Steinberg::int32>(format.channelCount);
 
-    fullBusNegotiation_ =
-        processor_->setBusArrangements(inputs.data(), inBusCount, outputs.data(), outBusCount) ==
-        kResultOk;
-    if (!fullBusNegotiation_) {
-        // Fall back to describing only the main pair. Some plugins refuse `kEmpty` on a bus they
-        // consider mandatory, and would rather be told about one bus than about a disabled one.
-        if (processor_->setBusArrangements(&arrangement, 1, &arrangement, 1) != kResultOk) {
-            error = name_ + ": rejected a " + std::to_string(format.channelCount) +
-                    "-channel bus arrangement";
-            return false;
+    // Tiers 1 and 2: ask for exactly the stream width, preferring the arrangement the device
+    // mask names over a guess of the same cardinality. The two are attempts at the same thing
+    // and differ only in whether the channel *roles* are right, so they share one verification.
+    const Vst::SpeakerArrangement fromMask =
+        speakerArrangementForMask(channelMask, format.channelCount);
+    const Vst::SpeakerArrangement fromCount = speakerArrangementFor(format.channelCount);
+
+    // In tier order, `kEmpty` dropped and the two deduplicated -- for a stereo endpoint the mask
+    // names exactly what the guess would have, and there is nothing to be learned from asking the
+    // same question twice.
+    Vst::SpeakerArrangement candidates[2] = {};
+    std::size_t candidateCount = 0;
+    if (fromMask != Vst::SpeakerArr::kEmpty) {
+        candidates[candidateCount++] = fromMask;
+    }
+    if (fromCount != Vst::SpeakerArr::kEmpty && fromCount != fromMask) {
+        candidates[candidateCount++] = fromCount;
+    }
+
+    bool exact = false;
+    for (std::size_t i = 0; i < candidateCount; ++i) {
+        const Vst::SpeakerArrangement candidate = candidates[i];
+        if (!trySetArrangement(*processor_, inBusCount, outBusCount, candidate, candidate,
+                               fullBusNegotiation_)) {
+            continue;
+        }
+        // Asking is not the same as getting: a plugin may return kResultOk and then report a
+        // different arrangement. Only the channel *count* has to agree -- protocol v1 carries no
+        // channel-order information -- but at this tier it has to agree exactly, because the
+        // planar payload is addressed by channel index (sec. 4.3).
+        Vst::SpeakerArrangement in = 0;
+        Vst::SpeakerArrangement out = 0;
+        if (readMainArrangements(*processor_, in, out) &&
+            Vst::SpeakerArr::getChannelCount(in) == wanted &&
+            Vst::SpeakerArr::getChannelCount(out) == wanted) {
+            exact = true;
+            break;
         }
     }
 
-    // Asking is not the same as getting: a plugin may return kResultOk and then report a
-    // different arrangement. Only the channel *count* has to agree -- protocol v1 carries no
-    // channel-order information -- but it has to agree exactly, because the planar payload is
-    // addressed by channel index (sec. 4.3).
-    Vst::SpeakerArrangement inArrangement = 0;
-    Vst::SpeakerArrangement outArrangement = 0;
-    const Steinberg::int32 wanted = static_cast<Steinberg::int32>(format.channelCount);
-    if (processor_->getBusArrangement(Vst::kInput, 0, inArrangement) != kResultOk ||
-        processor_->getBusArrangement(Vst::kOutput, 0, outArrangement) != kResultOk ||
-        Vst::SpeakerArr::getChannelCount(inArrangement) != wanted ||
-        Vst::SpeakerArr::getChannelCount(outArrangement) != wanted) {
-        error = name_ + ": settled on a bus arrangement that is not " +
-                std::to_string(format.channelCount) + " channels";
-        return false;
+    if (!exact) {
+        // Tier 3. The plugin will not be talked down to the stream width, so meet it at its own.
+        // A great many effects are built around one fixed wide bus and process each channel
+        // independently; refusing those costs the user a plugin that would have worked perfectly
+        // well on the channels they actually have.
+        //
+        // Wider only, never narrower. Padding a plugin with silence it ignores changes how much
+        // work it does; handing a narrower plugin a stream it must truncate would drop channels
+        // outright, and there is no honest way to do that.
+        Vst::SpeakerArrangement in = 0;
+        Vst::SpeakerArrangement out = 0;
+        if (!readMainArrangements(*processor_, in, out)) {
+            error = name_ + ": would not say which bus arrangement it wants";
+            return false;
+        }
+        const Steinberg::int32 narrowest = std::min(Vst::SpeakerArr::getChannelCount(in),
+                                                    Vst::SpeakerArr::getChannelCount(out));
+        if (narrowest < wanted) {
+            error = name_ + ": accepts at most " + std::to_string(narrowest) +
+                    " channels and the stream carries " + std::to_string(format.channelCount);
+            return false;
+        }
+        // Ask for what it already reports, so negotiation ends on a kResultOk rather than on the
+        // refusal above. A plugin is entitled to treat a refused setBusArrangements as leaving it
+        // in whatever state it pleases, and carrying on from there is how a host discovers which
+        // ones meant it.
+        if (!trySetArrangement(*processor_, inBusCount, outBusCount, in, out,
+                               fullBusNegotiation_)) {
+            error = name_ + ": rejected the bus arrangement it reports as its own";
+            return false;
+        }
     }
 
     restrictToMainBusses(*component_);
@@ -365,6 +469,40 @@ bool PluginInstance::prepare(const StreamFormat& format, std::string& error) {
     if (processData_.numInputs < 1 || processData_.numOutputs < 1) {
         error = name_ + ": has no main audio input or output bus";
         return false;
+    }
+
+    // The widths process() must honour, taken from the buffers rather than from the arrangement
+    // we negotiated. These are the same number for any plugin that took the stream width, and
+    // the arrangement is the more natural-looking source -- but it is the *buffers* that size the
+    // channel pointer arrays process() stores into, and a plugin whose getBusInfo disagrees with
+    // its own getBusArrangement would otherwise have us write past the end of them.
+    inputChannels_ = static_cast<std::uint32_t>(processData_.inputs[0].numChannels);
+    outputChannels_ = static_cast<std::uint32_t>(processData_.outputs[0].numChannels);
+    if (inputChannels_ > kMaxChannels || outputChannels_ > kMaxChannels) {
+        // A wider bus is padded, and padding is paid for in scratch banks the chain must keep
+        // resident (PluginChain). Past the ceiling the plugin is asking for more memory than the
+        // stream could ever justify, so it is refused rather than accommodated.
+        error = name_ + ": insists on " +
+                std::to_string(std::max(inputChannels_, outputChannels_)) +
+                " channels, past the " + std::to_string(kMaxChannels) + "-channel ceiling";
+        processData_.unprepare();
+        return false;
+    }
+    if (inputChannels_ < format.channelCount || outputChannels_ < format.channelCount) {
+        error = name_ + ": prepared main busses narrower than the " +
+                std::to_string(format.channelCount) + "-channel stream";
+        processData_.unprepare();
+        return false;
+    }
+
+    // Tell the plugin the padding is silence rather than leaving it to infer it. A plugin that
+    // honours the flag can skip those channels outright; one that links a detector across the
+    // bus can leave them out of it, which is the difference between compressing the signal and
+    // compressing an average of the signal and a row of zeroes. Plugins are free to ignore it,
+    // which is why the padding channels are genuinely zeroed as well (PluginChain).
+    inputSilenceFlags_ = 0;
+    for (std::uint32_t c = format.channelCount; c < inputChannels_; ++c) {
+        inputSilenceFlags_ |= std::uint64_t{1} << c;
     }
 
     // Every bus but the main pair is deactivated, and a deactivated bus must still be handed a
@@ -437,6 +575,9 @@ void PluginInstance::unprepare() noexcept {
     prepared_ = false;
     queuedParameterLimit_ = 0;
     format_ = StreamFormat{};
+    inputChannels_ = 0;
+    outputChannels_ = 0;
+    inputSilenceFlags_ = 0;
 }
 
 bool PluginInstance::queueParameter(Vst::ParamID id, Vst::ParamValue value) noexcept {
@@ -473,14 +614,21 @@ void PluginInstance::deliverQueuedParameters() noexcept {
 
 void PluginInstance::process(float** inputs, float** outputs, std::int32_t frames,
                              Vst::ProcessContext& context) noexcept {
-    const Steinberg::int32 channels = static_cast<Steinberg::int32>(format_.channelCount);
+    // The plugin's widths, not the stream's. They differ when the plugin insisted on a wider bus
+    // than the stream carries, and the tail of each array is the padding the caller supplies
+    // (PluginChain) -- writing only `format_.channelCount` pointers would leave the rest of the
+    // array as HostProcessData::prepare left it, which is null.
+    const auto inputCount = static_cast<Steinberg::int32>(inputChannels_);
+    const auto outputCount = static_cast<Steinberg::int32>(outputChannels_);
 
     // Pointer stores into arrays prepare() allocated. Nothing here can allocate or block.
-    for (Steinberg::int32 c = 0; c < channels; ++c) {
+    for (Steinberg::int32 c = 0; c < inputCount; ++c) {
         processData_.inputs[0].channelBuffers32[c] = inputs[c];
+    }
+    for (Steinberg::int32 c = 0; c < outputCount; ++c) {
         processData_.outputs[0].channelBuffers32[c] = outputs[c];
     }
-    processData_.inputs[0].silenceFlags = 0;
+    processData_.inputs[0].silenceFlags = inputSilenceFlags_;
     processData_.outputs[0].silenceFlags = 0;
 
     processData_.numSamples = frames;

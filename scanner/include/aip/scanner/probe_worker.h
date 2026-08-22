@@ -25,6 +25,12 @@ struct ProbeOptions {
     std::uint32_t sampleRate = 48000;
     std::uint32_t channelCount = 2;
 
+    /// The endpoint's `dwChannelMask`, or zero for "unknown" -- which is the default here, and
+    /// honest: a scan is not attached to any endpoint. It only selects which arrangement of
+    /// `channelCount` channels a class is offered first, so leaving it zero costs the probe the
+    /// tier-1 attempt and nothing else.
+    std::uint32_t channelMask = 0;
+
     /// Instantiate and activate, not merely load. This is where most of the crash surface is --
     /// `setupProcessing`, `setActive`, and whatever a plugin does on first activation -- and also
     /// where `fullBusNegotiation` becomes knowable, so it is on by default. Turning it off makes

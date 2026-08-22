@@ -79,6 +79,12 @@ struct ScannedClass {
     /// See `PluginInstance::fullBusNegotiation` -- a per-plugin quirk, recorded because it is one
     /// of the few things that genuinely varies between hosts of the same plugin.
     bool fullBusNegotiation = false;
+    /// The class would not take the probe format's width and was prepared on a wider bus of its
+    /// own, fed silence in the surplus channels (`PluginInstance::padded`). Recorded because it
+    /// is the one thing about a working plugin that a user might need to know before trusting it:
+    /// a plugin that links its detector across the bus sees that silence too, and the only
+    /// symptom is that it acts more gently than it should.
+    bool padded = false;
 
     /// Empty unless something went wrong for this class alone.
     std::string error;

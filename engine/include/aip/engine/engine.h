@@ -124,6 +124,21 @@ public:
     /// chain is retracted first.
     [[nodiscard]] bool rebuild(const StreamFormat& format, std::string& error);
 
+    /// Control thread. The endpoint's `dwChannelMask` (`ipc::RenderEndpoint::channelMask`), or
+    /// zero for "unknown", which is what a device that reports a plain `WAVEFORMATEX` gives.
+    ///
+    /// This is the only channel-*order* information in the system: protocol v1 carries none and
+    /// its header is frozen (sec. 4.3), so without it a plugin is told which speakers it is
+    /// driving by a guess with the right cardinality. It is held across format changes -- the
+    /// mask belongs to the device, not to the block geometry -- and takes effect at the next
+    /// prepare, so a caller that changes it on a running rack should follow with `rebuild`.
+    ///
+    /// It can never change how many channels are processed, only which arrangement of them is
+    /// asked for first, so a wrong or stale mask costs accuracy and never correctness.
+    void setChannelMask(std::uint32_t mask) noexcept { channelMask_ = mask; }
+
+    [[nodiscard]] std::uint32_t channelMask() const noexcept { return channelMask_; }
+
     /// Unpublishes the chain. The rack is untouched, so a later `rebuild` brings it back with
     /// every parameter still set.
     void teardown();
@@ -197,6 +212,8 @@ private:
 
     ChainProcessor processor_;
     StreamFormat builtFormat_;
+    /// See setChannelMask(). Survives every rebuild.
+    std::uint32_t channelMask_ = 0;
     /// The packed geometry key the last `serviceFormatChange` acted on. See that function.
     std::uint64_t servicedFormatKey_ = 0;
 };
