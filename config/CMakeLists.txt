@@ -1,12 +1,15 @@
 # The session file (status.md sec. 5): what the shell remembers between runs, and where it keeps
-# it. Depends on the engine because a saved rack is a rack of real plugins; deliberately does not
-# depend on Qt, so the whole of it is testable without a window.
+# it -- and the chain preset, which is the same rack in a file the user names. Depends on the
+# engine because a saved rack is a rack of real plugins; deliberately does not depend on Qt, so
+# the whole of it is testable without a window.
 
 add_library(aip_config STATIC
     src/attach_guard.cpp
     src/base64.cpp
     src/file_stamp.cpp
     src/load_guard.cpp
+    src/preset_file.cpp
+    src/rack_yaml.h
     src/session.cpp
     src/session_file.cpp
 )
@@ -37,6 +40,7 @@ target_sources(aip_config PUBLIC
         include/aip/config/base64.h
         include/aip/config/file_stamp.h
         include/aip/config/load_guard.h
+        include/aip/config/preset_file.h
         include/aip/config/session.h
         include/aip/config/session_file.h
 )

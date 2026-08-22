@@ -5,6 +5,12 @@
 // each row, calls the engine and then rebuilds the list from what the engine now says. That costs
 // a few list items per click and removes a whole class of bug in exchange.
 //
+// Presets are the one thing here that is not a direct view of the engine. A preset is the rack
+// written to a file the user names, and loading one *replaces* the rack rather than adding to it
+// -- so it is the only button on this panel that can destroy work, and the only one that asks
+// first. What it does after that is what a session restore does: the same `config::apply`, and
+// therefore the same treatment of a plugin that has been uninstalled since.
+//
 // The engine's rack API is already the API a UI wants (status.md sec. 5): positions are rack
 // positions, they are stable across a rebuild, and every mutation takes effect immediately with
 // audio still flowing. What this panel adds is the ordering obligation the engine cannot enforce
@@ -44,13 +50,26 @@ public:
 Q_SIGNALS:
     void message(const QString& text);
 
+    /// The whole rack has just been replaced, rather than one plugin added or removed. Loading a
+    /// preset is the only thing that does this, and the window listens because it holds one piece
+    /// of state that only makes sense against the chain that was there before: the entries a
+    /// session was told not to load (`MainWindow::blockedEntries_`).
+    void rackReplaced();
+
 private:
     void addPlugin();
     void removeSelected();
     void moveSelected(int delta);
     void setBypassFromCheck(QListWidgetItem* item);
     void openEditorForSelected();
+    void savePreset();
+    void loadPreset();
     void updateButtons();
+
+    /// Where the last preset dialog was pointed, so the second one opens where the first one
+    /// left off. Not saved with the session: it is about the last few minutes, not about the
+    /// setup, and a stale path restored from a file is worse than none.
+    QString presetDirectory_;
 
     /// -1 when nothing is selected.
     [[nodiscard]] int selectedIndex() const;
@@ -76,6 +95,8 @@ private:
     QPushButton* upButton_ = nullptr;
     QPushButton* downButton_ = nullptr;
     QPushButton* editorButton_ = nullptr;
+    QPushButton* savePresetButton_ = nullptr;
+    QPushButton* loadPresetButton_ = nullptr;
 };
 
 } // namespace aip::ui

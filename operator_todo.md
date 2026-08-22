@@ -8,7 +8,6 @@
 * Drag-and-drop reordering.
 * Context menu for chain items (debatable)
 * Refine stats not to be so noisy (condence fast changing numbers to 23.4k? limit number of updates to n per second?)
-* ability to save/load chain presets outside of the main state file
 * Why timeouts are not climbing after attaching to the idle device right after starting UI?
 * branding: name, proper small icon, etc.
 * gracefully handle plugin path changes (plugin id? class?), concerns both main state and presets.

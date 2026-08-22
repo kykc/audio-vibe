@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "qt_paths.h"
 #include "window_chrome.h"
 
 #include "aip/config/attach_guard.h"
@@ -55,17 +56,6 @@ const char* exitReasonName(ipc::ValetExitReason reason) {
         return "the king went away";
     }
     return "?";
-}
-
-/// Paths cross this boundary as wide strings, not as `toStdString()`. A user name with a
-/// character outside the local code page is enough to make the narrow form name a different file,
-/// or no file at all.
-std::filesystem::path toPath(const QString& text) {
-    return text.isEmpty() ? std::filesystem::path{} : std::filesystem::path(text.toStdWString());
-}
-
-QString fromPath(const std::filesystem::path& path) {
-    return QString::fromStdWString(path.wstring());
 }
 
 } // namespace
@@ -127,6 +117,18 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     connect(&editors_, &EditorManager::message, this, &MainWindow::log);
     connect(&editors_, &EditorManager::openCountChanged, this, [this] { rack_->refresh(); });
     connect(rack_, &RackPanel::message, this, &MainWindow::log);
+    // A preset replaces the chain, and the entries a session was told not to load belong to the
+    // chain it replaced. Carrying them into the save would put a plugin the user has just
+    // navigated away from back into a rack that never had it -- so they are dropped, and said
+    // out loud, because one of them is a plugin somebody was meant to come back to.
+    connect(rack_, &RackPanel::rackReplaced, this, [this] {
+        if (blockedEntries_.empty()) {
+            return;
+        }
+        log(QStringLiteral("%1 entry(s) that were not loaded went with the chain they came from")
+                .arg(blockedEntries_.size()));
+        blockedEntries_.clear();
+    });
 
     refreshEndpoints();
     updateStatus();

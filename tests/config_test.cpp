@@ -6,6 +6,11 @@
 //   the file      does a session survive being written and read back, byte for byte
 //   the engine    does a *plugin* come back holding what it held, which is the actual point
 //
+// The chain preset (config/preset_file.h) is the same rack in a file of its own, and is tested
+// alongside the session file rather than apart from it: they share the rack's YAML deliberately,
+// and what is worth checking is both that the two agree and that the preset carries none of the
+// rest -- no window, no endpoint, and above all no inventory of this machine's plugins.
+//
 // The third is the one worth having. `tests/fixtures/aip_test_plugin` carries real state and
 // refuses a blob it does not recognise, so both the restore and the refusal are observable here
 // rather than inferred from a plugin nobody controls.
@@ -14,6 +19,7 @@
 #include "aip/config/base64.h"
 #include "aip/config/file_stamp.h"
 #include "aip/config/load_guard.h"
+#include "aip/config/preset_file.h"
 #include "aip/config/session.h"
 #include "aip/config/session_file.h"
 #include "aip/engine/engine.h"
@@ -67,6 +73,12 @@ public:
     TempDir& operator=(const TempDir&) = delete;
 
     [[nodiscard]] std::filesystem::path file() const { return path_ / config::kSessionFileName; }
+
+    /// A preset is named by the user rather than found, so this is only a name nothing else in
+    /// the directory uses.
+    [[nodiscard]] std::filesystem::path preset() const { return path_ / "chain.yaml"; }
+
+    [[nodiscard]] const std::filesystem::path& path() const { return path_; }
 
 private:
     std::filesystem::path path_;
@@ -283,6 +295,211 @@ TEST_CASE("a missing session file is an error, an absent one is not", "[config]"
     std::string error;
     REQUIRE_FALSE(config::readSession(dir.file(), session, error));
     REQUIRE_FALSE(error.empty());
+}
+
+// -------------------------------------------------------------------------------- the preset
+
+TEST_CASE("a preset survives being written and read back", "[config]") {
+    const TempDir dir("preset_round_trip");
+
+    std::vector<config::RackEntry> written;
+
+    config::RackEntry first;
+    first.path = "C:/Program Files/Common Files/VST3/Something.vst3";
+    first.classId = "56535441494E4B4F4C4F52204558414D";
+    first.name = "Something";
+    first.bypassed = true;
+    first.state.component = everyByte();
+    first.state.controller = {'u', 'i'};
+    written.push_back(first);
+
+    config::RackEntry second;
+    second.path = "C:/Program Files/Common Files/VST3/Other.vst3";
+    second.name = "Other";
+    written.push_back(second);
+
+    std::string error;
+    REQUIRE(config::writePreset(dir.preset(), written, error));
+    REQUIRE(error.empty());
+
+    std::vector<config::RackEntry> read;
+    REQUIRE(config::readPreset(dir.preset(), read, error));
+    REQUIRE(error.empty());
+
+    REQUIRE(read.size() == 2);
+    REQUIRE(read[0].path == first.path);
+    REQUIRE(read[0].classId == first.classId);
+    REQUIRE(read[0].name == first.name);
+    REQUIRE(read[0].bypassed);
+    REQUIRE(read[0].state.component == first.state.component);
+    REQUIRE(read[0].state.controller == first.state.controller);
+    REQUIRE(read[1].path == second.path);
+    REQUIRE_FALSE(read[1].bypassed);
+    REQUIRE(read[1].state.component.empty());
+}
+
+TEST_CASE("a preset holds the rack and nothing else", "[config]") {
+    const TempDir dir("preset_shape");
+
+    // A whole session, so that anything leaking into the preset has something to leak from.
+    config::Session session;
+    session.endpointId = "{0.0.0.00000000}.{deadbeef}";
+    session.endpointName = "Speakers (Test Device)";
+    session.attached = true;
+    session.window = {120, 80, 1024, 768, true};
+    config::CatalogEntry cached;
+    cached.module.path = "C:/plugins/Cached.vst3";
+    cached.module.name = "Cached";
+    cached.stamp = {4096, 1700000000};
+    session.catalog.push_back(cached);
+    config::RackEntry entry;
+    entry.path = "C:/plugins/Readable.vst3";
+    entry.name = "Readable";
+    session.rack.push_back(entry);
+
+    std::string error;
+    REQUIRE(config::writePreset(dir.preset(), session.rack, error));
+
+    std::ifstream file(dir.preset(), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+
+    // The rack is there, legibly.
+    REQUIRE(text.find("C:/plugins/Readable.vst3") != std::string::npos);
+    REQUIRE(text.find("rack:") != std::string::npos);
+    // Everything that is about this machine or this window rather than about the chain is not.
+    // The catalog is the one that matters most: it is the largest part of a session file and it
+    // is an inventory of what is installed here, which has nothing to do with the chain and is
+    // not something to hand to someone else along with it.
+    REQUIRE(text.find("catalog") == std::string::npos);
+    REQUIRE(text.find("Cached") == std::string::npos);
+    REQUIRE(text.find("window") == std::string::npos);
+    REQUIRE(text.find("endpoint") == std::string::npos);
+    REQUIRE(text.find("Speakers") == std::string::npos);
+    REQUIRE(text.find("attached") == std::string::npos);
+}
+
+TEST_CASE("a preset that is not understood is refused whole", "[config]") {
+    const TempDir dir("preset_refusals");
+
+    // Every one of these has to leave the caller's rack exactly as it was: by the time the shell
+    // calls this it is about to replace the chain, and a partial answer would take half the
+    // user's setup with it.
+    config::RackEntry sentinel;
+    sentinel.path = "C:/plugins/Untouched.vst3";
+
+    struct Case {
+        const char* name;
+        const char* text;
+        const char* expect;
+    };
+    const Case cases[] = {
+        {"empty", "", "empty"},
+        {"not a mapping", "- one\n- two\n", "mapping"},
+        {"from the future", "version: 99\nrack: []\n", "99"},
+        {"malformed", "version: 1\nrack:\n  - path: [unterminated\n", "parse"},
+        {"no rack at all", "version: 1\nname: not a preset\n", "rack"},
+        {"a rack that is not a list", "version: 1\nrack: nonsense\n", "rack"},
+        {"an entry that is not a mapping", "version: 1\nrack:\n  - just a string\n", "plugin 1"},
+        {"an entry with no path", "version: 1\nrack:\n  - name: Nameless\n", "plugin 1"},
+        {"a second entry with no path",
+         "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n  - name: Nameless\n", "plugin 2"},
+        {"a state that will not decode",
+         "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n    name: A\n    state: not!base64\n",
+         "decode"},
+    };
+
+    for (const Case& item : cases) {
+        INFO(item.name);
+        {
+            std::ofstream file(dir.preset(), std::ios::binary | std::ios::trunc);
+            file << item.text;
+        }
+
+        std::vector<config::RackEntry> rack{sentinel};
+        std::string error;
+        REQUIRE_FALSE(config::readPreset(dir.preset(), rack, error));
+        REQUIRE(error.find(item.expect) != std::string::npos);
+        REQUIRE(rack.size() == 1);
+        REQUIRE(rack[0].path == sentinel.path);
+    }
+
+    // And one that is not there at all, which is the same answer for a different reason.
+    std::vector<config::RackEntry> rack{sentinel};
+    std::string error;
+    REQUIRE_FALSE(config::readPreset(dir.path() / "no_such_preset.yaml", rack, error));
+    REQUIRE_FALSE(error.empty());
+    REQUIRE(rack.size() == 1);
+}
+
+TEST_CASE("a preset for the empty chain is a preset, not a failure", "[config]") {
+    const TempDir dir("preset_empty_rack");
+    {
+        std::ofstream file(dir.preset(), std::ios::binary);
+        file << "version: 1\nrack: []\n";
+    }
+
+    // Spelled out, unlike an empty file, so it says what it means: the user asked for a chain
+    // with nothing in it, which is a state worth being able to return to.
+    std::vector<config::RackEntry> rack;
+    std::string error;
+    REQUIRE(config::readPreset(dir.preset(), rack, error));
+    REQUIRE(error.empty());
+    REQUIRE(rack.empty());
+}
+
+TEST_CASE("a preset does not carry a verdict about what is safe to load", "[config]") {
+    const TempDir dir("preset_blocked");
+    {
+        std::ofstream file(dir.preset(), std::ios::binary);
+        file << "version: 1\nrack:\n  - path: C:/plugins/Suspect.vst3\n    blocked: true\n"
+                "    blockedReason: it crashed on some other machine\n";
+    }
+
+    std::vector<config::RackEntry> rack;
+    std::string error;
+    REQUIRE(config::readPreset(dir.preset(), rack, error));
+    REQUIRE(rack.size() == 1);
+    // What is dangerous is a property of this machine and this session, decided again by
+    // `blockUnsafeEntries` once the preset is in the rack. A `blocked` hand-written here, or
+    // written by whoever the preset came from, would be a plugin that silently refuses to load
+    // with its reason in a file nobody is looking at.
+    REQUIRE_FALSE(rack[0].blocked);
+    REQUIRE(rack[0].blockedReason.empty());
+}
+
+TEST_CASE("a chain saved as a preset comes back holding what it held", "[config][engine]") {
+    const TempDir dir("preset_engine_round_trip");
+    std::string error;
+
+    config::Session saved;
+    {
+        engine::Engine engine;
+        REQUIRE(engine.appendPlugin(kTestPluginPath, error));
+        REQUIRE(engine.appendPlugin(kTestPluginPath, error));
+        engine.pluginAt(0)->controller()->setParamNormalized(kGainParam, 0.75);
+        engine.pluginAt(1)->controller()->setParamNormalized(kOffsetParam, 0.25);
+        REQUIRE(engine.setBypass(1, true));
+        config::capture(engine, saved);
+    }
+
+    REQUIRE(config::writePreset(dir.preset(), saved.rack, error));
+
+    config::Session loaded;
+    REQUIRE(config::readPreset(dir.preset(), loaded.rack, error));
+
+    // Rebuilt through the same `apply` a session restore uses, which is the whole of what the
+    // Load Preset button does once it has emptied the rack.
+    engine::Engine restored;
+    std::vector<std::string> problems;
+    REQUIRE(config::apply(loaded, restored, problems) == 2);
+    REQUIRE(problems.empty());
+    REQUIRE(restored.pluginCount() == 2);
+    REQUIRE(restored.pluginAt(0)->controller()->getParamNormalized(kGainParam) == 0.75);
+    REQUIRE(restored.pluginAt(1)->controller()->getParamNormalized(kOffsetParam) == 0.25);
+    REQUIRE(restored.pluginAt(1)->controller()->getParamNormalized(kGainParam) == 0.5);
+    REQUIRE(restored.bypassed(1));
+    REQUIRE_FALSE(restored.bypassed(0));
 }
 
 // ------------------------------------------------------------------------------- the catalog

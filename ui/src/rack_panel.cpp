@@ -1,15 +1,36 @@
 #include "rack_panel.h"
 
 #include "plugin_picker.h"
+#include "qt_paths.h"
 
+#include "aip/config/preset_file.h"
+#include "aip/config/session.h"
+
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <string>
+#include <vector>
+
 namespace aip::ui {
+namespace {
+
+/// The one place the preset file's shape is described to the user. `All files` is second and
+/// deliberately present: a preset is plain YAML and someone who saved one under another name
+/// should not have to rename it to get it back.
+QString presetFilter() {
+    return QStringLiteral("Chain preset (*%1);;All files (*)")
+        .arg(QString::fromLatin1(config::kPresetFileExtension));
+}
+
+} // namespace
 
 RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     : QWidget(parent), host_(host), editors_(editors) {
@@ -37,13 +58,19 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     upButton_ = button(QStringLiteral("Move up"));
     downButton_ = button(QStringLiteral("Move down"));
     removeButton_ = button(QStringLiteral("Remove"));
+    // Below the stretch, and away from the rest: everything above acts on one plugin, these two
+    // act on the whole chain, and Load Preset is the only button here that throws work away.
     buttons->addStretch(1);
+    savePresetButton_ = button(QStringLiteral("Save Preset"));
+    loadPresetButton_ = button(QStringLiteral("Load Preset"));
 
     connect(addButton_, &QPushButton::clicked, this, &RackPanel::addPlugin);
     connect(editorButton_, &QPushButton::clicked, this, &RackPanel::openEditorForSelected);
     connect(upButton_, &QPushButton::clicked, this, [this] { moveSelected(-1); });
     connect(downButton_, &QPushButton::clicked, this, [this] { moveSelected(1); });
     connect(removeButton_, &QPushButton::clicked, this, &RackPanel::removeSelected);
+    connect(savePresetButton_, &QPushButton::clicked, this, &RackPanel::savePreset);
+    connect(loadPresetButton_, &QPushButton::clicked, this, &RackPanel::loadPreset);
     connect(list_, &QListWidget::currentRowChanged, this, [this](int) { updateButtons(); });
     // The only thing an item's check state can change is the engine's bypass flag, so every edit
     // to an item is one -- there is nothing else on these items a user can edit.
@@ -113,6 +140,10 @@ void RackPanel::updateButtons() {
     removeButton_->setEnabled(any);
     upButton_->setEnabled(any && index > 0);
     downButton_->setEnabled(any && index + 1 < list_->count());
+    // Saving nothing writes a file whose only use is emptying a rack, which is not what anyone
+    // pressing Save Preset means. Loading is always available -- an empty rack is the most
+    // ordinary thing to load a preset into.
+    savePresetButton_->setEnabled(list_->count() > 0);
 }
 
 void RackPanel::addPlugin() {
@@ -219,6 +250,99 @@ void RackPanel::setBypassFromCheck(QListWidgetItem* item) {
             list_->setCurrentRow(index);
         },
         Qt::QueuedConnection);
+}
+
+void RackPanel::savePreset() {
+    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save chain preset"),
+                                                presetDirectory_, presetFilter());
+    if (path.isEmpty()) {
+        return;
+    }
+    // The native dialog appends the filter's extension itself, but only when the filter is the
+    // one selected -- picking "All files" and typing a bare name comes back without a suffix.
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QString::fromLatin1(config::kPresetFileExtension);
+    }
+    presetDirectory_ = QFileInfo(path).absolutePath();
+
+    // Every plugin is asked for its state here and now, rather than a copy being kept in step as
+    // the user works. That is the same trade as the session file's (config/session.h): a
+    // `getState` can be a real serialization, and this is a thing the user asked for.
+    config::Session current;
+    config::capture(host_.engine(), current);
+
+    std::string error;
+    if (!config::writePreset(toPath(path), current.rack, error)) {
+        const QString text = QString::fromStdString(error);
+        Q_EMIT message(QStringLiteral("preset not saved: %1").arg(text));
+        QMessageBox::warning(this, QStringLiteral("The preset was not saved"), text);
+        return;
+    }
+    Q_EMIT message(QStringLiteral("saved %1 plugin(s) to %2").arg(current.rack.size()).arg(path));
+}
+
+void RackPanel::loadPreset() {
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Load chain preset"),
+                                                      presetDirectory_, presetFilter());
+    if (path.isEmpty()) {
+        return;
+    }
+    presetDirectory_ = QFileInfo(path).absolutePath();
+
+    // Read and checked in full before anything is touched. A preset that is not understood costs
+    // the user nothing at all -- which is the whole reason `readPreset` refuses a file rather
+    // than salvaging what it can of one (config/preset_file.h).
+    std::vector<config::RackEntry> entries;
+    std::string error;
+    if (!config::readPreset(toPath(path), entries, error)) {
+        const QString text = QString::fromStdString(error);
+        Q_EMIT message(QStringLiteral("preset not loaded: %1").arg(text));
+        QMessageBox::warning(this, QStringLiteral("That is not a preset this build can read"),
+                             text + QStringLiteral("\n\nThe rack has not been changed."));
+        return;
+    }
+
+    // Asked once, and only when there is something to lose. What is about to go is not just an
+    // order of plugins: it is every parameter in them, and there is no undo for it.
+    if (host_.engine().pluginCount() != 0 &&
+        QMessageBox::question(
+            this, QStringLiteral("Replace the current chain?"),
+            QStringLiteral("Loading this preset removes the %1 plugin(s) in the rack, and their "
+                           "settings, and replaces them with the %2 in the preset.\n\n"
+                           "This cannot be undone.")
+                .arg(host_.engine().pluginCount())
+                .arg(entries.size()),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+
+    // Editors first, and all of them: `clearPlugins` destroys every instance, and an editor
+    // outliving the plugin behind it is the one ordering mistake this panel exists to prevent.
+    editors_.closeAll();
+    host_.engine().clearPlugins();
+
+    // The same restore the session file gets, and deliberately so -- a plugin uninstalled since
+    // the preset was saved has to cost its own entry and nothing else, and that policy already
+    // exists in one place. No LoadGuard, because there would be nothing for the breadcrumb to
+    // protect: a plugin that takes the shell down here does it before the session is written, so
+    // the next start reads the chain that was in the file all along, which does not name it.
+    config::Session preset;
+    preset.rack = std::move(entries);
+
+    std::vector<std::string> problems;
+    const std::size_t loaded = config::apply(preset, host_.engine(), problems, nullptr);
+    for (const std::string& problem : problems) {
+        Q_EMIT message(QStringLiteral("preset: %1").arg(QString::fromStdString(problem)));
+    }
+    Q_EMIT message(QStringLiteral("loaded %1 of %2 plugin(s) from %3")
+                       .arg(loaded)
+                       .arg(preset.rack.size())
+                       .arg(path));
+    // Said after the rack is built, so that anything the window drops in response is reported
+    // below the load rather than above it.
+    Q_EMIT rackReplaced();
+    refresh();
 }
 
 void RackPanel::openEditorForSelected() {

@@ -134,7 +134,7 @@ components rather than numbered, so the two schemes cannot be confused.
 | **Engine** | **`engine/` -- VST3 host: module loading, the plugin rack, preallocated process data, atomic publication** | **Done for a single linear chain, mutable while running; verified against the real APO** |
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
 | **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Scanned once while attached, with no dropouts** |
-| **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob. Neither half of a plugin that kills the shell -- while loading, or while processing -- survives into the next start** |
+| **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise. Chain presets are the rack alone, in a file the user names** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob. Neither half of a plugin that kills the shell -- while loading, or while processing -- survives into the next start** |
 | Installer | `installer/` -- WiX v7 | Not started. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
 | APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
 
@@ -183,7 +183,10 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             edits to the processor (item 26)
 config/     session.h (the Session struct -- rack entries, cached scan report, window geometry,
             last endpoint -- and capture/apply against an Engine), session_file (the two
-            locations, and the YAML reader and writer), base64 (wrapped on the way out,
+            locations, and the YAML reader and writer), preset_file (the same rack in a file the
+            user names, and nothing else about the shell -- read all-or-nothing, item 72),
+            rack_yaml.h (the rack's YAML spelling, shared by those two so a preset and a session
+            cannot drift apart), base64 (wrapped on the way out,
             whitespace-tolerant on the way back), load_guard (the breadcrumb that lets the next
             start survive a plugin that kills this one while it loads), attach_guard (the mark
             that stops the next start walking back into one that kills it while it processes),
@@ -195,11 +198,14 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             main_window (the shell: endpoint attach, counters, log), session_end_filter (the
             message Windows sends before it ends the session, which is what keeps a reboot from
             being mistaken for a crash), rack_panel (a direct view of
-            the engine's rack; no second model), plugin_catalog (the scan report, carried across
+            the engine's rack; no second model -- bypass is the check box on each row, and Save
+            and Load Preset are the whole chain to and from a file of the user's choosing),
+            plugin_catalog (the scan report, carried across
             runs in the session file and re-probed per entry only where a bundle's stamp has
             changed, plus the progress dialog that fills it),
             plugin_picker (scanned classes with vendor and category; unusable modules greyed out
             with the reason; Rescan; a browsed bundle probed in a child before it is accepted),
+            qt_paths.h (QString to std::filesystem::path, wide, in one place),
             engine_host (names the GUI thread as *the* control thread; the
             100 ms servicing tick), editor_manager (which editors are open, and the guarantee
             none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
@@ -593,6 +599,12 @@ Proven against the real deployed APO on the development machine:
   a different matter, and ZL Equalizer 2 and NeuralAmpModeler are still the only two carried
   through a chain and an editor. They are one JUCE-wrapped and one iPlug2-wrapped plugin, and the
   population they stand for is not obviously well represented by two.
+- **Either preset button, pressed by a person.** The file itself is covered by the suite in both
+  directions -- written, read back, refused ten different ways, and carried through `apply` into a
+  real plugin holding what it held -- and the panel is wired to exactly those calls. What has not
+  happened is a click: nobody has been through the native Save or Open dialog, and nobody has
+  watched a preset replace a chain with editors open on it. That last one is the interesting case,
+  because it is where `closeAll` has to run before `clearPlugins` (item 72).
 - Any rack mutation *from the shell* while attached. Insert, remove, move and bypass are proven by
   test at the engine level and the buttons are wired to exactly those calls, but no one has clicked
   them with audio flowing. Removing a plugin whose editor is open is the interesting one, because it
@@ -789,7 +801,8 @@ UI work still outstanding, none of it blocking:
 - Uptime and peak-since-reset alongside the counters, so a soak run documents itself.
 - A rack that shows more than a line of text per plugin: vendor, category, and the parameter count
   are all already available from `PluginModule`/`PluginInstance`.
-- Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it.
+- Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it. A preset file
+  dropped on the rack is the same gesture and now has somewhere to go (items 70-72).
 - Endpoint hot-swap while attached, which needs `ValetSupervisor` to grow it (see below).
 - The sec. 5.2 "EQ/plot widgets" the design document mentions for `ui/`. Nothing needs them yet;
   they belong with whatever the project's own processing turns out to be, not with plugin hosting.
@@ -1626,6 +1639,51 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     1472 physical pixels wide is 1178 logical at 1.25 and 1178 x 1.25 = 1472.5 comes back as 1473.
     The rounding is deliberately outward -- a pixel of window background at the right edge, rather
     than a pixel of the editor clipped off.
+
+69. **Bypass is a check box on the rack row, not a button beside the list.** Asked for by the
+    project owner on 2026-08-23. Qt has the idiomatic form for it -- `Qt::ItemIsUserCheckable` on
+    the item -- so nothing needed building, and the state is where the state belongs: on the
+    plugin it is about, ticked for in the chain and cleared for bypassed, rather than in a button
+    whose label cannot say which way round it currently is. The engine's flag stays the only copy
+    (`RackPanel::refresh` sets every box from it and never remembers one between rebuilds), which
+    is why the panel needs a `refreshing_` guard: setting a check state emits the same
+    `itemChanged` a click does, and without it a rebuild would report each box it ticks back to
+    the engine as a bypass change. The rebuild that follows a real click is *queued*, because the
+    handler runs inside the view's own click handling and clearing the list there is not safe.
+
+70. **A preset is refused whole where a session is salvaged.** The two files hold the same rack
+    (`config/rack_yaml.h`, shared so they cannot drift apart) and read it under opposite rules.
+    `readSession` salvages: an entry with no path is dropped, a state blob that will not decode
+    costs that blob, and the rest of the rack is still restored -- because the session file is the
+    only copy of the user's work and the least useful response to one broken field is to hand back
+    nothing. `readPreset` refuses the whole file on any of the same faults, because it is about to
+    *replace* a rack the user has in front of them, and because it is a file they chose and can
+    fix and pick again. Half a preset loaded over a working chain is the outcome the strictness is
+    spent on. Everything is checked before the first plugin is touched, so a refusal costs
+    nothing at all.
+
+71. **A preset carries the rack and nothing else -- in particular, not the catalog.** No window
+    geometry, no endpoint, no attach flag: none of them is about a chain. The scan catalog is the
+    one worth saying out loud, because it is the largest part of a session file by far and it is
+    an inventory of what is installed on this machine, which is not something to hand to someone
+    else along with a chain. Nor is `blocked`: what is dangerous is a property of this machine and
+    this session (`blockUnsafeEntries`), decided again after the preset is in the rack, so a
+    `blocked` written by whoever the preset came from is dropped on the way in rather than
+    becoming a plugin that silently refuses to load with its reason in a file nobody is reading.
+
+72. **Loading a preset goes through `config::apply`, the same call a session restore uses.** It
+    empties the rack -- editors first, via `EditorManager::closeAll`, because `clearPlugins`
+    destroys every instance and item 28's ordering obligation does not care why -- and then
+    rebuilds through the one function that already knows what to do about a plugin uninstalled
+    since the file was written. No `LoadGuard`, and that is not an oversight: a plugin that takes
+    the shell down during a preset load does it before the session is written, so the next start
+    reads the chain that was in the file all along, which does not name it. There would be nothing
+    for the breadcrumb to protect.
+
+    It also drops `MainWindow::blockedEntries_`, over the `RackPanel::rackReplaced` signal. Those
+    entries are the ones a session was told not to load; they belong to the chain the preset
+    replaced, and carrying them into the save would put a plugin back into a rack that never had
+    it. Dropped out loud, because one of them is a plugin somebody was meant to come back to.
 
 ---
 
