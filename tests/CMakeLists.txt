@@ -17,12 +17,20 @@ add_subdirectory(fixtures/aip_hostile_plugin)
 
 add_library(aip_harness STATIC
     harness/synthetic_king.cpp
+    harness/valet_driver.cpp
 )
 
 target_include_directories(aip_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aip_harness PUBLIC aip_common aip_ipc aip_protocol aip_rt)
 
+# The apo/ king is compiled into the suite from source rather than linked: `aip_apo` is a /MT
+# DLL and this is a /MD executable (apo/CMakeLists.txt). Same source, same behaviour, no second
+# copy of the code -- and it means the king is covered by ctest without a DLL, audiodg.exe or an
+# elevated runner anywhere in the picture.
 add_executable(aip_tests
+    ${CMAKE_SOURCE_DIR}/apo/src/buffer_king.cpp
+    apo_dll_test.cpp
+    apo_king_test.cpp
     apo_registration_test.cpp
     config_test.cpp
     conformance_test.cpp
@@ -31,9 +39,19 @@ add_executable(aip_tests
     protocol_layout_test.cpp
     realtime_safety_test.cpp
     scanner_test.cpp
+    signal_source_test.cpp
     source_hygiene_test.cpp
     spsc_queue_test.cpp
 )
+
+target_include_directories(aip_tests PRIVATE ${CMAKE_SOURCE_DIR}/apo/include)
+
+# The APO DLL is loaded at run time by apo_dll_test.cpp -- /MT DLL, /MD suite, and loading it is
+# what the audio engine does too. Nothing links it, so nothing would otherwise build it first.
+add_dependencies(aip_tests aip_apo)
+target_compile_definitions(aip_tests PRIVATE
+    AIP_APO_DLL_PATH="$<TARGET_FILE:aip_apo>"
+    AIP_APO_CLSID=L"{C6A6A861-A99F-4F00-B636-657F38F353E9}")
 
 # The ASCII-only check (sec. 6.6) walks the source tree, so it needs to know where that is.
 # CMake hands out forward slashes here, which is what we want inside a C++ string literal.
@@ -57,7 +75,9 @@ target_link_libraries(aip_tests PRIVATE
     aip_engine
     aip_harness
     aip_scanner
+    aip_signal         # the apo_host signal bank, whose validation rules have their own cases
     Catch2::Catch2WithMain
+    audiobaseprocessingobject  # APOERR_ALREADY_UNLOCKED and the APO interface GUIDs
     psapi              # GetProcessMemoryInfo, for the flat-RSS half of the sec. 7.4.3 criterion
     # The global allocation hooks must be linked into the executable itself for the real-time
     # violation detector to see anything (sec. 7.4.6).

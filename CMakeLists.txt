@@ -62,11 +62,16 @@ include(yamlcpp)
 add_subdirectory(protocol)
 add_subdirectory(rt)
 add_subdirectory(ipc)
+# The APO (sec. 7.1). Deliberately after ipc/ -- it compiles a few of that component's sources
+# into itself rather than linking them, because it is the one target built /MT (apo/CMakeLists.txt).
+add_subdirectory(apo)
 add_subdirectory(engine)
 add_subdirectory(scanner)
 # After scanner/: aip_config links it for ScannedModule, which is part of what a session holds.
 add_subdirectory(config)
 add_subdirectory(ui)
+add_subdirectory(tools/apo_admin)
+add_subdirectory(tools/apo_host)
 add_subdirectory(tools/valet_probe)
 add_subdirectory(tools/editor_spike)
 add_subdirectory(tests)

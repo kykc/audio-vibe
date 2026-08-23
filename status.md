@@ -1,6 +1,35 @@
 # Project status
 
-**Updated:** 2026-08-23. The endpoint list now says which devices this project's APO is actually
+**Updated:** 2026-08-23, late. **The APO stage has started and `apo/` exists.** A drop-in
+replacement for the deployed 2013 binary: same protocol v1 wire behaviour, new CLSID
+`{C6A6A861-...}`, static CRT, `smartOpen`'s `&&` bug fixed, child-APO chaining dropped, and
+`APOProcess` under the `rt/` violation detector. It registers itself with `regsvr32` and nothing
+else -- putting a CLSID into an endpoint's effect chain is `tools/apo_admin`, which backs up the
+registry first and can switch a machine between the two APOs for comparison. `tools/apo_host`
+drives an APO DLL with `audiodg.exe` out of the loop entirely, with a bank of test signals
+(`sine:1000:-12`, `noise:-20`, peak dBFS) so a client on the other end has something to meter.
+153 tests, up from 122.
+
+**It runs inside a real `audiodg.exe`.** 1208 blocks at 48000 Hz x2 ch / 480 frames, zero
+timeouts, zero malformed headers, zero reclaims, zero audio-thread allocations, driven from the
+real client. The trace from inside the audio engine shows the whole activation path -- aggregated
+create, `Initialize` at `cbDataSize=56`, `LockForProcess`, blocks, `UnlockForProcess`.
+
+Before that, and still the faster loop: `apo_host` drives the DLL with the audio engine out of
+the picture entirely. A 1 kHz tone at -12.0 dBFS peak / -15.0 RMS goes in, the client's 0.5 gain
+brings it back at -18.0 / -21.0 -- exactly -6.02 dB on both. The same harness drives the *deployed
+2013 binary* identically, which is what makes it trustworthy.
+
+Three findings from the session are worth more than the code. **The audio engine aggregates its
+APOs** (design_doc.md sec. 8.5): refuse aggregation and the APO is registered, slotted, loaded,
+and completely inert, with no diagnostic anywhere. **A populated modern slot makes the GFX slot
+dead letter** (sec. 8.2) -- sec. 3.4 finding 1 observed directly, and the reason `apo_admin` now
+clears `,5`/`,6`/`,7` and saves them. **Taking ownership of endpoint keys is unnecessary**
+(sec. 9.4, now retired rather than implemented): `KEY_SET_VALUE` alone is permitted where
+`KEY_WRITE` is refused, which is almost certainly why the predecessor seized every key and never
+gave it back.
+
+Earlier the same day, the endpoint list now says which devices this project's APO is actually
 installed on: endpoints without it sort to the bottom, grey out, and cannot be selected or
 attached to (sec. 7 item 77). Attaching to one never worked -- there is no other side to the
 rendezvous, so blocks never arrive and it looks exactly like a device nobody is playing to -- and
@@ -110,7 +139,7 @@ NeuralAmpModeler's model path have both been through a save and a reload (item 6
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 110, ~8 s, and NOTHING skipped
+pixi run test          # expect: 100% tests passed out of 153, ~12 s, and NOTHING skipped
 ```
 
 **Read the skip count, not just the pass line.** `pixi run test` (RelWithDebInfo) must skip
@@ -127,6 +156,21 @@ Both configurations were built and run on 2026-08-23: RelWithDebInfo green at 11
 nothing skipped, release green with the eight detector tests skipped and nothing else. See section
 8 items 17, 19 and 20 for why that sentence is worth a check rather than an assumption -- twice
 now, this suite has reported green while the most important test in it did not run.
+
+Drive the APO itself, which needs no sound card and no `audiodg.exe` -- but does need elevation,
+because it creates the `Global\` objects (sec. 4.2):
+
+```
+apo_host --list-signals
+apo_host --signal sine:1000:-12 --seconds 10 --verify     # against the APO built beside it
+apo_host --dll C:\Windows\system32\AudioIpcApo.dll ...    # against the deployed 2013 binary
+valet_probe --endpoint-guid "{A1B0DE11-2222-3333-4444-555566667777}" --gain 0.5
+```
+
+The last two lines are the whole loop with the audio engine removed: `apo_host` is the king,
+`valet_probe` is the valet, and the endpoint GUID is made up. Use a *real* endpoint's GUID only
+when nothing is playing to it -- otherwise the deployed APO is publishing to the same names and
+the valet quietly serves two kings, which looks like a doubled block rate and nothing else.
 
 Then, on a machine with the old APO installed, prove interop against real hardware:
 
@@ -185,8 +229,8 @@ components rather than numbered, so the two schemes cannot be confused.
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
 | **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Scanned once while attached, with no dropouts** |
 | **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise. Chain presets are the rack alone, in a file the user names** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob. Neither half of a plugin that kills the shell -- while loading, or while processing -- survives into the next start** |
-| Installer | `installer/` -- WiX v7 | Not started. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
-| APO rewrite | `apo/` -- the rewritten APO | Deferred by design (sec. 7.3, sec. 8) |
+| Installer | `installer/` -- WiX v7 | Not started, and deliberately out of scope for the APO stage. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
+| **APO rewrite** | **`apo/` -- the rewritten APO, plus `tools/apo_host` and `tools/apo_admin`** | **Done for a first cut: 1208 blocks through a live `audiodg.exe` from the real client, and driven out of process against both this APO and the deployed 2013 one** |
 
 "Done for a single linear chain, mutable while running" is deliberate: the engine holds an
 ordered rack, publishes a view over it, and lets the rack be inserted into, removed from,
@@ -468,6 +512,30 @@ Proven, and re-checkable by running the suite:
   file next to the executable is the documented way to ask for portable mode.
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`,
   `scanner/` and `config/` included.
+
+Proven for the rewritten APO (`apo/`), 2026-08-23:
+
+- **It runs inside a live `audiodg.exe`.** 1208 blocks at 48000 Hz x2 ch / 480 frames from the
+  real client, zero timeouts, zero malformed headers, zero reclaims, zero audio-thread
+  allocations. The trace from inside the audio engine shows the whole activation path: an
+  *aggregated* create (`outer=non-null`), `Initialize` at `cbDataSize=56`, `LockForProcess` at the
+  endpoint's format, blocks, `UnlockForProcess` with its block count.
+- The same DLL, driven by `apo_host` with the audio engine out of the picture: a 1 kHz tone at
+  -12.0 dBFS peak / -15.0 RMS in, and back at -18.0 / -21.0 through the client's 0.5 gain --
+  exactly -6.02 dB on both, which is the metering loop working end to end.
+- `apo_host` drives the **deployed 2013 binary** the same way and gets the same pass-through, so
+  the harness is proven against a binary nobody here wrote.
+- Both APOs served one valet simultaneously on the same endpoint GUID, block for block, with no
+  malformed headers -- an accident of testing, and about as direct a demonstration of wire
+  compatibility as could be arranged.
+- `regsvr32` writes exactly two keys and `regsvr32 /u` removes exactly those two, both confirmed
+  by inspection. The registered catalogue entry matches the legacy one field for field, `Flags`
+  13 included.
+- Install and uninstall leave the endpoint key's owner (`BUILTIN\Administrators`) and
+  `FxProperties`'s (`NT AUTHORITY\SYSTEM`) unchanged, with no DACL edit -- checked before and
+  after.
+- The built DLL imports only `AVRT`, `ole32`, `ADVAPI32` and `KERNEL32`: static CRT, no
+  redistributable dragged into a system process.
 
 Proven against the real deployed APO on the development machine:
 
@@ -1000,12 +1068,23 @@ with that change stashed:
 
 | # | Item | Owner | Blocks | State |
 |---|---|---|---|---|
-| 1 | Minimum OS floor (sec. 8.1, leaning Windows 11 only) | project owner | APO rewrite | Open, blocks nothing yet |
-| 2 | GFX vs modern registration slots (sec. 8.2, leaning GFX `,2` only) | project owner | APO rewrite | Open, blocks nothing yet |
+| 1 | Minimum OS floor | project owner | APO rewrite | **Closed** 2026-08-23: Windows 11, as a support statement rather than an enforced gate (sec. 8.1) |
+| 2 | GFX vs modern registration slots | project owner | APO rewrite | **Closed** 2026-08-23: GFX `,2` only, and the either/or rule confirmed the hard way (sec. 8.2) |
 | 3 | Staged porting plan (sec. 11.4) | project owner | -- | Open |
+| 4 | ARM64 | project owner | -- | Deferred in full (sec. 11.5) |
 
-Nothing is currently blocking client work. The VST3 SDK `URL_HASH` (previously blocker 1) is
-pinned in `cmake/vst3sdk.cmake` and recorded in sec. 6.3.2; open item sec. 11.1 is closed.
+Nothing is blocking. The APO runs inside a live `audiodg.exe` -- see section 4a.
+
+**State of the development VM.** The rewritten APO is currently **installed and active** on the
+only render endpoint, `{2a5dcb05-d67a-4182-af18-e506390658d1}`, with the modern slots cleared and
+saved. `HKLM\SOFTWARE\Automatl\AudioIpc\Trace = 3`, so control-plane events land in
+`C:\Windows\Temp\aip_apo.log`. Registry backups of the whole render tree are in `C:\aip-backup\`,
+one per mutation, newest last. To put the machine back the way Windows had it:
+
+```
+apo_admin --uninstall --restart-audio --yes     # restores the modern slots too
+regsvr32 /u C:\aip\aip_apo.dll
+```
 
 ---
 
@@ -2019,6 +2098,55 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     within each group survives. A device list that reshuffles itself between two Refreshes is one
     nobody trusts.
 
+### 7.4 The APO
+
+78. **`apo/` is the one target built `/MT`, and that shapes its dependency list.** Everything
+    crossing the boundary to the audio engine is a COM vtable or a POD, and `IAudioMediaType` and
+    friends are released through `Release()`, so allocation and deallocation always happen in the
+    same image. So a static CRT costs nothing and buys a DLL with no VC redistributable
+    dependency inside a system process -- confirmed: the built binary imports only `AVRT`,
+    `ole32`, `ADVAPI32` and `KERNEL32`. It also makes the `rt/` operator-new replacements safe
+    there, since a private CRT heap keeps them to this image.
+
+    The consequence is that `apo/` cannot link `aip_ipc` or `aip_rt_hooks`, which are `/MD`. The
+    three sources it shares (`manual_event.cpp`, `shared_mapping.cpp`, `alloc_hooks.cpp`) are
+    compiled into it directly. That is the intended shape, not a workaround: one copy of each
+    source, and no second abstraction over it. `tests/` does the same with
+    `apo/src/buffer_king.cpp`, which is how the king is covered by ctest with no DLL, no
+    `audiodg.exe` and no elevated runner anywhere.
+
+79. **The king fixes `smartOpen`; the harness's king still reproduces it.** Both are correct.
+    `apo::BufferKing::smartOpen` uses `||`, so a sample-rate-only change reopens the stream --
+    invisible to a conforming valet, which re-reads the header every block anyway (sec. 4.5), and
+    visible only to a broken one. `harness::SyntheticKing` keeps the `&&`, because the *client*
+    must go on tolerating the deployed binary. There is a test on each side of that.
+
+80. **There is no synthetic valet, and that is deliberate.** design_doc.md sec. 4.7 asks for one
+    to exercise a rewritten APO, and `tests/harness/valet_driver.h` is it -- but implemented as a
+    driver *over the production `ipc::BufferValet`*, not as a second implementation.
+    `SyntheticKing` had to be written from scratch because the king it stands in for is not our
+    code and has to reproduce its bugs; neither is true here. The valet the APO must interoperate
+    with is in this repository, and a parallel one would only prove the king works with the
+    parallel one. What was actually missing was a way to misbehave on cue -- being late enough to
+    be evicted, being stolen from -- and that is what the driver adds.
+
+81. **`BlockStatus::Evicted` is nearly unreachable, and the timeout path is what recovers.**
+    Found by writing a king eviction test that evicted correctly and then hung. `Evicted` can only
+    come out of `acquire`, which only returns when the king has published -- but a king that has
+    just zeroed `valetId` *stops publishing*, so it never signals VALET again and `acquire`
+    returns nothing but `Timeout` forever. A valet waiting for `Evicted` waits for ever, with both
+    sides behaving exactly as written. Recovery has to happen on the idle path, by inspecting
+    `publishedValetId()` on timeout. `ValetThread` already did this; `ValetDriver` had to learn
+    it. Item 2 in section 7.1 describes the distinction, and this is why it is load-bearing.
+
+82. **Signal levels in `apo_host` are peak dBFS for every generator, and must be below zero.**
+    One rule across the bank so a number means the same thing whichever signal it is attached to.
+    A sine at `-12` peaks at exactly 0.2512 and therefore reads about -15 RMS; uniform noise at
+    `-20` is bounded at 0.1 and reads about -24.8, which is peak/sqrt(3). Both were checked
+    against the tool's own meters. Validation is the interesting part and has its own tests: a
+    tone above Nyquist is not the tone that was asked for but its alias, and a tool that produced
+    one silently would be lying to whatever is metering the other end.
+
 ---
 
 ## 8. Traps already paid for
@@ -2191,6 +2319,73 @@ integration. These are the ones found while implementing. Re-discovering any is 
     to search, and reports `Qt6Core.dll` among the dependencies it expects *Windows* to provide.
     The package is written, the task succeeds, and the folder does not run. Read the unresolved
     list: a Qt DLL in it means the search directory was wrong, not that Windows has one.
+
+25. **An APO that refuses COM aggregation is silently never created.** The audio engine passes a
+    non-null controlling unknown to `IClassFactory::CreateInstance`; answer
+    `CLASS_E_NOAGGREGATION` and it takes the refusal and moves on without a word in any log.
+    Everything observable looks right -- registered, in the slot, `DllGetClassObject` runs and
+    hands out a factory -- and `Initialize` is simply never called. Normative in design_doc.md
+    sec. 8.5, guarded by `tests/apo_dll_test.cpp`. The trap underneath the trap is the word:
+    sec. 8.3 drops the predecessor's *child APO* aggregation, which is a different mechanism
+    entirely, and its `INonDelegatingUnknown` scaffolding was dropped along with it on that
+    misreading.
+
+26. **A populated modern effect slot makes the GFX slot dead letter.** `,5`/`,6`/`,7` and `,2` are
+    strictly either/or (design_doc.md sec. 3.4 finding 1), and a driver-default endpoint arrives
+    with `,5` and `,6` naming Microsoft's `WM audio LFX APO` and `WM audio GFX APO`. With those
+    present nothing in `,2` runs at all -- verified with both this project's APOs. `apo_admin`
+    clears and saves them on install and shows them in `--list`. The endpoint that had worked on
+    this machine for years simply had no modern slots, which is why it never came up before.
+
+27. **A render endpoint materialises on first playback, so "no endpoint" usually means "nothing
+    is playing".** This one was diagnosed wrongly first and the wrong diagnosis was expensive, so
+    the order matters: **play a sound before concluding anything.**
+    `[System.Console]::Beep(1000,500)` is enough.
+
+    After an audio service restart, `Get-PnpDevice -Class AudioEndpoint` and
+    `enumerateRenderEndpoints()` can both report nothing while the device is perfectly healthy --
+    Windows initialises endpoints lazily. Every check that led to "this VM needs a reboot" was
+    passive enumeration with silence, which is exactly the state where the node does not exist
+    yet. What actually followed was a long detour through `pnputil /remove-device`, device
+    disable/enable and repeated service cycles, each of which recreated the endpoint registry key
+    **under a new GUID** (`{28d5455e}` -> `{d8077557}` -> `{2a5dcb05}`). A changed endpoint GUID
+    silently invalidates a session file's saved endpoint, so that detour was not free.
+
+    Separately and still true: an `FxProperties` change needs `Audiosrv` restarted and nothing
+    else -- it owns `audiodg.exe`. Do not stop `AudioEndpointBuilder`; it builds the endpoint
+    devices and nothing here needs it cycled. `apo_admin --restart-audio` does Audiosrv only.
+
+28. **`KEY_WRITE` is refused on `FxProperties`; `KEY_SET_VALUE` is not.** The DACL grants
+    `BUILTIN\Administrators : SetValue, ReadKey` -- no CreateSubKey, which `KEY_WRITE` implies.
+    So an elevated administrator opening the key the obvious way gets ERROR_ACCESS_DENIED for a
+    write it is entitled to make. This is almost certainly the origin of the predecessor taking
+    ownership of every endpoint key and never restoring it (design_doc.md sec. 3.7.5); asking for
+    the single right needed retires the whole problem (sec. 9.4).
+
+29. **`initguid.h` must precede `mmdeviceapi.h` and everything that includes it.**
+    `audioenginebaseapo.h` includes `mmdeviceapi.h` itself, so putting the pair anywhere below the
+    APO headers leaves the property keys declared-but-not-defined behind an include guard and
+    `initguid.h` with nothing to act on. One `LNK2001` on `PKEY_AudioEndpoint_GUID`, naming a
+    symbol whose header is plainly included.
+
+30. **Two SDK link traps for an APO, neither self-explanatory.**
+    `CBaseAudioProcessingObject::IsFormatTypeSupported` calls
+    `CreateAudioMediaTypeFromUncompressedAudioFormat`, which lives in `audiomediatypecrt.lib`
+    rather than in the base APO library that references it -- symptom is one `LNK2019` for a
+    function the project never calls. And `aporegistration.obj` reaches strsafe's
+    `StringVPrintfWorkerW`, which calls `_vsnwprintf`, which the UCRT made inline, so nothing
+    defines it: link `legacy_stdio_definitions`. The predecessor worked around the second with a
+    dead `if (false) { _vsnwprintf(NULL, 0, NULL, NULL); }` in `DllRegisterServer`.
+    `audiomediatypecrt.lib` additionally carries a stale `/DEFAULTLIB:atls.lib` it does not use --
+    excluded with `/NODEFAULTLIB:atls.lib` rather than by making ATL a build prerequisite.
+
+31. **The effect chain is cached until `Audiosrv` restarts, so writing the slot is not enough.**
+    Installing into `FxProperties` and then starting playback is not sufficient even when
+    `audiodg.exe` is created fresh afterwards: the engine had already read the endpoint's effect
+    configuration and does not re-read it per stream. The APO is simply never asked for. Restart
+    `Audiosrv` after the write -- `apo_admin --restart-audio` -- and then play. Symptom without it
+    is an install that looks correct in `--list` and produces no `DllGetClassObject` at all, which
+    is indistinguishable from trap 26 until you look at the trace log.
 
 ---
 

@@ -10,6 +10,7 @@ target_sources(aip_protocol INTERFACE
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
     FILES
+        include/aip/protocol/apo_identity.h
         include/aip/protocol/header_access.h
         include/aip/protocol/layout.h
         include/aip/protocol/planar.h

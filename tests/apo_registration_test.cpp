@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "aip/ipc/apo_registration.h"
+#include "aip/protocol/apo_identity.h"
 
 #include <algorithm>
 #include <string>
@@ -16,10 +17,12 @@ using namespace aip;
 
 namespace {
 
-/// The APO this project ships. Spelled out rather than taken from `knownApoClsids()` so that the
-/// test still means something if that list is edited: these cases assert what the rule does with
-/// a CLSID that is in the list, and one that is not.
+/// The two APOs this project owns: the deployed 2013 binary and the rewrite in `apo/`. Spelled
+/// out rather than taken from `knownApoClsids()` so that the test still means something if that
+/// list is edited: these cases assert what the rule does with a CLSID that is in the list, and
+/// one that is not.
 constexpr wchar_t kOurs[] = L"{B6A6A861-A99F-4F00-B636-657F38F353E9}";
+constexpr wchar_t kRewrite[] = L"{C6A6A861-A99F-4F00-B636-657F38F353E9}";
 constexpr wchar_t kStranger[] = L"{11111111-2222-3333-4444-555555555555}";
 
 std::wstring slotName(const wchar_t* digits) {
@@ -34,6 +37,23 @@ TEST_CASE("the shipped APO CLSID is one this build recognises", "[ipc][apo]") {
     const auto& known = ipc::knownApoClsids();
     REQUIRE_FALSE(known.empty());
     REQUIRE(std::find(known.begin(), known.end(), std::wstring(kOurs)) != known.end());
+}
+
+TEST_CASE("the rewritten APO CLSID is recognised too", "[ipc][apo]") {
+    // Both are ours and both must count: during the migration a machine can carry the deployed
+    // APO on one endpoint and the rewrite on another. Dropping either one greys out a working
+    // endpoint in the shell and gives the user no way to see why.
+    const auto& known = ipc::knownApoClsids();
+    REQUIRE(std::find(known.begin(), known.end(), std::wstring(kRewrite)) != known.end());
+}
+
+TEST_CASE("the CLSID apo/ registers is the one the client looks for", "[ipc][apo]") {
+    // The one seam where the two halves of the system have to agree on a literal, and neither
+    // can include the other's code. `protocol/apo_identity.h` is where they meet, and this is
+    // the case that fails if a hand-edit ever moves one of them without the other. The DLL's own
+    // GUID is checked against the same constant in `apo_identity_test.cpp`, from the APO side.
+    REQUIRE(std::wstring(protocol::kApoClsid) == std::wstring(kRewrite));
+    REQUIRE(std::wstring(protocol::kLegacyApoClsid) == std::wstring(kOurs));
 }
 
 TEST_CASE("a known APO in the GFX slot counts", "[ipc][apo]") {

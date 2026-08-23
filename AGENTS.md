@@ -31,6 +31,15 @@ pixi run probe --scan # probe every installed plugin out of process; no APO invo
 pixi run package      # build/package -- a portable folder; no pixi, Qt or VS needed to run it
 ```
 
+APO-side tools, all of which need elevation and none of which are wired into `pixi run`:
+
+```
+apo_host --list-signals                       # drive an APO DLL with audiodg.exe out of the loop
+apo_admin --list                              # what is in every endpoint's effect chain
+apo_admin --install [--legacy] --restart-audio  # put a CLSID in the GFX slot, backing up first
+regsvr32 aip_apo.dll                          # make the class loadable; touches no endpoint
+```
+
 `valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
 against the real APO, and `--list` / `--endpoint N` to pick a different endpoint.
 
@@ -70,9 +79,20 @@ Two halves, two roles in the IPC protocol:
 - **King** -- the APO (producer, creates all shared objects). Lives in `audiodg.exe`.
 - **Valet** -- the userspace client (consumer/processor). Opens existing objects.
 
-**The client is rewritten first (sec. 1.3, sec. 7.3).** The existing unmodified APO stays deployed; the
-new client attaches as a protocol v1 valet. All APO-side decisions (sec. 8) are deferred and do not
-block client work.
+**The client was rewritten first (sec. 1.3, sec. 7.3)** and is done. As of 2026-08-23 the APO stage
+has started: `apo/` is a drop-in replacement for the deployed binary under a new CLSID, and the
+sec. 8 decisions are taken rather than deferred.
+
+Three of them will bite anyone touching this area, so they are here as well as in sec. 8:
+
+- **The audio engine aggregates its APOs** (sec. 8.5). Refuse aggregation and the APO is
+  registered, slotted, loaded and completely inert, with no diagnostic anywhere. Do not confuse
+  this with the *child APO* aggregation that sec. 8.3 drops -- different mechanism, same word.
+- **GFX `,2` only, and the modern slots must be cleared** (sec. 8.2). They are strictly either/or;
+  a populated `,5` or `,6` makes a correct `,2` entry dead letter.
+- **Never stop `AudioEndpointBuilder`** (status.md sec. 8 item 27). An effect-slot change needs
+  `Audiosrv` restarted and nothing else; stopping the other one has cost this project a render
+  endpoint that would not come back.
 
 ## Hard rules
 
@@ -149,14 +169,14 @@ the resulting invalid escape sequence (C4129).
 ## Planned structure (sec. 7.1)
 
 ```
-protocol/   header-only C++20 -- protocol v1, single source of truth (client, APO, tests)
+protocol/   header-only C++20 -- protocol v1 and APO identity, shared by client, APO and tests
 ipc/        BufferValet, valet thread, thread promotion
 engine/     VST3 host: module loading, plugin chain, state, processing graph
 config/     the session file: the rack, plugin state, the scan cache, window, endpoint. YAML,
             no Qt
 scanner/    separate executable -- out-of-process plugin probing (crash isolation)
 ui/         Qt 6 Widgets shell, plugin rack, editor hosting, EQ/plot widgets
-apo/        later stage -- the rewritten APO
+apo/        the rewritten APO -- a /MT DLL, the only target built that way
 tests/      Catch2: protocol conformance, engine, scanner
 installer/  WiX v7
 ```

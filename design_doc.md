@@ -858,34 +858,87 @@ unavailable to us, as we build with MSVC (sec. 6.1). Substitutes, in order of va
 
 ---
 
-## 8. Deferred decisions
+## 8. APO-side decisions
 
-These are all APO-side and do not block client work (sec. 1.3, sec. 7.3).
+Taken by the project owner on 2026-08-23, when APO work began. Previously deferred; the section
+kept its numbering.
 
 ### 8.1 Minimum OS version
 
-**Leaning: Windows 11 only.** Windows 11 (build 22000+) unlocks the CAPX frameworks --
-`IAudioSystemEffects3`, the settings property store, first-party APO logging, the real-time
-work queue -- and would let the APO stop hand-rolling registry access for its settings.
-Supporting Windows 10 means retaining the `APOInitSystemEffects2` path indefinitely.
+**Windows 11.** Supporting Windows 10 would mean retaining the `APOInitSystemEffects2` path
+indefinitely, and the CAPX frameworks that Windows 11 unlocks -- `IAudioSystemEffects3`, the
+settings property store, first-party APO logging, the real-time work queue -- are what a later
+APO should be using instead of hand-rolled registry access (sec. 9.5).
 
-To be decided when APO work begins.
+Two qualifications, both practical:
+
+1. **It is a support statement, not an enforced floor.** `DllRegisterServer` performs no version
+   check. A gate would refuse to install on the development machine, which is Windows Server 2022
+   (10.0.20348) -- a Windows 10-era kernel.
+2. **Nothing Windows 11-specific can be exercised today.** The v1-parity APO does not need
+   anything from it: `IAudioSystemEffects` and `APOInitSystemEffects` are what the deployed
+   binary uses and what the engine hands out on both.
 
 ### 8.2 Registration slot policy
 
-**Leaning: GFX (`,2`) only**, on the sec. 3.4 evidence that the modern slots are currently
-unreliable for third-party APOs on 24H2. Requires independent verification by the project
-owner before being fixed.
+**GFX (`,2`) only.** On the sec. 3.4 evidence that the modern slots are unreliable for
+third-party APOs on 24H2.
 
-Whatever is chosen must be **either/or, never both** (sec. 3.4, finding 1), and should be
-accompanied by a post-registration verification step that confirms the APO is actually being
-loaded.
+Sec. 3.4 finding 1 -- "Windows prefers modern over legacy when both are configured; strictly
+either/or" -- was confirmed directly on 2026-08-23 and is not a theoretical concern. A freshly
+enumerated endpoint on the development machine came up with `,5` and `,6` naming Microsoft's own
+`WM audio LFX APO` and `WM audio GFX APO`. With those present, **neither** the rewritten APO nor
+the deployed 2013 one ran, despite `,2` naming them correctly and the DLL demonstrably being
+loaded. The endpoint that had been working all along simply had no modern slots populated, which
+is why the problem had never appeared.
+
+Therefore, under this policy, installing means:
+
+- write our CLSID to `,2`, saving the previous value to `OriginalGfxApo`;
+- **clear `,5`, `,6` and `,7`**, saving each to `OriginalSfxApo` / `OriginalMfxApo` /
+  `OriginalEfxApo`;
+- restore all four on uninstall.
+
+`tools/apo_admin` implements this and shows the modern slots in `--list`, because an install that
+silently does nothing is the worst failure available here.
+
+The post-registration verification step this section calls for is currently: attach a valet and
+confirm blocks arrive. That is sufficient but manual; a diagnostic side-channel published by the
+APO would make it automatic, and is recorded in sec. 9.7.
 
 ### 8.3 Child APO aggregation -- dropped
 
 The predecessor's ability to chain the OEM's original GFX APO (sec. 2.2) is **removed**. It was
 never used in practice and the predecessor's own commit history describes it as troublesome
 (`47f449a`, "APO aggregation (causes trouble, but works somehow)").
+
+**Do not confuse this with COM aggregation, which is mandatory.** They are unrelated mechanisms
+that share a word, and conflating them produces an APO that does nothing at all. See sec. 8.5.
+
+### 8.4 Class identity
+
+The rewritten APO is `{C6A6A861-A99F-4F00-B636-657F38F353E9}`, deliberately one hex digit from the
+predecessor's `{B6A6A861-...}` so the two sit together in a registry dump while being distinct to
+anything that parses them. Both are permanent and both count as "ours": during migration a machine
+may carry the deployed APO on one endpoint and the rewrite on another. The strings live in
+`protocol/apo_identity.h`, which is the only place the APO and the client can meet -- neither
+component may depend on the other.
+
+### 8.5 COM aggregation is required (normative)
+
+**The Windows audio engine creates system-effect APOs as aggregated COM objects.** It passes a
+non-null controlling unknown to `IClassFactory::CreateInstance`. An APO that answers
+`CLASS_E_NOAGGREGATION` is never instantiated, and the engine reports nothing: the class factory
+is fetched, an instance is refused, and the endpoint runs without the effect.
+
+The resulting symptom is worth recording because it points nowhere near the cause -- an APO that
+is correctly registered, correctly slotted, and demonstrably loaded (`DllGetClassObject` runs and
+succeeds), yet whose `Initialize` is never called.
+
+So the APO must implement the standard inner/outer pattern: a delegating `IUnknown` that forwards
+to the controlling unknown, and a non-delegating one carrying its own identity, which is what the
+class factory returns. This is what the predecessor's `INonDelegatingUnknown` is for. It is
+covered by `tests/apo_dll_test.cpp`, which drives the factory the way the engine does.
 
 ---
 
@@ -925,10 +978,23 @@ identity and `BUILTIN\Administrators`. Requires coordinated change on both sides
 Revisit sec. 3.4 once Microsoft fixes third-party SFX/MFX/EFX registration on current Windows 11
 builds. Until then GFX is the pragmatic choice.
 
-### 9.4 Restore registry ownership
+### 9.4 Restore registry ownership -- retired, not implemented
 
-The installer should restore the original owner and DACL of the endpoint key on uninstall
-(sec. 3.7.5).
+**Closed 2026-08-23 by making it unnecessary.** The premise was that an installer must take
+ownership of the endpoint key and should therefore give it back. It does not have to take it at
+all.
+
+`FxProperties` grants `BUILTIN\Administrators : SetValue, ReadKey` -- SetValue but *not*
+CreateSubKey, which only Audiosrv, AudioEndpointBuilder and TrustedInstaller hold. `KEY_WRITE` is
+`STANDARD_RIGHTS_WRITE | KEY_SET_VALUE | KEY_CREATE_SUB_KEY`, so opening the key with it is
+refused with ERROR_ACCESS_DENIED even from an elevated administrator, while the write actually
+wanted is permitted. That is almost certainly how the predecessor arrived at seizing every
+endpoint key (sec. 2.2, sec. 3.7.5): its C# opens `RegistryRights.FullControl`, is denied, and
+takes ownership to get past it.
+
+`tools/apo_admin` opens with `KEY_SET_VALUE` and nothing more. Verified on the development
+machine: after install and uninstall, the endpoint key's owner is still `BUILTIN\Administrators`
+and `FxProperties`'s is still `NT AUTHORITY\SYSTEM`, both unchanged, with no DACL edit anywhere.
 
 ### 9.5 Adopt CAPX
 
@@ -939,6 +1005,22 @@ work queue.
 ### 9.6 Replace SDK CMake consumption with a minimal in-house target
 
 Per sec. 6.3.5.
+
+### 9.7 A diagnostic side-channel from inside the APO
+
+Sec. 8.2 asks for a post-registration step that confirms the APO is actually being loaded, and
+today that is manual: attach a valet and see whether blocks arrive.
+
+A second named section -- `Global\TOMATL.AUDIO.IPC.{guid}.DIAG`, created by the rewritten APO
+only -- would make it automatic and answer several questions at once: whether our APO is loaded,
+which of the two it is, its block and eviction counters, and the sec. 7.4.3 audio-thread
+violation counts from inside `audiodg.exe`, which is otherwise the one place that number cannot
+be read. It changes protocol v1 not at all: the deployed APO simply does not create one, and its
+absence is itself informative.
+
+An interim form of this already exists and earned its keep immediately -- `apo/src/trace.h`
+writes control-plane events to a log file when a registry DWORD says so. It is what identified
+sec. 8.5, and it is the poor relation of the CAPX logging in sec. 9.5.
 
 ---
 
@@ -1025,9 +1107,10 @@ they are documented as prerequisites rather than left to be discovered during im
 | # | Item | Owner | Blocks | State |
 |---|---|---|---|---|
 | 1 | Pin the VST3 SDK archive `URL_HASH` | implementation | first build | **Closed** 2026-08-21; pinned in sec. 6.3.2 |
-| 2 | Confirm minimum OS floor (sec. 8.1) | project owner | APO stage | Open |
-| 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage | Open |
+| 2 | Confirm minimum OS floor (sec. 8.1) | project owner | APO stage | **Closed** 2026-08-23: Windows 11, unenforced |
+| 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage | **Closed** 2026-08-23: GFX `,2` only; the either/or rule confirmed directly, see sec. 8.2 |
 | 4 | Staged porting plan | project owner | -- | Open |
+| 5 | ARM64 support | project owner | -- | Deferred 2026-08-23. The APO must be ARM64 on Windows-on-ARM (`audiodg.exe` is native and an in-process DLL must match); the client should stay x64 under emulation, since conda-forge has no `qt6-main` for win-arm64 and the VST3 population is x64. Cross-compilation is available (`vs2026_win-arm64` exists in the win-64 subdir) but the local MSVC install has no ARM64 target tools, and nothing here can test the result |
 
 ---
 

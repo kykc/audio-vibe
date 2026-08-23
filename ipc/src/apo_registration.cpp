@@ -1,5 +1,7 @@
 #include "aip/ipc/apo_registration.h"
 
+#include "aip/protocol/apo_identity.h"
+
 #include <windows.h>
 
 #include <algorithm>
@@ -43,10 +45,12 @@ std::wstring flatten(const std::vector<BYTE>& data, DWORD bytes) {
 } // namespace
 
 const std::vector<std::wstring>& knownApoClsids() {
-    // `AudioIpcApo`, the APO this project ships today (design_doc.md sec. 2.2). The rewrite's
-    // CLSID joins it here when it exists; nothing else in the code needs to know there are two.
+    // Both of them, and both permanently -- see `protocol/apo_identity.h`. During the migration
+    // a machine may carry the deployed 2013 APO on one endpoint and the rewrite on another;
+    // either one means "ours", and nothing else in the code needs to know there are two.
     static const std::vector<std::wstring> clsids = {
-        L"{B6A6A861-A99F-4F00-B636-657F38F353E9}",
+        std::wstring(protocol::kApoClsid),
+        std::wstring(protocol::kLegacyApoClsid),
     };
     return clsids;
 }

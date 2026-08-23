@@ -11,6 +11,8 @@
 //   valet_probe                 attach to the default render endpoint
 //   valet_probe --list          list active render endpoints and exit
 //   valet_probe --endpoint N    attach to the Nth endpoint from --list
+//   valet_probe --endpoint-guid G  attach by GUID, real device or not -- how you reach a king
+//                               run by tools/apo_host instead of by audiodg.exe
 //   valet_probe --gain 0.5      apply a gain instead of passing through
 //   valet_probe --plugin P      run a VST3 plugin chain instead of a gain; repeatable
 //   valet_probe --inspect       load and prepare the plugins, report, and exit; no APO involved
@@ -136,14 +138,17 @@ struct Options {
     bool inspect = false;
     bool scan = false;
     int endpointIndex = -1; // -1 means "the default endpoint"
+    /// An endpoint GUID that need not belong to a real device, for attaching to `apo_host`
+    /// instead of to `audiodg.exe`. Empty means "use the enumerated endpoint".
+    std::wstring syntheticGuid;
     float gain = 1.0f;
     int seconds = 0; // 0 means "until Ctrl+C"
     std::vector<std::string> plugins;
 };
 
 const char* kUsage =
-    "Usage: valet_probe [--list] [--endpoint N] [--gain G] [--plugin PATH]... [--inspect]"
-    " [--scan] [--seconds S]";
+    "Usage: valet_probe [--list] [--endpoint N] [--endpoint-guid GUID] [--gain G]"
+    " [--plugin PATH]... [--inspect] [--scan] [--seconds S]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
     for (int i = 1; i < argc; ++i) {
@@ -154,6 +159,9 @@ bool parseOptions(int argc, char** argv, Options& out) {
             out.list = true;
         } else if (std::strcmp(arg, "--endpoint") == 0 && hasValue) {
             out.endpointIndex = std::atoi(argv[++i]);
+        } else if (std::strcmp(arg, "--endpoint-guid") == 0 && hasValue) {
+            const std::string narrow = argv[++i];
+            out.syntheticGuid.assign(narrow.begin(), narrow.end());
         } else if (std::strcmp(arg, "--gain") == 0 && hasValue) {
             out.gain = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(arg, "--plugin") == 0 && hasValue) {
@@ -389,7 +397,16 @@ int main(int argc, char** argv) {
     }
 
     ipc::RenderEndpoint target;
-    if (options.endpointIndex >= 0) {
+    if (!options.syntheticGuid.empty()) {
+        // A GUID rather than a device. `tools/apo_host` creates protocol v1 objects for whatever
+        // endpoint GUID it is told, real or not, so this is how a valet is pointed at an APO
+        // running outside `audiodg.exe`. Naming a *real* endpoint's GUID here is the thing to
+        // avoid: if that device has a live stream, the deployed APO is already publishing to
+        // those names and the valet ends up serving two kings -- which looks exactly like a
+        // doubled block rate and nothing else.
+        target.guid = options.syntheticGuid;
+        target.friendlyName = L"(synthetic endpoint)";
+    } else if (options.endpointIndex >= 0) {
         if (static_cast<std::size_t>(options.endpointIndex) >= endpoints.size()) {
             std::printf("No endpoint at index %d.\n", options.endpointIndex);
             printEndpoints(endpoints);
