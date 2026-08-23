@@ -1,6 +1,15 @@
 # Project status
 
-**Updated:** 2026-08-23. A Windows restart with the shell left open no longer throws away the
+**Updated:** 2026-08-23. The endpoint list now says which devices this project's APO is actually
+installed on: endpoints without it sort to the bottom, grey out, and cannot be selected or
+attached to (sec. 7 item 77). Attaching to one never worked -- there is no other side to the
+rendezvous, so blocks never arrive and it looks exactly like a device nobody is playing to -- and
+the list could have said so all along. No administrator rights are needed, verified from a token
+that is neither elevated nor in Administrators, and the obvious API for it is a trap: the MMDevice
+property store answers `S_OK` with an empty variant for these properties, on an endpoint that
+demonstrably has the APO. Twelve tests, and driven both ways in the real shell.
+
+Earlier the same day, a Windows restart with the shell left open no longer throws away the
 session. It is written from `WM_QUERYENDSESSION`, alongside the attach mark that was already being
 cleared there (sec. 7 item 76). The budget the item had been parked on turned out not to exist --
 the *entire* close path, both plugins' state included, is 163 ms against a deadline in seconds --
@@ -485,6 +494,16 @@ Proven against the real deployed APO on the development machine:
   through a two-plugin rack (ZL Equalizer 2 -> NeuralAmpModeler) with zero timeouts, zero malformed
   headers, zero format misses, zero dropped edits, zero stranded plugins and zero audio-thread
   allocations, frees or locks. Both plugins' editors were open the whole time.
+- **The shell knows which endpoints its APO is on, without administrator rights.** 2026-08-23,
+  read from a token that is neither elevated nor a member of Administrators: of this machine's
+  three render endpoints, `Speakers` carries `{B6A6A861-...}` in GFX slot `,2` and the two VB-Cable
+  devices carry an empty slot. The shell reports `1 active render endpoint(s), 1 with this
+  project's APO` and offers it. Driven the other way too, against a build whose known-CLSID list
+  named a GUID nothing carries: `0 with this project's APO`, the row greyed and rendered
+  `Speakers (High Definition Audio Device)  (default)  --  no APO`, the Attach button disabled,
+  nothing selected, and the log saying to install it on the device the user wants processed.
+  Twelve tests cover the matching rule itself -- modern slots, multi-entry chains, mixed case, and
+  the `OriginalGfxApo` value that must not count.
 - **The shell reports its own memory, and the figure is right.** 2026-08-23: an empty rack read
   `resident 36.0 MiB   peak 36.0 MiB   up 0:00:14`; the same build with ZL Equalizer 2 and Pult EQ
   loaded and both editors open read `resident 90.6 MiB   peak 93.8 MiB   up 0:00:25`. Checked
@@ -703,6 +722,12 @@ Proven against the real deployed APO on the development machine:
   the window fitted exactly around it -- and none has been seen.
 - Endpoint switching from the shell. `Refresh` and the combo box are disabled while attached, which
   makes the question "detach, then attach elsewhere" -- untried, and no reason to think it fails.
+- **The APO check against a machine with more than one usable endpoint.** Only one endpoint here
+  is active at all, so both halves were driven on that one: as it is, and again against a build
+  whose known-CLSID list had been changed to a GUID nothing carries. The second showed the row
+  greyed with `-- no APO`, the Attach button disabled and nothing selected. What that cannot show
+  is the sorting doing real work, because a one-item list is already sorted -- and no machine here
+  has an endpoint that would exercise `Unknown` either.
 - Two shells at once, which is the real `Stolen` test (see below).
 - Dragging an open editor from one monitor to another with a different scale. Editors opening on
   each of this machine's two monitors is now measured both ways (item 68), and a *move* should
@@ -756,9 +781,11 @@ Proven against the real deployed APO on the development machine:
 - That the catalog behaves when a plugin is installed *while the shell is open*. The check happens
   once per run, on the first Add; Rescan is the answer and always was, but nobody has confirmed
   that the cached path does not make Rescan look like it did nothing.
-- That a session is saved when the shell does *not* close cleanly. The file is written from
-  `closeEvent` and nowhere else, so a crash or a kill loses whatever changed since the last
-  clean exit.
+- That a session is saved when the shell does *not* close cleanly. Two ends are now covered --
+  `closeEvent`, and the session-end message a restart sends (item 76) -- which between them are
+  every *orderly* end. What is still lost is whatever changed since the last of those when the
+  process is taken away without warning: a fault, a kill, a power cut. Nothing is written
+  periodically, and nothing is meant to be.
 - Multi-bus plugins beyond one main pair plus deactivated extras. Side-chains are now handled
   (see sec. 7 item 20) but nothing *drives* one, and a plugin whose main output is not bus 0 is
   not considered at all.
@@ -913,6 +940,9 @@ UI work still outstanding, none of it blocking:
   `process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25` -- directly under the audio-thread
   counters, which is where the two halves of the criterion are read together. See sec. 7 item 75
   and section 4. What is left of the item is that nobody has yet run the soak it exists for.
+- ~~Say which endpoints have the APO, and stop the user attaching to the ones that do not.~~
+  **Done on 2026-08-23** (sec. 7 item 77, and section 4). What is left of it is a machine with
+  more than one usable endpoint to check the sorting against.
 - A rack that shows more than a line of text per plugin: vendor, category, and the parameter count
   are all already available from `PluginModule`/`PluginInstance`.
 - Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it. A preset file
@@ -1931,6 +1961,63 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
     `closeEvent` still saves, and is untouched. A shutdown does not usually deliver both, and a
     second save if it did would be harmless.
+
+77. **Endpoints without this project's APO are greyed out, listed last, and cannot be attached
+    to.** Attaching where the APO is not registered cannot work -- the rendezvous has no other
+    side, so no block ever arrives and the shell sits there reporting a silence indistinguishable
+    from a device nobody is playing to. That was a question the endpoint list could answer all
+    along and did not.
+
+    **It needs no administrator rights, and that was checked rather than assumed.** The
+    registration is per endpoint under
+    `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{guid}\FxProperties`,
+    and `{guid}` is `PKEY_AudioEndpoint_GUID` -- the value `RenderEndpoint::guid` already carries,
+    so the check costs one registry open per endpoint and no second enumeration. Read on
+    2026-08-23 from a token that was neither elevated nor a member of Administrators. The endpoint
+    keys the old installer took ownership of keep their inherited `BUILTIN\Users : ReadKey`
+    through the exchange, and `FxProperties` is not touched by it at all -- so sec. 2.2's
+    "replaces its DACL" is too strong: ownership goes and never comes back, but the inherited ACEs
+    survive.
+
+    **The MMDevice property store is a trap here, and a silent one.** It is the obvious place to
+    look, `ipc/` already uses it, and it does not carry these properties: measured, it exposes
+    58-64 properties per endpoint and none in the FX family. Asking it for the slot directly does
+    not fail -- it returns `S_OK` with `VT_EMPTY`, on an endpoint that demonstrably has the APO.
+    A reader that trusted it would report "no APO" everywhere and never once look broken. The
+    registry is the only path.
+
+    **What counts as a match** is the project owner's rule: any known CLSID, anywhere in the
+    chain. Three consequences, each of which is a test:
+
+    - *A list of CLSIDs, not one.* The rewrite (sec. 8) will register a different one and a
+      machine mid-migration will carry either. Adding the second is one line in
+      `knownApoClsids()`.
+    - *Every slot, not just GFX `,2`.* Matching is on the `{d04e05a6-...},` prefix, so the check
+      survives the slot policy changing (sec. 8.2) -- which it may. A check hard-coded to `,2`
+      would start reporting "no APO" on exactly the machines that had upgraded, silently.
+    - *Anywhere within a slot.* Modern slots are `REG_MULTI_SZ` chains; being second of three is
+      being in the chain. The separators are flattened to spaces and the search is a substring of
+      a brace-wrapped CLSID, which cannot match across a boundary.
+
+    `OriginalGfxApo` is deliberately excluded. It is the old installer's own backup value and
+    records what the chain held *before* the exchange, so a CLSID in it is by definition not
+    running -- counting it would make an endpoint whose APO had been replaced by somebody else's
+    look installed. Notably, all three endpoints on this machine carry it, which makes it a usable
+    marker for "this project has been here" as distinct from "this project is here now". Nothing
+    consumes that yet.
+
+    **`Absent` and `Unknown` are separate states**, and the policy that collapses them lives in
+    one function, `attachable`, which every caller asks -- the combo box, the Attach button,
+    `toggleAttach` and the session restore, so they cannot drift apart. Today it allows `Present`
+    only, as specified. The clause worth revisiting is `Unknown`: a machine whose registry refused
+    the read would offer no selectable endpoint at all, which is a severe outcome from a
+    heuristic. That is why the distinction is kept in the enum rather than flattened at the point
+    of reading, and why every state carries a `detail` sentence into the row's tooltip -- changing
+    the policy is one line, and diagnosing a machine where it misfires is a hover.
+
+    Ordering is `stable_partition`, not a sort: attachable first, and the order Windows gave
+    within each group survives. A device list that reshuffles itself between two Refreshes is one
+    nobody trusts.
 
 ---
 

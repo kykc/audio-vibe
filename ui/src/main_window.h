@@ -75,6 +75,12 @@ protected:
 
 private:
     void refreshEndpoints();
+
+    /// Whether the endpoint currently chosen in the combo box is one this shell can attach to --
+    /// which means the APO is registered on it (ipc/apo_registration.h). False when nothing is
+    /// selected, which is what an endpoint list with no usable device in it leaves behind.
+    [[nodiscard]] bool currentEndpointAttachable() const;
+
     void toggleAttach();
     void updateStatus();
 

@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QRect>
 #include <QScreen>
+#include <QStandardItemModel>
 #include <QTime>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -314,7 +315,8 @@ QWidget* MainWindow::buildLinkGroup() {
 
     auto* note = new QLabel(
         QStringLiteral("Attaching processes every sound on the endpoint, system-wide. Blocks only "
-                       "arrive while something is playing."),
+                       "arrive while something is playing. Endpoints without this project's APO "
+                       "installed are greyed out and listed last."),
         group);
     note->setWordWrap(true);
     note->setEnabled(false);
@@ -334,22 +336,89 @@ void MainWindow::refreshEndpoints() {
     }
 
     endpoints_ = ipc::enumerateRenderEndpoints();
+
+    // Attachable endpoints first, and `stable_partition` rather than a sort so that the order
+    // Windows gave within each group survives -- it is not arbitrary, and a list that reshuffles
+    // itself between two Refreshes is a list nobody trusts. On the usual machine, where exactly
+    // one endpoint carries the APO, this is the difference between the one usable device being
+    // at the top and it being third behind two that are greyed out.
+    std::stable_partition(endpoints_.begin(), endpoints_.end(),
+                          [](const ipc::RenderEndpoint& endpoint) {
+                              return ipc::attachable(endpoint.apo.presence);
+                          });
+
     endpointBox_->clear();
-    int defaultIndex = 0;
+    // The combo box's own model, which is what carries per-item enabled state. Disabling an item
+    // through it is what greys the row *and* makes it unselectable by mouse and by keyboard --
+    // setting a flag on the view alone would only do the first.
+    auto* model = qobject_cast<QStandardItemModel*>(endpointBox_->model());
+
+    std::size_t usable = 0;
+    std::size_t unreadable = 0;
+    int selectIndex = -1;
+
     for (std::size_t i = 0; i < endpoints_.size(); ++i) {
         const ipc::RenderEndpoint& endpoint = endpoints_[i];
+        const bool canAttach = ipc::attachable(endpoint.apo.presence);
+
         QString label = QString::fromStdWString(endpoint.friendlyName);
         if (endpoint.isDefault) {
             label += QStringLiteral("  (default)");
-            defaultIndex = static_cast<int>(i);
+        }
+        if (!canAttach) {
+            // On the row itself, not only in the tooltip. A greyed-out row with no reason on it
+            // reads as a bug in the shell rather than as a fact about the machine.
+            label += endpoint.apo.presence == ipc::ApoPresence::Absent
+                         ? QStringLiteral("  --  no APO")
+                         : QStringLiteral("  --  APO state unknown");
         }
         endpointBox_->addItem(label);
+        endpointBox_->setItemData(static_cast<int>(i),
+                                  QString::fromStdWString(endpoint.apo.detail), Qt::ToolTipRole);
+
+        if (endpoint.apo.presence == ipc::ApoPresence::Unknown) {
+            ++unreadable;
+        }
+        if (!canAttach) {
+            if (model != nullptr) {
+                model->item(static_cast<int>(i))->setEnabled(false);
+            }
+            continue;
+        }
+
+        ++usable;
+        // The first attachable endpoint, unless the default one is also attachable -- in which
+        // case that wins, because it is the device the user's sound is already going to.
+        if (selectIndex < 0 || endpoint.isDefault) {
+            selectIndex = static_cast<int>(i);
+        }
     }
-    if (!endpoints_.empty()) {
-        endpointBox_->setCurrentIndex(defaultIndex);
+
+    // -1 when nothing is attachable, which leaves the box showing nothing rather than showing a
+    // greyed-out device as though it were selected.
+    endpointBox_->setCurrentIndex(selectIndex);
+
+    log(QStringLiteral("%1 active render endpoint(s), %2 with this project's APO")
+            .arg(endpoints_.size())
+            .arg(usable));
+    if (unreadable != 0) {
+        log(QStringLiteral("%1 endpoint(s) would not say whether the APO is installed; they "
+                           "cannot be selected -- hover for the reason")
+                .arg(unreadable));
     }
-    log(QStringLiteral("%1 active render endpoint(s)").arg(endpoints_.size()));
+    if (usable == 0 && !endpoints_.empty()) {
+        log(QStringLiteral("no endpoint here has this project's APO, so there is nothing to "
+                           "attach to; install it on the device you want to process"));
+    }
     updateStatus();
+}
+
+bool MainWindow::currentEndpointAttachable() const {
+    const int index = endpointBox_->currentIndex();
+    if (index < 0 || static_cast<std::size_t>(index) >= endpoints_.size()) {
+        return false;
+    }
+    return ipc::attachable(endpoints_[static_cast<std::size_t>(index)].apo.presence);
 }
 
 void MainWindow::toggleAttach() {
@@ -364,6 +433,17 @@ void MainWindow::toggleAttach() {
     const int index = endpointBox_->currentIndex();
     if (index < 0 || static_cast<std::size_t>(index) >= endpoints_.size()) {
         log(QStringLiteral("no endpoint selected"));
+        return;
+    }
+
+    // Belt and braces. The row is disabled and the button beside it is too, so nothing in the
+    // window can get here -- but `--attach` and a restored session both arrive through this same
+    // function without going near either, and attaching where the APO is not installed produces
+    // silence that looks exactly like a device nobody is playing to.
+    if (!ipc::attachable(endpoints_[static_cast<std::size_t>(index)].apo.presence)) {
+        log(QStringLiteral("not attaching: %1")
+                .arg(QString::fromStdWString(
+                    endpoints_[static_cast<std::size_t>(index)].apo.detail)));
         return;
     }
 
@@ -603,10 +683,23 @@ bool MainWindow::selectSavedEndpoint(const std::string& endpointId,
 
     const QString wanted = QString::fromStdString(endpointId);
     for (std::size_t i = 0; i < endpoints_.size(); ++i) {
-        if (QString::fromStdWString(endpoints_[i].guid) == wanted) {
-            endpointBox_->setCurrentIndex(static_cast<int>(i));
-            return true;
+        if (QString::fromStdWString(endpoints_[i].guid) != wanted) {
+            continue;
         }
+        // Still here, but no longer usable -- an audio driver reinstall wipes these registry
+        // values (design_doc.md sec. 3.4), so a session saved yesterday can name an endpoint that
+        // has since lost the APO. Reported as "not available", and returning false is what stops
+        // the automatic reattach: `config::shouldReattach` treats a missing endpoint as reason
+        // enough to come up detached, and an endpoint that cannot process is missing in every
+        // sense the user cares about.
+        if (!ipc::attachable(endpoints_[i].apo.presence)) {
+            log(QStringLiteral("the endpoint this session used (%1) can no longer be selected: %2")
+                    .arg(endpointName.empty() ? wanted : QString::fromStdString(endpointName),
+                         QString::fromStdWString(endpoints_[i].apo.detail)));
+            return false;
+        }
+        endpointBox_->setCurrentIndex(static_cast<int>(i));
+        return true;
     }
 
     // Left on the default, which refreshEndpoints() already selected. Worth a line: attaching is
@@ -712,6 +805,9 @@ void MainWindow::updateStatus() {
 
     attachButton_->setText(status.attached ? QStringLiteral("Detach")
                                            : QStringLiteral("Attach"));
+    // Attach is only offered where attaching can work. Detach must always stay live, or an
+    // endpoint that somehow became unattachable while in use would trap the user in it.
+    attachButton_->setEnabled(status.attached || currentEndpointAttachable());
     endpointBox_->setEnabled(!status.attached);
     refreshButton_->setEnabled(!status.attached);
 

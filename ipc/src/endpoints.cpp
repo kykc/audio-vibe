@@ -76,6 +76,11 @@ bool describe(IMMDevice& device, RenderEndpoint& out) {
     out.guid = readStringProperty(*store.Get(), PKEY_AudioEndpoint_GUID);
     out.friendlyName = readStringProperty(*store.Get(), PKEY_Device_FriendlyName);
     readDeviceFormat(*store.Get(), out);
+    // Not from this property store, and it cannot be: the FX properties live in a subkey the
+    // MMDevice API does not surface. Asking it for them succeeds and returns an empty variant --
+    // measured, on an endpoint that demonstrably has the APO -- so a reader that trusted it would
+    // report "no APO" everywhere and never fail. The registry is the only path.
+    out.apo = readApoRegistration(out.guid);
     return !out.guid.empty();
 }
 

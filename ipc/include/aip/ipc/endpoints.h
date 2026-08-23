@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "aip/ipc/apo_registration.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -42,6 +44,15 @@ struct RenderEndpoint {
     /// only reason the sample rate is carried at all.
     std::uint32_t deviceChannelCount = 0;
     std::uint32_t deviceSampleRate = 0;
+
+    /// Whether this project's APO is registered on this endpoint, and what could be read
+    /// (apo_registration.h). Filled during enumeration because it is a registry read keyed on the
+    /// GUID two fields up -- no second pass, no COM, and nothing a caller has to remember to do.
+    ///
+    /// An endpoint without it is one the shell can attach to and hear nothing from: the
+    /// rendezvous has no other side, so blocks never arrive and the result is indistinguishable
+    /// from a device nobody is playing to. The shell greys those out.
+    ApoRegistration apo;
 };
 
 /// Active render endpoints. Requires an initialised COM apartment on the calling thread.

@@ -3,6 +3,7 @@
 # audio path, so it stays deliberately small and reviewable (sec. 7.4.6, item 4).
 
 add_library(aip_ipc STATIC
+    src/apo_registration.cpp
     src/buffer_valet.cpp
     src/endpoints.cpp
     src/manual_event.cpp
@@ -22,12 +23,14 @@ target_link_libraries(aip_ipc
     PRIVATE
         avrt       # AvSetMmThreadCharacteristics / AvSetMmThreadPriority (sec. 4.6)
         ole32      # MMDevice enumeration, PROPVARIANT
+        advapi32   # RegOpenKeyEx / RegEnumValue, for the per-endpoint APO registration
 )
 
 target_sources(aip_ipc PUBLIC
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
     FILES
+        include/aip/ipc/apo_registration.h
         include/aip/ipc/buffer_valet.h
         include/aip/ipc/endpoints.h
         include/aip/ipc/manual_event.h

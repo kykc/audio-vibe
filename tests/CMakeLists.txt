@@ -23,6 +23,7 @@ target_include_directories(aip_harness PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(aip_harness PUBLIC aip_common aip_ipc aip_protocol aip_rt)
 
 add_executable(aip_tests
+    apo_registration_test.cpp
     config_test.cpp
     conformance_test.cpp
     engine_test.cpp
