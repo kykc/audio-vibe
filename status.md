@@ -306,8 +306,10 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             engine_host (names the GUI thread as *the* control thread; the
             100 ms servicing tick), editor_manager (which editors are open, and the guarantee
             none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
-            plug_frame (IPlugFrame), window_chrome (title-bar icon removal, item 35)
-            aip_ui.rc + assets/ -- the application icon, attached to the executable
+            plug_frame (IPlugFrame), window_chrome (the application icon every window wears,
+            and the shell's blank caption -- item 35),
+            aip_ui.rc + assets/ -- the application icon, declared on the executable and nowhere
+            else
 scanner/    both halves of the out-of-process probe, in one directory because they share a wire
             format. scan_result.h (the SDK-free report the parent deals in), scan_record
             (the line format and its reader), probe_worker (the child half: loads, instantiates,
@@ -1377,26 +1379,48 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     section 4 was reached and screenshotted. It is `--vst3` and not `--plugin` for a reason worth
     knowing -- see section 8 item 15.
 
-35. **The application icon lives on the executable, and nowhere else.** `ui/aip_ui.rc` attaches
-    `ui/assets/mixing-table-png.ico` as resource id 1 (the shell shows the lowest-numbered icon
-    resource, so the id is not arbitrary), and no Qt window icon is ever set. Explorer, the taskbar
-    and Alt-Tab read the executable; the title bars are stripped in `window_chrome.cpp`.
+35. **The application icon is declared once and worn by every window but the editors.** Now
+    normative: design_doc.md sec. 5.6, asked for by the project owner on 2026-08-24.
+    `ui/aip_ui.rc` attaches `ui/assets/mixing-table-png.ico` as resource id 1 (the shell shows the
+    lowest-numbered icon resource, so the id is not arbitrary), `window_chrome.cpp` loads it back
+    out of the running executable, and `main` hands it to `QApplication::setWindowIcon`. Qt gives
+    its application icon to every top-level window that has not set one, so the shell, the picker,
+    the progress dialogs and every message box are covered by that one line -- and so is the next
+    window somebody adds.
 
-    Removing a title-bar icon on Windows 11 takes four steps, not one, and getting three of them
-    right leaves an icon or -- worse -- leaves the *slot*, so the caption sits indented past an
-    empty square. `WS_EX_DLGMODALFRAME` is the only frame style that omits the slot rather than
-    reserving it, but on its own it does nothing, because Windows falls through to the window class
-    icon (Qt registers its classes with one extracted from the executable) and then derives a small
-    icon from `ICON_BIG` if `ICON_SMALL` is empty. So all of it has to go: the style set, both class
-    icons cleared, both window icon slots cleared, and `SWP_FRAMECHANGED` to make the frame
-    recalculate. A transparent icon is *not* a substitute -- it hides the picture and keeps the
-    indent.
+    **The plugin editors are the one exemption**, asked for in the same breath as the rule and
+    written into sec. 5.6 rather than left as a quirk of the code: an editor is a panel belonging
+    to one plugin, it names that plugin in its caption, and several open at once would be a row of
+    identical icons identifying nothing. So they keep taking their icon back off, which is what
+    the machinery below is still here for -- and they lose their minimize and maximize buttons
+    too (item 85).
 
-    The cost is that the taskbar icon now arrives by fallback (window -> class -> executable) rather
-    than being set explicitly. Setting `ICON_BIG` to keep it explicit is exactly what puts the icon
-    back in the title bar.
+    Read back from the executable rather than embedded again in a `.qrc`: one picture, one
+    declaration. Each size in the group is requested separately, because `LoadImage` picks the
+    closest image for the size asked for -- ask once and scale, and the title bar gets a shrunken
+    256x256. The handles are not `LR_SHARED`, so each one is destroyed after `QImage::fromHICON`
+    has copied it.
 
-    **The shell's caption text is blank as well**, which is what modern Windows applications do
+    **This reverses the previous decision** for every window except those two, which was that the
+    icon lived on the executable *and nowhere else* and that title bars were stripped of theirs.
+    How the stripping works is therefore still live knowledge. Removing a title-bar icon on
+    Windows 11 takes four steps, not one, and getting three of them right leaves an icon or --
+    worse -- leaves the *slot*, so the caption sits indented past an empty square.
+    `WS_EX_DLGMODALFRAME` is the only frame style that omits the slot rather than reserving it,
+    but on its own it does nothing, because Windows falls through to the window class icon (Qt
+    registers its classes with one extracted from the executable) and then derives a small icon
+    from `ICON_BIG` if `ICON_SMALL` is empty. A transparent icon is *not* a substitute -- it hides
+    the picture and keeps the indent. One thing about the *order* is new: Qt now applies the
+    application icon as it creates the platform window, so `hideTitleBarIcon` has to run after
+    that -- which it does, because forcing the window into existence is its own first step.
+
+    Something else came out of the same call and did not belong to it: the editor windows created
+    their native window in the constructor as a side effect of stripping, and they need it there
+    whether or not they strip anything, because a window placed before it is first shown has no
+    frame to measure until it exists. That is `realizeFrame` in `window_placement.h` now, called
+    by both editors alongside `hideTitleBarIcon` and named for the reason it is done.
+
+    **The shell's caption text is blank**, which is what modern Windows applications do
     rather than repeating their own name back at the user. `setWindowTitle(QString())` does not
     achieve it on its own: Qt reads an empty widget title as "no preference" and substitutes
     `QCoreApplication::applicationName()` when it creates the native window, so the name appears
@@ -1802,9 +1826,9 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
     The hard half was where the arbitrary-looking placement came from, because Qt does centre a
     window on its transient parent and appeared to be doing so. It was centring the *wrong size*.
-    Both editor windows force their native window into existence in their constructors --
-    `hideTitleBarIcon` needs an HWND -- and at that point the widget is still 100 x 30, so what Qt
-    centred was a placeholder. The real size arrives afterwards and grows out of that top-left
+    Both editor windows force their native window into existence in their constructors
+    (`realizeFrame`, and see item 35 for what used to do it) -- and at that point the widget is
+    still 100 x 30, so what Qt centred was a placeholder. The real size arrives afterwards and grows out of that top-left
     corner. Measured: two editors of different sizes opened at the *same* top-left, 57 x 34 up and
     left of the shell's centre, which is exactly half a default-sized window.
 
@@ -1822,8 +1846,9 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     it, and the first straggler disarms the placement. What is tested instead is the invariant: is
     the window *still* centred, recomputed from scratch, clamping included. Nothing in that depends
     on what order anything arrived in. `placed_` exists for the same reason from the other side --
-    before the first placement the window is not centred on anything, and the move that
-    `hideTitleBarIcon` causes was disarming the feature before it had run once.
+    before the first placement the window is not centred on anything, and a move arriving before
+    it (a frame-style change did it then; an embedded editor being resized to the plugin's own
+    size does it now) was disarming the feature before it had run once.
 
 68. **A `ViewRect` is physical pixels, always, and the host does not send a content scale factor.**
     Reported by the project owner on 2026-08-22: on the 125% second monitor both editors opened in
@@ -2204,6 +2229,25 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
     The cost is that reordering is now mouse-only; the buttons were the keyboard path and nothing
     replaced them. Worth knowing before someone asks why.
+
+85. **An editor window has no minimize and no maximize button, and keeps its resizable border.**
+    Project owner, 2026-08-24, in the same request as the icon exemption (item 35,
+    design_doc.md sec. 5.6). Minimizing an editor on its own strands it where the shell cannot
+    show it again -- there is no window list in this application -- and maximizing a view the
+    plugin drew at a fixed size fills a screen with grey. Close and the system menu stay.
+
+    Spelled as `Qt::Window | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+    Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint` (`kEditorWindowFlags`), one hint at a
+    time and deliberately *not* through `Qt::MSWindowsFixedSizeDialogHint`, which would look like
+    the same thing and is not: on Windows the thick frame that makes a window resizable comes from
+    the frame style, not from the caption buttons, and a plugin whose view can resize expects to be
+    resized by dragging its edge. Verified rather than assumed --
+    `WM_GETTITLEBARINFOEX` on a live editor reports minimize and maximize hidden, close shown at
+    35x30, and the style word still carries `WS_THICKFRAME`.
+
+    Worth knowing for whoever checks this next: `PrintWindow` does **not** draw the lone close
+    button into its capture for this frame style, though it draws all three for the shell's. A
+    screenshot is not evidence here; the title-bar info is.
 
 ---
 

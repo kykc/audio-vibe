@@ -32,6 +32,7 @@
 // shell starts with an empty rack as though nothing had been asked for.
 
 #include "main_window.h"
+#include "window_chrome.h"
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -51,6 +52,12 @@ int main(int argc, char** argv) {
     {
         QApplication app(argc, argv);
         QApplication::setApplicationName(QStringLiteral("audio-ipc2"));
+        // Every window this process opens, in one line: Qt gives its own icon to any top-level
+        // window that has not set one, so the shell, the picker, the progress dialogs and every
+        // message box are all identified the same way (design_doc.md sec. 5.6). A window added
+        // later is covered by having been added. The plugin editors are the stated exemption and
+        // take their icon off again in their own constructors.
+        QApplication::setWindowIcon(aip::ui::applicationIcon());
 
         QCommandLineParser parser;
         parser.setApplicationDescription(

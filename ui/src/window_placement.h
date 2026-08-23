@@ -1,12 +1,10 @@
 // Where an editor window opens.
 //
 // Qt has a default for this and it cannot be used here. A top-level `QWidget` with a parent gets
-// its initial position when its *native* window is created -- and both editor windows create
-// theirs early and deliberately, in their constructors, because `hideTitleBarIcon` needs an HWND
-// to strip. At that moment the window is still the size of an empty widget, so what was positioned
-// was a placeholder, and the real size arrives afterwards by growing down and to the right out of
-// that corner. The placement looks arbitrary because it is: it is a function of a size that was
-// never on screen.
+// its initial position when its *native* window is created, and at that moment the window is
+// still the size of an empty widget -- so what was positioned was a placeholder, and the real
+// size arrives afterwards by growing down and to the right out of that corner. The placement
+// looks arbitrary because it is: it is a function of a size that was never on screen.
 //
 // So placement is done here instead, explicitly, once the size is known. Editor positions are
 // deliberately *not* remembered between runs: an editor belongs to its plugin's window, not to a
@@ -40,5 +38,11 @@ namespace aip::ui {
 /// Call it once the window has its final size, and before `show()` if it has not been shown yet --
 /// moving a window that is already visible is allowed and simply moves it.
 void centerOnOwner(QWidget& window);
+
+/// Forces `window`'s native window into existence, and with it the frame metrics the two
+/// functions above measure. Call it from the constructor of a window that will be placed before
+/// it is ever shown: until the platform window exists Qt has no frame to report, `frameGeometry`
+/// is the client rectangle, and centring is off by a title bar.
+void realizeFrame(QWidget& window);
 
 } // namespace aip::ui

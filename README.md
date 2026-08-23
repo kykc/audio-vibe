@@ -416,6 +416,11 @@ to reorder the chain**; there are no move buttons. Buttons act on the selected p
 `Load Preset`. The rack can be mutated while audio is flowing without disturbing the plugins you
 are not touching.
 
+An `Editor` opens the plugin's own editor, or a control per parameter for a plugin that has no
+editor to show. Editor windows are deliberately plainer than the shell: no title-bar icon, and no
+minimize or maximize button -- an editor belongs to its plugin, and its caption says which one.
+They stay resizable where the plugin's view is.
+
 `Bypass` takes the **whole chain** out of the signal path: the endpoint's audio is handed straight
 back, bit for bit, and nothing in the rack runs. It stays pressed until you release it, and while
 it is pressed the link line says `chain bypassed`. Nothing is unloaded and nothing is

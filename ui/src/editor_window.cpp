@@ -80,9 +80,14 @@ private:
 // -------------------------------------------------------------------------------- construction
 
 EditorWindow::EditorWindow(engine::PluginInstance& instance, QWidget* parent)
-    : PluginEditorWindow(parent, Qt::Window), instance_(&instance) {
+    : PluginEditorWindow(parent, kEditorWindowFlags), instance_(&instance) {
     setWindowTitle(QString::fromStdString(instance.name()));
     setAttribute(Qt::WA_DeleteOnClose);
+    // Here rather than at the first show: this window is placed before it is ever shown, and
+    // until the platform window exists there is no frame for `placeOnOwner` to measure.
+    realizeFrame(*this);
+    // And having just created the platform window, undo the icon Qt put on it. An editor is the
+    // one window kind that goes without one (design_doc.md sec. 5.6, window_chrome.h).
     hideTitleBarIcon(*this);
 }
 

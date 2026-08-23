@@ -20,6 +20,27 @@
 
 namespace aip::ui {
 
+/// The chrome both editor kinds wear, and deliberately not Qt's default for a window.
+///
+/// An editor is a panel that belongs to its plugin, not a document window of this application's.
+/// Minimizing one on its own leaves it somewhere the shell cannot show the user, and maximizing a
+/// view the plugin drew at a fixed size fills a screen with grey around it -- so neither button is
+/// there to be pressed. What is left is a caption, a close button and the system menu.
+///
+/// The resizable border stays, and that is why the flags are spelled out one at a time rather than
+/// reached through `Qt::MSWindowsFixedSizeDialogHint`: on Windows the thick frame comes from the
+/// frame style, not from the buttons, and a plugin whose view can resize expects to be resized by
+/// dragging its edge. A plugin whose view cannot is held at a fixed size by `setFixedSize`
+/// instead, which is Qt's own business and takes the border away by itself.
+///
+/// This is also the window kind that goes without a title-bar icon -- the one exemption from
+/// design_doc.md sec. 5.6. That part cannot be said in a window flag; see
+/// `hideTitleBarIcon` in window_chrome.h.
+inline constexpr Qt::WindowFlags kEditorWindowFlags = Qt::Window | Qt::CustomizeWindowHint |
+                                                      Qt::WindowTitleHint |
+                                                      Qt::WindowSystemMenuHint |
+                                                      Qt::WindowCloseButtonHint;
+
 class PluginEditorWindow : public QWidget {
     Q_OBJECT
 

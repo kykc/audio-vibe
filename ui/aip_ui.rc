@@ -1,9 +1,13 @@
 // Win32 resources for aip_ui.
 //
-// The icon is attached to the *executable*, not to any window. That is what Explorer, the taskbar
-// and Alt-Tab read, and it is deliberately the only place an icon is declared: the title bars are
-// stripped of theirs in window_chrome.cpp. Resource id 1 is not arbitrary -- the shell shows the
-// icon with the lowest id, so the application icon has to be the lowest one here.
+// The icon is attached to the *executable*. That is what Explorer, the taskbar and Alt-Tab read,
+// and it is deliberately the only place an icon is declared: `window_chrome.cpp` loads it back out
+// of the running executable and hands it to every window (design_doc.md sec. 5.6), so a second
+// copy in a Qt resource would be a second thing to keep in step.
+//
+// Resource id 1 is not arbitrary at either end -- the shell shows the icon with the lowest id, so
+// the application icon has to be the lowest one here, and `kApplicationIconId` in
+// `src/window_chrome.h` is the number that has to agree with it.
 //
 // The path is relative to this file. `target_include_directories` on the target is what puts this
 // directory on the resource compiler's search path; without it rc.exe resolves relative to the

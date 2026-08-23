@@ -123,9 +123,9 @@ private:
     bool autoPlace_ = true;
     /// Whether `placeOnOwner` has run yet, which is the only thing that makes the check above
     /// meaningful. Before it has, the window is wherever the platform put it and is not centred on
-    /// anything -- and it moves while it is being built, because `hideTitleBarIcon` changes the
-    /// frame style and the client area shifts under it. Without this, that move disarmed the
-    /// placement before it had happened once.
+    /// anything, and it can still move while it is being built -- an embedded editor is resized
+    /// to the plugin's own size after the native window exists. Without this, such a move
+    /// disarmed the placement before it had happened once.
     bool placed_ = false;
 };
 

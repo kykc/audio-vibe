@@ -9,8 +9,9 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Gui)
 # WIN32 so no console window appears behind the shell. Everything a console would have carried is
 # in the Counters group instead, which is the only place a user can see it anyway.
 add_executable(aip_ui WIN32
-    # The application icon, attached to the executable rather than to any window. Title bars are
-    # stripped of theirs in src/window_chrome.cpp.
+    # The application icon, declared here and nowhere else. Every window wears it
+    # (design_doc.md sec. 5.6); src/window_chrome.cpp reads it back out of the running
+    # executable so that there is no second copy of the picture to keep in step.
     aip_ui.rc
     src/main.cpp
     src/main_window.cpp

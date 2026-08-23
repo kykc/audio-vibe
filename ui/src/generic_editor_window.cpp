@@ -69,9 +69,12 @@ QString valueText(Vst::IEditController& controller, Vst::ParamID id, Vst::ParamV
 // -------------------------------------------------------------------------------- construction
 
 GenericEditorWindow::GenericEditorWindow(engine::PluginInstance& instance, QWidget* parent)
-    : PluginEditorWindow(parent, Qt::Window), instance_(&instance) {
+    : PluginEditorWindow(parent, kEditorWindowFlags), instance_(&instance) {
     setWindowTitle(QString::fromStdString(instance.name()) + QStringLiteral(" - parameters"));
     setAttribute(Qt::WA_DeleteOnClose);
+    // See EditorWindow's constructor: the frame has to exist before the window is placed, and an
+    // editor wears no title-bar icon (design_doc.md sec. 5.6, window_chrome.h).
+    realizeFrame(*this);
     hideTitleBarIcon(*this);
 }
 

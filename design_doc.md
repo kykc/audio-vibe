@@ -437,6 +437,58 @@ motivation sec. 1.1.2 -- and adds a .NET runtime deployment.
 can be used, or a narrow in-house wrapper written against the vendored 2.4 SDK in the
 predecessor repository. Not redistributable, so not shipped.
 
+### 5.6 One icon, on every window (normative)
+
+**Every window and dialog this application puts on screen shows the application icon.** The
+shell, the plugin picker, the progress dialogs, every message box, and anything added later. A
+window that shows the Windows default icon instead is a defect, not a detail: the user is looking
+at one application, and a title bar that says otherwise makes a dialog look like it came from
+somewhere else.
+
+The exception clause exists but has to be used out loud: a window departs from this only where
+the deviation is written down, here and in a comment at the window that does it. "It was easier"
+is not such a reason. There is exactly one exemption, and it is the next paragraph.
+
+**Exempt: the plugin editor windows** (`EditorWindow` and `GenericEditorWindow`). Project owner,
+2026-08-24. An editor is a panel belonging to one plugin rather than a window belonging to this
+application; it says which plugin it is in its caption, and with several open at once a row of
+identical application icons identifies nothing and reads as clutter. Their chrome is cut down to
+match:
+
+- **No title-bar icon, and no space reserved for one** -- the caption sits flush
+  (`hideTitleBarIcon`, `ui/src/window_chrome.h`).
+- **No minimize and no maximize button.** Minimizing an editor on its own strands it somewhere
+  the shell cannot show the user, and maximizing a view the plugin drew at a fixed size fills a
+  screen with grey around it. Close and the system menu remain
+  (`kEditorWindowFlags`, `ui/src/plugin_editor_window.h`).
+- **The resizable border stays**, because a plugin whose view can resize expects to be resized by
+  dragging its edge. On Windows the thick frame comes from the frame style rather than from the
+  caption buttons, so removing the buttons does not remove it; a view that cannot resize is held
+  by `setFixedSize`, which drops the border by itself.
+
+The taskbar and Alt-Tab are unaffected either way: an editor is owned by the shell and has no
+button of its own, and the shell's icon is the executable's.
+
+The mechanics that satisfy the rule, and the reasons they are the ones chosen:
+
+- The icon is declared **once**, as a Win32 icon resource on the executable (`ui/aip_ui.rc`,
+  resource id 1 -- Explorer shows the lowest-numbered icon, so the id is load-bearing). That is
+  also what Explorer, the taskbar and Alt-Tab read.
+- It is handed to Qt **once**, by `QApplication::setWindowIcon` in `main`, from an icon read back
+  out of the running executable (`ui/src/window_chrome.h`). Qt gives its application icon to
+  every top-level window that has not set one of its own, so no window has to remember to ask and
+  a window added later is covered by having been added.
+- Reading the resource back rather than embedding a second copy in a `.qrc` is deliberate: two
+  copies of one picture are two things to keep in step, and Windows has already loaded this one.
+- Each size in the icon group is requested separately, so a 16x16 title bar draws the 16x16
+  image rather than a shrunken 256x256.
+
+**Superseded:** an earlier build removed the title-bar icon from *every* window and left the
+executable's icon to Explorer and the taskbar alone. It took four Win32 steps to make stick, and
+those four steps are what the editor exemption above still uses; the reasoning is in status.md
+sec. 7 item 35. The caption *text* of the shell's own window stays blank -- that is a separate
+decision and is not affected by this one.
+
 ---
 
 ## 6. Toolchain and dependencies

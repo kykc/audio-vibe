@@ -111,18 +111,18 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     uptime_.start();
 
     // Deliberately blank. Repeating the application's own name back at the user in its own title
-    // bar is a habit modern Windows applications have dropped, and with the icon gone too the
-    // caption is left as nothing but its buttons.
+    // bar is a habit modern Windows applications have dropped, and the icon beside it says which
+    // application this is without spelling it out.
     //
     // Note what this also does: with a standard frame the caption text *is* the window title, so
     // the taskbar and Alt-Tab labels go blank with it. There is no way to separate the two without
-    // drawing the title bar ourselves. The application is identified by its icon instead, which is
-    // why `aip_ui.rc` exists. Plugin editors keep their titles -- with several open at once, the
-    // plugin's name is the only thing telling them apart.
+    // drawing the title bar ourselves -- the icon is what identifies the application there, and it
+    // is the same one this title bar shows (design_doc.md sec. 5.6). Plugin editors keep their
+    // titles -- with several open at once, the plugin's name is the only thing telling them apart.
     setWindowTitle(QString());
-    hideTitleBarIcon(*this);
-    // After the icon call, because that is what forces the native window into existence -- and
-    // Qt fills an empty title in with the application name at exactly that moment.
+    // Forces the native window into existence, and Qt fills an empty title in with the
+    // application name at exactly that moment -- so this has to happen after `setWindowTitle`,
+    // not before.
     clearTitleText(*this);
 
     auto* central = new QWidget(this);

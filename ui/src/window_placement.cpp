@@ -18,10 +18,8 @@ std::optional<QPoint> centeredOnOwner(const QWidget& window) {
     }
 
     // `frameGeometry` on both sides rather than `geometry`. What the user sees centred is the
-    // window including its title bar, and these two windows do not have the same one -- an editor
-    // has had its icon slot taken out (`window_chrome.h`), which changes the frame it is drawn in.
-    // `move` on a top-level places the frame's top-left corner, so frame in and frame out agree
-    // and no strut has to be reasoned about here.
+    // window including its title bar, and `move` on a top-level places the frame's top-left
+    // corner -- so frame in and frame out agree and no strut has to be reasoned about here.
     const QRect ownerFrame = owner->frameGeometry();
     QRect placed(QPoint(0, 0), window.frameGeometry().size());
     if (ownerFrame.isEmpty() || placed.isEmpty()) {
@@ -59,6 +57,12 @@ void centerOnOwner(QWidget& window) {
     if (const std::optional<QPoint> at = centeredOnOwner(window)) {
         window.move(*at);
     }
+}
+
+void realizeFrame(QWidget& window) {
+    // The whole of it. `winId` creates the platform window as a side effect, which is the only
+    // way to ask Qt for one, and the frame metrics follow from it.
+    (void)window.winId();
 }
 
 } // namespace aip::ui
