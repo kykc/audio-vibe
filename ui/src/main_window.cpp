@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QEventLoop>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -42,6 +43,29 @@ const char* linkStateName(ipc::LinkState state) {
         return "relinquished";
     }
     return "?";
+}
+
+/// One turn of the message loop, in the middle of startup work that has not reached `exec()` yet.
+///
+/// `applyStartupOptions` runs after `show()`, so the window is on screen for the whole of it, and
+/// loading a plugin module is the one step here that can take seconds -- a bundle that is not in
+/// the file cache is disk-bound, and they run to tens of megabytes. A visible top-level
+/// window whose thread has not answered a message for five seconds is replaced by the ghost
+/// Windows paints itself: right size, right position, no contents. That is what "the window is
+/// created at its saved size but never draws" was, and it is why two plugins showed it where one
+/// did not -- one cold module load stayed under the five seconds, two did not.
+///
+/// Pumping once per plugin keeps the real window on screen and makes each log line arrive as its
+/// plugin loads rather than all of them at the end. It cannot help *within* one slow load --
+/// hosting is single-threaded here by design (sec. 7.2) -- so what is bounded is the list, not a
+/// module. `PluginCatalog::run` pumps by hand for the same reason and says more about why keeping
+/// the timers alive is wanted rather than merely tolerated.
+///
+/// User input stays excluded deliberately. Paints, timers and native session messages are all
+/// wanted here; a click on Add or Remove is not, because the rack is half-built and the sequence
+/// building it has no way of being told that it changed underneath.
+void pumpOnce() {
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
 const char* exitReasonName(ipc::ValetExitReason reason) {
@@ -155,6 +179,9 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
         reportUncleanAttach();
     }
 
+    // Before the first load: this is where the window `show()` put on screen actually paints.
+    pumpOnce();
+
     if (scan) {
         // What the first Add would have done, without needing anyone to click Add. The catalog is
         // the one part of the session whose cost is visible -- minutes on a machine with plugins
@@ -171,6 +198,10 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
             continue;
         }
         log(QStringLiteral("loaded %1").arg(path));
+        // Per plugin rather than once at the end: a rack that fills in as it is built is the only
+        // sign a slow start gives that it is progressing rather than stuck.
+        rack_->refresh();
+        pumpOnce();
     }
     rack_->refresh();
 
@@ -178,6 +209,7 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
         for (std::size_t i = 0; i < host_.engine().pluginCount(); ++i) {
             if (engine::PluginInstance* plugin = host_.engine().pluginAt(i)) {
                 editors_.open(*plugin, this);
+                pumpOnce();
             }
         }
     }
@@ -189,6 +221,9 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
         if (sessionWantsAttach_ && !attach) {
             log(QStringLiteral("reattaching: this session was attached when it closed"));
         }
+        // The rack is complete and on screen before the endpoint is touched, so a chain build that
+        // takes its time is watched from a window that shows what it is building.
+        pumpOnce();
         toggleAttach();
     }
     updateStatus();

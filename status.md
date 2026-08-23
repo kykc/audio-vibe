@@ -1,7 +1,14 @@
 # Project status
 
-**Updated:** 2026-08-22. NeuralAmpModeler restores from a session -- the case where the state is
-a *path* rather than a value -- and the negative control settled what the shell can see when that
+**Updated:** 2026-08-23. The two-plugin startup hang is understood and closed, and nothing was
+deadlocked: the startup work runs between `show()` and `exec()`, so there was a visible window
+with no message pump behind it, and Windows replaced it with the ghost it draws itself at the
+five-second mark (sec. 7 item 73). Measured both ways -- planted delay, pump off, `IsHungAppWindow`
+true at 5.2 s; pump on, never true -- and the fix is one pump per plugin. The warm-up, which was
+the standing suspicion, is not involved: it runs only where a chain already exists, which a
+detached start never reaches. Before that, 2026-08-22: NeuralAmpModeler restores from a session --
+the case where the state is a *path* rather than a value -- and the negative control settled what
+the shell can see when that
 path stops resolving: nothing at all (item 66). Before that the same day, closing the last boot
 loop: a shell that stops existing while it
 is attached comes back detached and says why, rather than reattaching into whatever killed it
@@ -57,13 +64,13 @@ deferred and blocks nothing.
 finished and verified against the real deployed APO -- the scanner against this machine's whole
 plugin population instead. A real VST3 plugin chain runs inside the `audiodg.exe` block loop,
 driven from a window, with the plugins' own editors on screen, and it all comes back after a
-restart. What is missing is that only the fixture plugin's state has been round-tripped -- no
-third-party plugin has been through a save and reload yet.
+restart, third-party plugin state included -- ZL Equalizer 2's own settings and
+NeuralAmpModeler's model path have both been through a save and a reload (item 66).
 
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 76, ~7 s, and NOTHING skipped
+pixi run test          # expect: 100% tests passed out of 103, ~8 s, and NOTHING skipped
 ```
 
 **Read the skip count, not just the pass line.** `pixi run test` (RelWithDebInfo) must skip
@@ -74,7 +81,8 @@ sec. 7.4.6 violation detector, which is compiled out of Release by design:
 pixi run -- cmake --build --preset release && pixi run -- ctest --preset release
 ```
 
-Both configurations build and both suites pass as of 2026-08-22. See section 8 items 17, 19 and 20
+The RelWithDebInfo suite is green as of 2026-08-23 (103 of 103, nothing skipped); the release
+configuration was last built and run on 2026-08-22. See section 8 items 17, 19 and 20
 for why that sentence is worth a check rather than an assumption -- twice now, this suite has
 reported green while the most important test in it did not run.
 
@@ -563,6 +571,15 @@ Proven against the real deployed APO on the development machine:
   That is `suppressCrashDialogs` doing its job: without `_set_abort_behavior`, `abort` puts up a
   modal box and the crash becomes a 60-second timeout instead.
 
+- **The startup hang was the window, not the work.** Measured on 2026-08-23, both ways, with a
+  four-second delay planted in the load loop so the cost did not depend on what the disk cache
+  happened to hold: with the pump switched off the window is visible at 1.1 s,
+  `IsHungAppWindow` turns true at 5.2 s, and it clears at 8.2 s as the second plugin lands; with
+  the pump on and the same delay it never turns at all. The shape was caught in the wild first,
+  on a cold start of `f54f547` -- whose startup path is byte-identical to today's -- visible at
+  1.7 s, ghosted at 5.8 s, drawn at 6.2 s. Warm starts on either build are 150-400 ms with both
+  plugins loaded, which is why the defect read as intermittent and as "two plugins, never one".
+
 **Not** proven -- do not assume any of these:
 
 - **Audio quality.** A single EQ move sounded right at first glance (see above), which establishes
@@ -827,27 +844,27 @@ Worth doing at some point, none of it blocking:
 - sec. 9.6 -- replace the SDK's CMake with an in-house static library. Much less urgent now that
   `cmake/vst3sdk.cmake` gets the build down to five SDK libraries.
 
-Defects seen and not yet investigated. Both were met on 2026-08-23 while driving the shell from
-the command line to check the rack's new bypass check boxes, and both were then reproduced on a
-build of `f54f547` with that change stashed -- so neither is the check box work, and neither has
-been looked into any further than that:
+Defects met on 2026-08-23 while driving the shell from the command line to check the rack's new
+bypass check boxes. Neither is the check box work -- both were reproduced on a build of `f54f547`
+with that change stashed:
 
+- **Two plugins at startup hang the shell before it paints.** *Closed the same day.* It was the
+  ghost window and not a deadlock: sec. 7 item 73 for the mechanism, section 4 for the
+  measurement, `MainWindow::pumpOnce` for the fix. The machine has since been cut back to exactly
+  two bundles -- ZL Equalizer 2 and Pult EQ -- and on that population the fixed build comes up in
+  150-400 ms with both plugins loaded, through two `--vst3`, through a session restore of both,
+  with `--attach`, and with `--editors`; fifteen consecutive cold starts, no failures. What was
+  *not* the cause: the warm-up (item 62), which `insertPluginImpl` runs only behind
+  `builtFormat_.valid()`, so a detached start never reaches it -- the rack reads `[not prepared]`
+  for the whole of one.
 - **`--vst3 "C:/Program Files/Common Files/VST3/Mixer Test.vst3"` kills the shell during startup.**
-  The process dies before the main window is shown -- bash reports a segmentation fault, stdout and
-  stderr are empty, and the `--config` file is never written, so there is nothing to read
-  afterwards. It is that bundle and not the option: ZL Equalizer 2, Virtuoso, NeuralAmpModeler and
-  `mixer_playground` each load through `--vst3` on this machine without trouble. The plugin is
-  loaded in-process here, which is exactly the case `scanner/` exists to keep out of the shell
-  (sec. 7.4.5), so the first question is whether `aip_scan` survives the same bundle.
-- **Two plugins at startup hang the shell before it paints.** Either two `--vst3`, or a session
-  with one plugin restored plus one `--vst3`. The window is created at its saved size but never
-  draws: Windows replaces it with the white ghost it uses for a window that is not pumping
-  messages, and it was still that way after 45 s. One plugin is fine by either route -- `--vst3`
-  alone and a one-plugin session restore both come up and draw normally, which is how the check
-  boxes were checked in both states. Nothing has been measured; a stack from the hung process is
-  the first thing to get, and the thing to rule out first is the warm-up (item 62), which runs
-  four blocks per plugin synchronously inside `insertPluginImpl` -- on this path, before the
-  window has ever painted.
+  Still open, and no longer checkable here: that bundle is not installed on this machine any more.
+  The process died before the main window was shown -- bash reported a segmentation fault, stdout
+  and stderr were empty, and the `--config` file was never written, so there was nothing to read
+  afterwards. Of the two bundles now installed, `Pult EQ` loads and prepares in-process through
+  `valet_probe --inspect` without trouble, and through the shell as well. If that bundle comes
+  back, the first question is unchanged: whether `aip_scan` survives it, since the shell loads it
+  in-process and that is exactly the case `scanner/` exists to keep out (sec. 7.4.5).
 
 ---
 
@@ -1684,6 +1701,31 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     entries are the ones a session was told not to load; they belong to the chain the preset
     replaced, and carrying them into the save would put a plugin back into a rack that never had
     it. Dropped out loud, because one of them is a plugin somebody was meant to come back to.
+
+73. **Startup work pumps the message loop between plugins, and the ghost window is the reason.**
+    `applyStartupOptions` runs after `window.show()`, so from that moment there is a visible
+    top-level window whose thread is inside the load loop instead of in `exec()`. Windows replaces
+    a visible window that has not answered a message for five seconds with a ghost it paints
+    itself -- right size, right position, no contents, `(Not Responding)` added to the caption --
+    and that ghost was the entire "two plugins hang the shell before it paints" report. Nothing
+    was deadlocked and nothing needed a stack in the end: a module load that is not in the file
+    cache is disk-bound, one of them stayed under the five seconds and two did not.
+
+    `MainWindow::pumpOnce` is one `QApplication::processEvents` per plugin, plus one before the
+    first load and one before an attach. `ExcludeUserInputEvents`, deliberately: paints, timers
+    and the native session messages are all wanted here, and a click on Add or Remove is not --
+    the rack is half-built and the sequence building it has no way of being told that it changed
+    underneath. The rack refreshes per plugin for the same reason the pump exists at all: a rack
+    filling in is the only sign a slow start gives that it is progressing rather than stuck.
+
+    What this does not do is rescue a single slow step. Hosting is single-threaded here by design
+    (sec. 7.2), so one module that takes six seconds still ghosts the window for the last second
+    of it; what is bounded now is the *list*, not a module. Two things it is worth knowing are
+    already true: `PluginCatalog::run` has always pumped by hand, for the same reason and with a
+    modal dialog over it, and the session restore does not need any of this -- `loadSession` runs
+    from the constructor, before `show()`, so there is no visible window to ghost. A slow restore
+    shows nothing at all rather than showing a lie, which is the better of the two failures and is
+    why it was left alone.
 
 ---
 
