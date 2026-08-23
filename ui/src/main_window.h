@@ -33,6 +33,7 @@
 #include "aip/config/session.h"
 #include "aip/ipc/endpoints.h"
 
+#include <QElapsedTimer>
 #include <QMainWindow>
 #include <QStringList>
 
@@ -170,6 +171,12 @@ private:
     RackPanel* rack_ = nullptr;
     QLabel* countersLabel_ = nullptr;
     QPlainTextEdit* logView_ = nullptr;
+
+    /// How long this run has been going, for the counters. Started in the constructor rather than
+    /// read from the process creation time: the difference is the few milliseconds Qt spends
+    /// starting up, which nothing here is measuring, and this way the figure cannot outlive a
+    /// window that was opened later than the process.
+    QElapsedTimer uptime_;
 };
 
 } // namespace aip::ui

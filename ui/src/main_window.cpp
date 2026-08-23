@@ -1,5 +1,6 @@
 #include "main_window.h"
 
+#include "process_footprint.h"
 #include "qt_paths.h"
 #include "window_chrome.h"
 
@@ -26,6 +27,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
 #include <utility>
 
@@ -68,6 +70,23 @@ void pumpOnce() {
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
+/// Bytes as a number a person reads at a glance. MiB throughout and never scaled up to GiB: the
+/// shell sits in the low hundreds, and staying in one unit is what makes two readings an hour
+/// apart comparable without arithmetic -- which is the whole point of putting them on screen.
+QString formatMebibytes(std::size_t bytes) {
+    return QStringLiteral("%1 MiB").arg(static_cast<double>(bytes) / (1024.0 * 1024.0), 0, 'f', 1);
+}
+
+/// Elapsed milliseconds as `h:mm:ss`. Hours are neither padded nor dropped: a soak is quoted in
+/// hours, and `0:04:12` says at a glance that this run is not one yet.
+QString formatUptime(qint64 elapsedMs) {
+    const qint64 seconds = elapsedMs / 1000;
+    return QStringLiteral("%1:%2:%3")
+        .arg(seconds / 3600)
+        .arg((seconds / 60) % 60, 2, 10, QLatin1Char('0'))
+        .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+}
+
 const char* exitReasonName(ipc::ValetExitReason reason) {
     switch (reason) {
     case ipc::ValetExitReason::None:
@@ -86,6 +105,10 @@ const char* exitReasonName(ipc::ValetExitReason reason) {
 
 MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     : QMainWindow(parent), host_(this), editors_(this), sessionPath_(toPath(configPath)) {
+    // First statement in the body, so that everything a start costs -- the session, the plugin
+    // modules, the editors -- is inside the figure the counters show.
+    uptime_.start();
+
     // Deliberately blank. Repeating the application's own name back at the user in its own title
     // bar is a habit modern Windows applications have dropped, and with the icon gone too the
     // caption is left as nothing but its buttons.
@@ -728,13 +751,28 @@ void MainWindow::updateStatus() {
     if constexpr (rt::checksEnabled()) {
         // The sec. 7.4.3 acceptance criterion, live. Anything but zero here is a defect, and it is
         // worth having on screen rather than only in a test.
-        text += QStringLiteral("audio thread: allocations %1   frees %2   locks %3")
+        text += QStringLiteral("audio thread: allocations %1   frees %2   locks %3\n")
                     .arg(status.violations.allocations)
                     .arg(status.violations.deallocations)
                     .arg(status.violations.locks);
     } else {
-        text += QStringLiteral("audio thread: violation detector compiled out (Release)");
+        text += QStringLiteral("audio thread: violation detector compiled out (Release)\n");
     }
+
+    // The other half of that criterion, and the reason it sits directly under it: "no allocations
+    // on the audio thread" and "nothing is leaking anywhere" are different claims, and the line
+    // above only makes the first (process_footprint.h). Uptime belongs beside them because a
+    // resident set is not evidence of anything without knowing how long it took to get there --
+    // 180 MiB after four minutes and 180 MiB after nine hours are opposite findings.
+    //
+    // Read every tick rather than sampled: it is one kernel call at 10 Hz, and a figure that
+    // lagged the log lines beside it would be read against the wrong event.
+    const ProcessFootprint footprint = processFootprint();
+    text += QStringLiteral("process: resident %1   peak %2   up %3")
+                .arg(formatMebibytes(footprint.residentBytes),
+                     formatMebibytes(footprint.peakResidentBytes),
+                     formatUptime(uptime_.elapsed()));
+
     countersLabel_->setText(text);
 }
 

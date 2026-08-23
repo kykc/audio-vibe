@@ -34,6 +34,8 @@ add_executable(aip_ui WIN32
     src/plugin_editor_window.h
     src/plug_frame.cpp
     src/plug_frame.h
+    src/process_footprint.cpp
+    src/process_footprint.h
     src/window_chrome.cpp
     src/window_chrome.h
     src/window_placement.cpp
@@ -58,6 +60,8 @@ target_link_libraries(aip_ui PRIVATE
     aip_rt_hooks
     Qt6::Widgets
     Qt6::Gui
+    # GetProcessMemoryInfo, for the resident-set half of the sec. 7.4.3 criterion on screen.
+    psapi
 )
 
 # aip_ui starts aip_scan; nothing links it, so nothing would otherwise build it first.

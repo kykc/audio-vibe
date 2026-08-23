@@ -1,12 +1,23 @@
 # Project status
 
-**Updated:** 2026-08-23. `restartComponent` is acted on: a plugin asking to be reconfigured gets
+**Updated:** 2026-08-23. The shell now shows the *other* half of the sec. 7.4.3 acceptance
+criterion: resident set, peak resident set and uptime, on one line under the audio-thread violation
+counters (sec. 7 item 75). Until now a soak could only prove that the audio thread allocates
+nothing, which the detector cannot extend to the control plane by construction -- so the claim
+"nothing is leaking anywhere" had no number behind it. It has one now, and it moves: 36.0 MiB with
+an empty rack, 90.6 MiB with two plugins and both editors open, matching an independent
+`WorkingSet64` reading taken from outside the process.
+
+Earlier the same day, `restartComponent` is acted on: a plugin asking to be reconfigured gets
 the rack re-prepared at the format it was already running, and its latency read on the way out of
 that -- which is the only moment the SDK says the figure is valid, and the reason those two items
 turned out to be one job (sec. 7 item 74). Seven tests, including the plugin that announces its
-latency from inside its own reactivation and would make a naive host rebuild forever. A real
-plugin's figure is on screen: Pult EQ reports `1 sample late` on its rack row, attached, with audio
-flowing. Earlier the same day, the two-plugin startup hang is understood and closed, and nothing was
+latency from inside its own reactivation and would make a naive host rebuild forever. Then driven
+for real: the project owner flipped Pult EQ's oversampling switch in its own editor with audio
+flowing, and the rack went from `1 sample late` to `39 samples late` for the price of one
+passed-through block.
+
+Also on 2026-08-23, the two-plugin startup hang is understood and closed, and nothing was
 deadlocked: the startup work runs between `show()` and `exec()`, so there was a visible window
 with no message pump behind it, and Windows replaced it with the ghost it draws itself at the
 five-second mark (sec. 7 item 73). Measured both ways -- planted delay, pump off, `IsHungAppWindow`
@@ -451,11 +462,29 @@ Proven against the real deployed APO on the development machine:
 - **A real third-party plugin runs in that loop.** ZL Equalizer 2 processed 2,991 of 3,003 blocks
   over 30 s with zero timeouts, zero malformed headers, zero format misses and zero dropped
   parameter edits.
+- **A real plugin asked to be restarted, and it was.** 2026-08-23, driven by the project owner:
+  Pult EQ's oversampling switch flipped from Off, in the plugin's own editor, while the shell was
+  attached and passing 101 blocks/s through a two-plugin rack. The shell logged `a plugin asked to
+  be restarted: rack re-prepared at the same format` and `warm-up: 8 block(s) through 2 plugin(s)`,
+  and the rack row went from `1 sample late` to `39 samples late` -- the oversampling filter's
+  delay, read where the SDK says it becomes readable. The whole reconfiguration cost **one** block
+  passed through unprocessed, and zero dropped edits, zero malformed headers and zero format
+  misses. That last number is the one worth keeping: honouring the flag is audible, and this is how
+  audible.
 - **The shell does all of it, from a window.** `aip_ui` enumerated 8 render endpoints, attached to
   the default one, built a chain for 48000 Hz x2 ch on first observation, and ran ~94 blocks/s
   through a two-plugin rack (ZL Equalizer 2 -> NeuralAmpModeler) with zero timeouts, zero malformed
   headers, zero format misses, zero dropped edits, zero stranded plugins and zero audio-thread
   allocations, frees or locks. Both plugins' editors were open the whole time.
+- **The shell reports its own memory, and the figure is right.** 2026-08-23: an empty rack read
+  `resident 36.0 MiB   peak 36.0 MiB   up 0:00:14`; the same build with ZL Equalizer 2 and Pult EQ
+  loaded and both editors open read `resident 90.6 MiB   peak 93.8 MiB   up 0:00:25`. Checked
+  against `WorkingSet64`/`PeakWorkingSet64` read from a separate process at the same moment --
+  94,912,512 and 98,340,864 bytes, which is 90.5 and 93.8 MiB. So the number moves with what the
+  shell is holding, it agrees with what the OS tells anyone else, and the peak sitting above the
+  current figure is the case it exists for. What is *not* proven is the thing it was built for: no
+  long soak has been run against it yet, so "nothing is leaking anywhere" now has an instrument and
+  still has no measurement.
 - **Two real plugin editors are hosted at once, and both fill their windows -- on both monitors.**
   On the 100% primary, ZL Equalizer 2 at 1178 x 759 and NeuralAmpModeler at 600 x 400; on the 125%
   second monitor, 1472 x 949 and 750 x 500, each inside a window client area of the same size to
@@ -823,16 +852,14 @@ reading `getLatencySamples` -- were done together on 2026-08-23, because the SDK
 job: the latency figure is only valid after a reactivation, so honouring the flag *is* how the
 number gets read. See item 74 and section 4. What is left is smaller and none of it is missed yet:
 
-1. A real plugin has not been seen to raise `kLatencyChanged`. The mechanism is covered by the
-   suite through the fixture, and Pult EQ's oversampling switch is the obvious specimen on this
-   machine -- it reports 1 sample at its default, which the rack row already shows -- but nobody
-   has flipped it and watched the log say so.
-2. `kReloadComponent` is honoured as a re-prepare rather than as a true unload and reload. Nothing
+1. `kReloadComponent` is honoured as a re-prepare rather than as a true unload and reload. Nothing
    has asked for one; the day something does, the instance surviving is the assumption to question.
-3. Nothing throttles reconfigurations across ticks. One per servicing tick is the bound, and the
+2. Nothing throttles reconfigurations across ticks. One per servicing tick is the bound, and the
    requests a rebuild provokes are dropped (item 74), which is enough for every plugin met so far
    -- but a plugin that raises a fresh request on every tick would rebuild on every tick, and the
    only sign would be the audio.
+3. `kIoChanged` has never arrived. A rebuild re-negotiates every bus, so the response is believed
+   to be right by construction; no plugin here changes its bus count.
 
 Scanner work still outstanding:
 
@@ -862,12 +889,11 @@ Scanner work still outstanding:
 
 UI work still outstanding, none of it blocking:
 
-- **Resident set on screen, next to the allocation counters.** It is the other half of the
-  sec. 7.4.3 acceptance criterion and the shell currently shows only one half, which makes a long
-  soak weaker evidence than it needs to be. `GetProcessMemoryInfo` and `psapi`, which `tests/`
-  already links. Cheap, and it is the difference between "no allocations on the audio thread" and
-  "nothing is leaking anywhere".
-- Uptime and peak-since-reset alongside the counters, so a soak run documents itself.
+- ~~Resident set on screen, next to the allocation counters.~~ ~~Uptime and peak-since-reset
+  alongside them, so a soak run documents itself.~~ **Both done on 2026-08-23**, as one line --
+  `process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25` -- directly under the audio-thread
+  counters, which is where the two halves of the criterion are read together. See sec. 7 item 75
+  and section 4. What is left of the item is that nobody has yet run the soak it exists for.
 - A rack that shows more than a line of text per plugin: vendor, category, and the parameter count
   are all already available from `PluginModule`/`PluginInstance`.
 - Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it. A preset file
@@ -1819,6 +1845,37 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     What this is not: throttling. One rebuild per servicing tick is the only bound, which is enough
     for a plugin that asks once and for one that asks from inside its own reactivation, and not
     enough for a plugin that asks again on every tick. Nothing here has ever done that.
+
+75. **The resident set is on screen, and it is a different claim from the one above it.** The
+    violation counters say the audio thread allocates nothing. They cannot say anything about the
+    control plane, and not for want of trying: the detector is a per-image `operator new`
+    replacement scoped to real-time sections (sec. 7.4.3), so an editor that never gives its window
+    back, or a scan report that accumulates, is invisible to it and would leave those counters
+    reading zero for as long as the leak lasted. Two different claims deserve two lines, and the
+    second one had none. `ui/src/process_footprint.cpp` is the whole of it -- one
+    `GetProcessMemoryInfo` behind a header that keeps `<windows.h>` out of `main_window.cpp`, the
+    same shape as `window_chrome`.
+
+    Three decisions in it, none large and all easier to get wrong than to get right:
+
+    *The peak is the kernel's, since process start, and there is nothing to reset it with.* This is
+    deliberate rather than a shortcut. `PeakWorkingSetSize` survives the trimming that memory
+    pressure does to the current figure, so a leak that has already been paged out still shows --
+    which is exactly the case a soak is looking for and the one the current figure alone would
+    quietly forget. A resettable peak would be a peak someone had reset, and the question a soak
+    asks is about the whole run.
+
+    *Uptime sits beside them because a resident set is not evidence without it.* 180 MiB after four
+    minutes and 180 MiB after nine hours are opposite findings, and a screenshot of the counters
+    that omits the second number cannot be told apart from one that omits the first.
+
+    *MiB throughout, never scaled up.* The shell lives in the low hundreds, and a line that
+    switched to GiB partway through a soak would make two readings an hour apart incomparable at a
+    glance -- which is the only way anyone actually reads them.
+
+    Read every servicing tick, at 10 Hz, rather than sampled slower: it is one kernel call and no
+    allocation, and a figure that lagged the log lines beside it would be read against the wrong
+    event.
 
 ---
 
