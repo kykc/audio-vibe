@@ -182,12 +182,22 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     // process that is about to be taken away has no later.
     sessionEnd_ = new SessionEndFilter(this);
     connect(sessionEnd_, &SessionEndFilter::sessionEnding, this, [this] {
+        // The mark first, because it is the cheap half and the one whose absence causes the false
+        // positive this whole mechanism exists to avoid. If saving were somehow to take the
+        // process down with it, a mark already cleared is the better wreckage to leave behind:
+        // announcing a crash after an ordinary reboot is the failure nobody believes twice.
         if (attachGuard_) {
             attachGuard_->clear();
         }
+        saveSessionOnce();
     });
-    // The shutdown was called off and the shell is still attached, so the mark goes back.
-    connect(sessionEnd_, &SessionEndFilter::sessionEndCancelled, this, &MainWindow::syncAttachMark);
+    // The shutdown was called off. The shell is still attached, so the mark goes back -- and the
+    // save arms again, because a shutdown that is attempted, cancelled and attempted an hour later
+    // should write what the rack looks like then rather than what it looked like the first time.
+    connect(sessionEnd_, &SessionEndFilter::sessionEndCancelled, this, [this] {
+        syncAttachMark();
+        sessionEndSaved_ = false;
+    });
 
     connect(&editors_, &EditorManager::message, this, &MainWindow::log);
     connect(&editors_, &EditorManager::openCountChanged, this, [this] { rack_->refresh(); });
@@ -508,6 +518,14 @@ std::size_t MainWindow::blockDangerousEntries(config::Session& session) {
         log(QStringLiteral("session: %1").arg(QString::fromStdString(note)));
     }
     return blocked;
+}
+
+void MainWindow::saveSessionOnce() {
+    if (sessionEndSaved_) {
+        return;
+    }
+    sessionEndSaved_ = true;
+    saveSession();
 }
 
 void MainWindow::saveSession() {

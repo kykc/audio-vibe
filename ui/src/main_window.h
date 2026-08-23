@@ -95,6 +95,14 @@ private:
     void loadSession();
     void saveSession();
 
+    /// `saveSession`, but at most once per shutdown sequence. What needs guarding is not a
+    /// hypothetical: Windows sends `WM_QUERYENDSESSION` to *every* top-level window in the
+    /// process, and the shell with two editors open has three -- so the unguarded handler would
+    /// capture the rack, ask every plugin for its state and write the file three times over,
+    /// inside the one budget where that cost is not free. `WM_ENDSESSION` arriving afterwards
+    /// would make it four. Re-armed if the shutdown is called off.
+    void saveSessionOnce();
+
     /// Writes down that the shell is attached, or that it is not, so that the next start can tell
     /// a run that ended from a run that stopped existing. Called wherever the attached state can
     /// have changed rather than only where it is changed on purpose -- the link can also end
@@ -161,6 +169,8 @@ private:
     /// the run: the file is the only copy of whatever the user had in it, and overwriting it with
     /// the empty rack its failure to parse left behind would destroy exactly what they want back.
     bool sessionSaveBlocked_ = false;
+    /// Whether this shutdown sequence has already written the session. See `saveSessionOnce`.
+    bool sessionEndSaved_ = false;
 
     std::vector<ipc::RenderEndpoint> endpoints_;
 

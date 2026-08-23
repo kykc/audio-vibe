@@ -15,6 +15,17 @@
 // `wParam` false the shutdown was called off and the shell is still attached and still worth
 // protecting, so the mark comes back.
 //
+// Two things hang off this, and the second one arrived later: the session file is written from
+// here as well. A restart with the shell left open is the one ordinary end that never reaches
+// `closeEvent`, so without it a reboot silently discarded every rack change since the last manual
+// close. `WM_QUERYENDSESSION` is the right moment for that too, and for the same reason -- it is
+// the last point at which the process is certain to still be alive and fully itself.
+//
+// Note what that costs, because it is not obvious: this message goes to every top-level window,
+// so a shell with editors open sees it several times over. The mark does not care -- clearing it
+// twice is clearing it -- but writing the session does, and `MainWindow::saveSessionOnce` is
+// where that is dealt with.
+//
 // A native event filter rather than Qt's `QSessionManager`: this needs to run whether or not Qt's
 // session management is configured in, it needs to run *before* Qt decides what to do with the
 // message, and there is nothing here that wants the rest of what a session manager offers.

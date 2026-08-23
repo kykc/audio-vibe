@@ -1,14 +1,23 @@
 # Project status
 
-**Updated:** 2026-08-23. The shell now shows the *other* half of the sec. 7.4.3 acceptance
+**Updated:** 2026-08-23. A Windows restart with the shell left open no longer throws away the
+session. It is written from `WM_QUERYENDSESSION`, alongside the attach mark that was already being
+cleared there (sec. 7 item 76). The budget the item had been parked on turned out not to exist --
+the *entire* close path, both plugins' state included, is 163 ms against a deadline in seconds --
+and what needed care instead was something the item had not noticed: that message arrives once per
+top-level window, and a shell with two editors open has three. Driven end to end, including the
+guard holding and then re-arming after a cancelled shutdown, and the file it leaves restores
+`2 of 2 plugin(s)`.
+
+Earlier the same day, the shell was given the *other* half of the sec. 7.4.3 acceptance
 criterion: resident set, peak resident set and uptime, on one line under the audio-thread violation
-counters (sec. 7 item 75). Until now a soak could only prove that the audio thread allocates
+counters (sec. 7 item 75). Until then a soak could only prove that the audio thread allocates
 nothing, which the detector cannot extend to the control plane by construction -- so the claim
 "nothing is leaking anywhere" had no number behind it. It has one now, and it moves: 36.0 MiB with
 an empty rack, 90.6 MiB with two plugins and both editors open, matching an independent
 `WorkingSet64` reading taken from outside the process.
 
-Earlier the same day, `restartComponent` is acted on: a plugin asking to be reconfigured gets
+Earlier still, `restartComponent` is acted on: a plugin asking to be reconfigured gets
 the rack re-prepared at the format it was already running, and its latency read on the way out of
 that -- which is the only moment the SDK says the figure is valid, and the reason those two items
 turned out to be one job (sec. 7 item 74). Seven tests, including the plugin that announces its
@@ -589,8 +598,15 @@ Proven against the real deployed APO on the development machine:
   still alive and still attached, so being killed after it -- which is what a shutdown does to an
   application that answers too slowly -- leaves nothing behind, and the next start reattaches
   without a word. `WM_ENDSESSION` with `wParam` false puts the mark back, because a shutdown that
-  was called off leaves a shell that is still attached and still worth protecting. This is the
-  false positive the project owner named before the code was written (item 65).
+  was called off leaves a shell that is still attached and still worth protecting. As of
+  2026-08-23 the same message also writes the session, and the round trip was driven end to end:
+  with two plugins loaded and both editors open, `WM_QUERYENDSESSION` sent to all three top-level
+  windows produced one 47,041-byte file -- the same size the ordinary close path writes -- while
+  the shell stayed alive and answered `1` from every window. Deleting that file and querying again
+  inside the same sequence rewrote nothing, which is the guard holding; sending `WM_ENDSESSION`
+  with `wParam` false and querying once more brought it straight back, which is the guard
+  re-arming. Restarting from the file it left produced `session: 2 of 2 plugin(s) restored`. This
+  is the false positive the project owner named before the code was written (item 65).
 - **A plugin whose state is a *path* comes back working -- and its dependency going missing is
   invisible to us.** NeuralAmpModeler, checked on 2026-08-22. Its state is 219 bytes: an id, a
   version, the model's absolute path as a length-prefixed string, an empty IR path, and ten
@@ -717,10 +733,13 @@ Proven against the real deployed APO on the development machine:
   is the trigger: no plugin on this machine has ever faulted while processing, so the response is
   proven and the event it responds to is still hypothetical. Note also what is *not* claimed: the
   crash still happens, and still takes that run's audio with it. Only the loop is closed.
-- **That a real Windows shutdown clears the attach mark.** `WM_QUERYENDSESSION` was delivered by
-  hand with `SendMessage`, and the shell has no way to tell that from the real one -- but a real
-  restart with the shell left open has not been sat through, and neither has a power cut, which
-  is the one end that genuinely does report a crash that did not happen.
+- **That a real Windows shutdown clears the attach mark and writes the session.** Both are driven
+  from the same message and both were driven by hand with `SendMessage`, which the shell has no
+  way to tell from the real thing -- but a real restart with the shell left open has not been sat
+  through, and neither has a power cut, which is the one end that genuinely does report a crash
+  that did not happen. What a hand-sent message also cannot reproduce is the deadline: Windows was
+  never actually waiting on those replies, so the 163 ms measurement is what says the save fits,
+  not the test.
 - **That the portable folder runs on another machine.** It runs here without the build
   environment, which is the strongest thing that can be checked *here* -- but this machine has
   Visual Studio, the Windows SDK and a Qt installation somewhere on it, and none of that can be
@@ -904,11 +923,12 @@ UI work still outstanding, none of it blocking:
 
 Worth doing at some point, none of it blocking:
 
-- **Save the session from `WM_QUERYENDSESSION` too, not only from `closeEvent`.** The shell now
-  hears that message (item 65), and a restart with it left open still loses whatever changed since
-  the last clean exit -- which is section 4's last "not proven" line about saving. What needs
-  thinking about first is the budget: the message has a few seconds before Windows stops waiting,
-  and `capture` asks every plugin in the rack for its state.
+- ~~Save the session from `WM_QUERYENDSESSION` too, not only from `closeEvent`.~~ **Done on
+  2026-08-23** (sec. 7 item 76, and section 4). The budget this was waiting on turned out not to
+  exist: the whole close path -- capture, both plugins' `getState`, a 47 KB file, then tearing down
+  two editors, two plugins and Qt itself -- measures 163 ms, and the save is a fraction of that
+  against a deadline in seconds. What the item did *not* anticipate is the part that needed care,
+  which is that the message arrives once per top-level window.
 - Decide whether `aip_ui` should set its own working directory. Plugins write files into it
   (trap 22 -- and the culprit is now known: NeuralAmpModeler, on instantiation), and today that is
   wherever the shell was launched -- the repository root, under `pixi run ui`, where it turns the
@@ -1876,6 +1896,41 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     Read every servicing tick, at 10 Hz, rather than sampled slower: it is one kernel call and no
     allocation, and a figure that lagged the log lines beside it would be read against the wrong
     event.
+
+76. **The session is written from `WM_QUERYENDSESSION`, at most once per shutdown.** A restart with
+    the shell left open was the one ordinary end that never reached `closeEvent`, so it silently
+    discarded every rack change since the last time somebody closed the window by hand. The message
+    was already being listened to for the attach mark (item 65), and it is the right moment for
+    this too and for the same reason: it is the last point at which the process is certain to be
+    alive and fully itself, and an application killed for answering too slowly is killed *after*
+    it, not before.
+
+    **The budget the item was parked on does not exist.** Measured rather than reasoned about: the
+    entire close path -- `capture`, `getState` on both plugins, a 47 KB YAML file, and then
+    destroying two editors, two plugin instances and Qt -- is 163 ms with the two real plugins on
+    this machine. The save is a fraction of that, and the deadline is in seconds. No partial save,
+    no deadline, no `ShutdownBlockReasonCreate`; none of it is earned.
+
+    **What actually needed care is the thing the item did not mention.** `WM_QUERYENDSESSION` goes
+    to *every* top-level window in the process, and the shell with two editors open has three --
+    measured, not assumed. The mark never cared, because clearing it twice is clearing it; writing
+    the session does care, and the unguarded version would have captured the rack, asked every
+    plugin for its state and written the file three times over, inside the one budget where that
+    cost is not free. `WM_ENDSESSION` arriving behind it would have made four. Hence
+    `saveSessionOnce` and a flag, which is the whole of the mechanism.
+
+    The flag re-arms on `sessionEndCancelled` rather than latching for the process's life. A
+    shutdown that is proposed, cancelled, and proposed again an hour later should write the rack as
+    it is then, not as it was the first time -- and the cancel path was already there to put the
+    attach mark back, so it costs one line.
+
+    Order inside the handler: the mark is cleared first, then the session is written. If saving
+    were ever to take the process down with it, a mark already cleared is the better wreckage --
+    losing the last few edits is a bad day, whereas announcing a crash after an ordinary reboot is
+    the false positive that makes the warning worthless every time after.
+
+    `closeEvent` still saves, and is untouched. A shutdown does not usually deliver both, and a
+    second save if it did would be harmless.
 
 ---
 
