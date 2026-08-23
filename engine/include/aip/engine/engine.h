@@ -215,7 +215,64 @@ public:
     /// is what makes a knob in a plugin's own editor change the audio at all when the component
     /// and the controller are separate objects. `maxPerPlugin` bounds the work, as sec. 7.4.2
     /// asks even of the control thread. Returns the number of edits consumed.
+    ///
+    /// This can rebuild the chain, and that is not a surprise smuggled into a drain: a
+    /// `restartComponent` request is one of the things the plugins queue here, and honouring one
+    /// means re-preparing the rack. See `RestartReport` for what is acted on and what is not, and
+    /// `lastRestart()` for what this call did about it.
     std::size_t serviceParameterEdits(std::size_t maxPerPlugin = 64);
+
+    /// What the plugins asked for through `restartComponent` during the last
+    /// `serviceParameterEdits`, folded together across the rack. Reset at the start of every such
+    /// call, so it describes that one servicing tick and not the run.
+    ///
+    /// The flags are grouped by what this host can actually do about them:
+    ///
+    ///   reconfiguration   `kReloadComponent`, `kIoChanged`, `kLatencyChanged` -- the plugin is
+    ///                     asking to be deactivated and reactivated. That is what `rebuild` does
+    ///                     to every instance in the rack, so they go through the same path a
+    ///                     format change takes, at the format already built.
+    ///   informational     `kParamValuesChanged` -- the plugin moved its own parameters and the
+    ///                     host's caches are stale. There is no cache here; the values live in
+    ///                     the controller, which is where anything showing them reads from. So
+    ///                     this is passed on to be *told*, and nothing in the engine changes.
+    ///   the rest          named in `unhandled` and otherwise ignored. Titles, MIDI-CC mappings,
+    ///                     note expression and routing all describe things this host does not
+    ///                     model at all, and pretending to act on them would be a lie in a log.
+    ///
+    /// `kReloadComponent` is honoured as a re-prepare rather than as the full unload-and-reload
+    /// the SDK describes. The instance, its parameters and its state survive; what it gets is a
+    /// deactivate, a fresh bus negotiation, a `setupProcessing` and a reactivate. No plugin met so
+    /// far has asked for more, and the difference is worth knowing about before one does.
+    struct RestartReport {
+        /// `restartComponent` calls drained this tick, across every plugin in the rack.
+        std::size_t requests = 0;
+        /// The union of every flag in them, raw, as the plugins gave it.
+        std::int32_t flags = 0;
+        /// A plugin moved its own parameter values and said so. Nothing to do here; somebody
+        /// displaying them needs to know.
+        bool parameterValues = false;
+        /// A reconfiguration was asked for and the rack was rebuilt for it. False when none was
+        /// asked for, when there was no format to rebuild at -- nothing is prepared, so there is
+        /// nothing to deactivate -- or when the rebuild failed, which `error` then says.
+        bool reconfigured = false;
+        /// Reconfiguration requests dropped because they arrived out of the rebuild that was
+        /// already running for one. See the note in `serviceParameterEdits`: a plugin announcing
+        /// its new latency from inside its own reactivation is ordinary, and acting on it would
+        /// rebuild forever.
+        std::size_t suppressed = 0;
+        /// Why a demanded reconfiguration did not happen. Empty when none was asked for, or when
+        /// it worked.
+        std::string error;
+        /// Flags seen that this host does not act on, spelled out for a log. Empty when there
+        /// were none. Built here rather than by the caller because naming a VST3 flag needs a
+        /// VST3 header, and `ui/` deliberately does not have one.
+        std::string unhandled;
+
+        [[nodiscard]] bool any() const noexcept { return requests != 0; }
+    };
+
+    [[nodiscard]] const RestartReport& lastRestart() const noexcept { return lastRestart_; }
 
     /// Edits dropped across the whole rack because an audio-thread ring filled up. Nonzero means
     /// `serviceParameterEdits` is not being called often enough.
@@ -255,6 +312,24 @@ private:
     /// Retracts the chain so that rack instances can be mutated safely.
     bool retract();
 
+    /// What one drain pass over the rack found. Separated from `RestartReport` because a single
+    /// `serviceParameterEdits` makes two passes when it rebuilds, and the second one is counted
+    /// differently from the first.
+    struct DrainTally {
+        std::size_t edits = 0;
+        std::size_t restartRequests = 0;
+        /// Restart requests among those that asked for a deactivate/reactivate.
+        std::size_t reconfigurationRequests = 0;
+        /// The union of every restart flag seen.
+        std::int32_t flags = 0;
+    };
+
+    /// One pass over every rack entry: applies each parameter edit to the half of the plugin that
+    /// did not originate it, and folds the restart requests into the tally rather than acting on
+    /// them. Acting is the caller's job, because it can mean rebuilding the whole rack and that
+    /// cannot happen while a handler is being drained.
+    DrainTally drainRack(std::size_t maxPerPlugin);
+
     // Declaration order is load-bearing -- members are destroyed in reverse, and that reverse
     // order is the only safe one. See the note in ~Engine before changing any of it.
     Steinberg::IPtr<Steinberg::Vst::HostApplication> host_;
@@ -273,6 +348,7 @@ private:
     /// See builtFormatIsSpeculative(). Cleared the moment a real block confirms the geometry.
     bool speculative_ = false;
     WarmUpReport lastWarmUp_;
+    RestartReport lastRestart_;
     /// See setChannelMask(). Survives every rebuild.
     std::uint32_t channelMask_ = 0;
     /// The packed geometry key the last `serviceFormatChange` acted on. See that function.

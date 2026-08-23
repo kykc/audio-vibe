@@ -10,6 +10,10 @@
 //   Gain   (id 0)  output = input * (normalized * 2); the 0.5 default is unity
 //   Edits  (id 1)  performEdit calls per process(), from the audio thread = round(normalized * 8)
 //   Offset (id 3)  a constant added after the gain, so two instances do not commute
+//   Latency (id 4)  reported latency = round(normalized * 512), announced with kLatencyChanged
+//                   and withheld from getLatencySamples until the next setActive(true)
+//   Restart (id 5)  restartComponent(round(normalized * 2047)) -- the raw flag word
+//   Echo    (id 6)  above 0.5, every setActive(true) announces kLatencyChanged again
 //   it refuses any bus arrangement above 8 channels, and carries a default-active side-chain
 
 #include "harness/synthetic_king.h"
@@ -44,6 +48,20 @@ const std::string kTestPluginPath = AIP_TEST_PLUGIN_PATH;
 constexpr Steinberg::Vst::ParamID kGainParam = 0;
 constexpr Steinberg::Vst::ParamID kEditsParam = 1;
 constexpr Steinberg::Vst::ParamID kOffsetParam = 3;
+constexpr Steinberg::Vst::ParamID kLatencyParam = 4;
+constexpr Steinberg::Vst::ParamID kRestartParam = 5;
+constexpr Steinberg::Vst::ParamID kEchoParam = 6;
+
+/// The fixture's `Latency` at 1.0, in samples. Halve the parameter, halve this.
+constexpr std::uint32_t kFixtureMaxLatency = 512;
+
+/// The normalized value that makes the fixture raise exactly `flags`. It maps [0, 1] onto
+/// [0, kRestartFlagSpan] and rounds, so this is that mapping read backwards -- and the span has to
+/// agree with the fixture's, which is why both spell it out rather than sharing a header no other
+/// test would want.
+constexpr Steinberg::Vst::ParamValue restartRequest(std::int32_t flags) {
+    return static_cast<Steinberg::Vst::ParamValue>(flags) / 2047.0;
+}
 
 engine::StreamFormat stereoFormat(std::uint32_t sampleRate = 48000) {
     return engine::StreamFormat{sampleRate, 2, engine::kDefaultMaxFrames};
@@ -1324,4 +1342,216 @@ TEST_CASE("an endpoint that reports no format is declined, not guessed at",
     // Past the ceiling is refused for the same reason a rebuild refuses it.
     CHECK_FALSE(host.prepareSpeculatively(48000, engine::kMaxChannels + 1, error));
     CHECK_FALSE(error.empty());
+}
+
+// ------------------------------------------------------------------- restartComponent ---------
+//
+// The fixture's restart parameters are what these drive: `Latency` (id 4) announces a new latency
+// and withholds the figure until reactivation, `Restart` (id 5) raises an arbitrary flag word, and
+// `Echo` (id 6) makes the plugin announce a latency change from inside its own reactivation. See
+// the top of `aip_test_plugin.cpp`.
+
+TEST_CASE("a plugin that announces a new latency is reactivated, and only then believed",
+          "[engine][restart]") {
+    // The whole reason kLatencyChanged is treated as a reconfiguration rather than as a number to
+    // re-read: the SDK says `getLatencySamples` is valid only after `setActive(true)`, and the
+    // fixture holds itself to that. A host that skipped the rebuild would read 0 here and report
+    // it, which is worse than not reporting latency at all.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->latencySamples() == 0);
+
+    // Half of a 512-sample span. The plugin has decided on 256 and said so; it is still reporting
+    // 0 to anyone who asks, because it has not been reactivated.
+    CHECK(plugin->setParameter(kLatencyParam, 0.5));
+    CHECK(plugin->latencySamples() == 0);
+
+    host.serviceParameterEdits();
+
+    const engine::Engine::RestartReport& report = host.lastRestart();
+    CHECK(report.any());
+    CHECK(report.requests == 1);
+    CHECK((report.flags & Steinberg::Vst::kLatencyChanged) != 0);
+    CHECK(report.reconfigured);
+    CHECK(report.error.empty());
+    CHECK(report.suppressed == 0);
+    // The same instance -- a re-prepare, not a reload -- carrying the figure it withheld before.
+    CHECK(host.pluginAt(0) == plugin);
+    CHECK(plugin->latencySamples() == 256);
+}
+
+TEST_CASE("a rebuild driven by a restart keeps the rack's parameters and its chain",
+          "[engine][restart]") {
+    // A reconfiguration must cost no more than a format change does: the instances survive, their
+    // values survive, and audio comes back processed rather than passed through.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->setParameter(kGainParam, 1.0));
+    CHECK(plugin->setParameter(kLatencyParam, 1.0));
+
+    host.serviceParameterEdits();
+    REQUIRE(host.lastRestart().reconfigured);
+
+    CHECK(getParameter(host, 0, kGainParam) == Approx(1.0));
+    CHECK(plugin->latencySamples() == 512);
+    CHECK(host.builtFormat().sampleRate == stereoFormat().sampleRate);
+
+    Rig rig(host.blockProcessor(), L"engine-restart-rebuild");
+    const std::vector<float> in = signedRamp(kFrames);
+    const std::vector<float> out = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(in[i] * 2.f));
+    }
+}
+
+TEST_CASE("a restart that only says the values moved does not touch the chain",
+          "[engine][restart]") {
+    // kParamValuesChanged invalidates caches this host does not have. Reporting it and doing
+    // nothing is the correct response, and "doing nothing" has to be checkable -- a rebuild would
+    // be audible, and audible for no reason at all.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    const std::uint64_t calls = plugin->processCalls();
+
+    CHECK(plugin->setParameter(kRestartParam,
+                               restartRequest(Steinberg::Vst::kParamValuesChanged)));
+    host.serviceParameterEdits();
+
+    const engine::Engine::RestartReport& report = host.lastRestart();
+    CHECK(report.requests == 1);
+    CHECK(report.parameterValues);
+    CHECK_FALSE(report.reconfigured);
+    CHECK(report.unhandled.empty());
+    // The discriminator: a rebuild warms every plugin it re-prepares, so one would show up here
+    // as four process calls this test did not make.
+    CHECK(plugin->processCalls() == calls);
+}
+
+TEST_CASE("a flag this host does not act on is named rather than obeyed", "[engine][restart]") {
+    // There is no parameter-title cache to invalidate, no MIDI mapping and no routing graph. The
+    // useful behaviour is to say which one arrived: silence would leave whoever reads the log
+    // unable to tell "ignored" from "never delivered".
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    const std::uint64_t calls = plugin->processCalls();
+
+    CHECK(plugin->setParameter(kRestartParam,
+                               restartRequest(Steinberg::Vst::kParamTitlesChanged |
+                                              Steinberg::Vst::kRoutingInfoChanged)));
+    host.serviceParameterEdits();
+
+    const engine::Engine::RestartReport& report = host.lastRestart();
+    CHECK(report.requests == 1);
+    CHECK_FALSE(report.parameterValues);
+    CHECK_FALSE(report.reconfigured);
+    CHECK(report.unhandled == "parameter titles, routing info");
+    CHECK(plugin->processCalls() == calls);
+}
+
+TEST_CASE("a restart request with no chain to rebuild is recorded and left alone",
+          "[engine][restart]") {
+    // Nothing is prepared, so there is nothing to deactivate. The next prepare *is* the
+    // reconfiguration the plugin asked for, and it reads the new latency on its way out of it --
+    // the case where doing nothing is not merely safe but correct.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    REQUIRE_FALSE(plugin->prepared());
+
+    CHECK(plugin->setParameter(kLatencyParam, 0.5));
+    host.serviceParameterEdits();
+
+    const engine::Engine::RestartReport& report = host.lastRestart();
+    CHECK(report.requests == 1);
+    CHECK_FALSE(report.reconfigured);
+    CHECK(report.error.empty());
+    CHECK(plugin->latencySamples() == 0);
+
+    // And the prepare that follows picks the figure up without anybody asking again.
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    CHECK(plugin->latencySamples() == 256);
+}
+
+TEST_CASE("the rebuild does not chase the request its own reactivation raised",
+          "[engine][restart]") {
+    // `Echo` is the JUCE-shaped plugin that announces its latency from inside `setActive(true)`.
+    // Acting on that announcement produces another one, so a host that acts on every request it
+    // sees rebuilds until somebody kills it. One rebuild per servicing tick, and the requests the
+    // rebuild itself provoked are counted and dropped.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->setParameter(kEchoParam, 1.0));
+    CHECK(plugin->setParameter(kLatencyParam, 0.25));
+
+    host.serviceParameterEdits();
+    CHECK(host.lastRestart().reconfigured);
+    CHECK(host.lastRestart().suppressed == 1);
+    CHECK(plugin->latencySamples() == 128);
+
+    // The next tick has nothing left to act on: convergence, which is the property being tested.
+    // Without the second drain the echo would still be queued and this tick would rebuild again.
+    const std::uint64_t calls = plugin->processCalls();
+    host.serviceParameterEdits();
+    CHECK_FALSE(host.lastRestart().any());
+    CHECK(plugin->processCalls() == calls);
+}
+
+TEST_CASE("a restart raised from the processing thread is honoured too", "[engine][restart]") {
+    // The two callback paths are separate by construction: the audio thread pushes onto a
+    // lock-free ring and every other thread appends to a vector under a lock. A host that drained
+    // only the second would pass every test above and drop this one -- and this is the path a real
+    // plugin takes when it is the *processor* that decides its latency has changed.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+
+    Rig rig(host.blockProcessor(), L"engine-restart-audio");
+    // Queued for the processor rather than set on the controller, so the fixture reads it out of
+    // `inputParameterChanges` inside `process` and calls back from the valet thread.
+    REQUIRE(plugin->queueParameter(kLatencyParam, 0.5));
+    (void)rig.run(signedRamp(kFrames));
+
+    host.serviceParameterEdits();
+
+    const engine::Engine::RestartReport& report = host.lastRestart();
+    CHECK(report.any());
+    CHECK((report.flags & Steinberg::Vst::kLatencyChanged) != 0);
+    CHECK(report.reconfigured);
+    CHECK(plugin->latencySamples() == 256);
 }

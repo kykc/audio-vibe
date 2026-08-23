@@ -1,12 +1,23 @@
 # Project status
 
-**Updated:** 2026-08-23. The two-plugin startup hang is understood and closed, and nothing was
+**Updated:** 2026-08-23. `restartComponent` is acted on: a plugin asking to be reconfigured gets
+the rack re-prepared at the format it was already running, and its latency read on the way out of
+that -- which is the only moment the SDK says the figure is valid, and the reason those two items
+turned out to be one job (sec. 7 item 74). Seven tests, including the plugin that announces its
+latency from inside its own reactivation and would make a naive host rebuild forever. A real
+plugin's figure is on screen: Pult EQ reports `1 sample late` on its rack row, attached, with audio
+flowing. Earlier the same day, the two-plugin startup hang is understood and closed, and nothing was
 deadlocked: the startup work runs between `show()` and `exec()`, so there was a visible window
 with no message pump behind it, and Windows replaced it with the ghost it draws itself at the
 five-second mark (sec. 7 item 73). Measured both ways -- planted delay, pump off, `IsHungAppWindow`
 true at 5.2 s; pump on, never true -- and the fix is one pump per plugin. The warm-up, which was
 the standing suspicion, is not involved: it runs only where a chain already exists, which a
-detached start never reaches. Before that, 2026-08-22: NeuralAmpModeler restores from a session --
+detached start never reaches. The same day, the scanner's oldest open question was answered by the
+project owner rather than by measurement: the two plugins that time out are sitting on an iLok
+licence prompt waiting for a dongle, so the 60 s deadline was never the problem and what is left is
+telling the user that (section 5, scanner).
+
+Before that, 2026-08-22: NeuralAmpModeler restores from a session --
 the case where the state is a *path* rather than a value -- and the negative control settled what
 the shell can see when that
 path stops resolving: nothing at all (item 66). Before that the same day, closing the last boot
@@ -70,21 +81,23 @@ NeuralAmpModeler's model path have both been through a save and a reload (item 6
 Prove the tree is healthy in one command:
 
 ```
-pixi run test          # expect: 100% tests passed out of 103, ~8 s, and NOTHING skipped
+pixi run test          # expect: 100% tests passed out of 110, ~8 s, and NOTHING skipped
 ```
 
 **Read the skip count, not just the pass line.** `pixi run test` (RelWithDebInfo) must skip
-nothing. The `release` configuration exists too and skips exactly five -- the ones that need the
-sec. 7.4.6 violation detector, which is compiled out of Release by design:
+nothing. The `release` configuration exists too and skips exactly eight -- the ones that need the
+sec. 7.4.6 violation detector, which is compiled out of Release by design. It was five when that
+sentence was first written; the number grows with the detector's coverage, so read it as "these
+eight, by name" rather than as a total worth defending:
 
 ```
 pixi run -- cmake --build --preset release && pixi run -- ctest --preset release
 ```
 
-The RelWithDebInfo suite is green as of 2026-08-23 (103 of 103, nothing skipped); the release
-configuration was last built and run on 2026-08-22. See section 8 items 17, 19 and 20
-for why that sentence is worth a check rather than an assumption -- twice now, this suite has
-reported green while the most important test in it did not run.
+Both configurations were built and run on 2026-08-23: RelWithDebInfo green at 110 of 110 with
+nothing skipped, release green with the eight detector tests skipped and nothing else. See section
+8 items 17, 19 and 20 for why that sentence is worth a check rather than an assumption -- twice
+now, this suite has reported green while the most important test in it did not run.
 
 Then, on a machine with the old APO installed, prove interop against real hardware:
 
@@ -298,6 +311,17 @@ Proven, and re-checkable by running the suite:
 - Overflowing the `performEdit` ring costs nothing on the audio thread: with the control thread
   deliberately starved for 2,000 blocks, edits are dropped and counted and the allocation count
   stays at zero.
+- **`restartComponent` is acted on, and the cases that make a host loop or lie are covered.** Seven
+  tests (item 74): a plugin that announces a new latency is deactivated and reactivated before the
+  figure is believed -- the fixture withholds it until `setActive(true)`, exactly as the SDK says,
+  so a host that merely re-read the number would report the old one and be caught here; the rebuild
+  keeps every parameter and comes back processing; `kParamValuesChanged` alone rebuilds *nothing*,
+  checked by process-call count because a needless rebuild is audible; a flag nothing models is
+  named rather than obeyed; a request with no chain to rebuild is recorded and left for the next
+  prepare; a request raised on the *processing* thread arrives through the lock-free ring and is
+  honoured like any other; and a plugin that announces its latency from inside its own
+  reactivation -- which is what a JUCE wrapper does -- gets one rebuild, not an endless sequence
+  of them.
 - A real VST3 module loads, instantiates, negotiates a stereo bus arrangement, and processes:
   unity by default, exactly 2x with the gain parameter at full, exactly 4x through two chained
   instances, with channel identity preserved end to end.
@@ -588,12 +612,12 @@ Proven against the real deployed APO on the development machine:
   listening. The project owner has this queued as a separate extensive pass.
 - A parameter gesture on a plugin *other than* ZL Equalizer 2. One real editor is now checked (see
   above); NeuralAmpModeler and anything iPlug2-wrapped is not.
-- **That the two plugins which timed out would ever have finished.** Virtuoso and
-  `fx_multizone_gpua_cu_wrapped` made no progress for 60 s and were terminated; nobody has waited
-  longer to find out whether they are slow or stuck. The 60 s default is a judgement, not a
-  measurement, and it is the one number in `scanner/` most likely to be wrong -- too low and a
-  working plugin is reported broken, too high and a scan of this machine takes minutes. It already
-  does: that scan took 124 s, of which 120 s was those two waits.
+- That the two plugins which timed out would ever have finished. **Answered on 2026-08-23 by the
+  project owner, and the answer is no:** Virtuoso and `fx_multizone_gpua_cu_wrapped` were sitting
+  on an iLok licence prompt, waiting for a dongle that was not inserted. They are not slow, and
+  nothing about them is ours -- see the scanner list in section 5 for what does follow from it. The
+  60 s default therefore stands: no deadline distinguishes a plugin waiting on a human from one
+  that is merely slow, and raising it only makes the wait longer.
 - **The picker under anything but a quick pass.** A surface test on 2026-08-22 found it working
   (see above), which retires the question of whether the Qt layer is wired up at all. It does not
   retire the awkward cases, none of which a quick pass would reach: Cancel part way through a scan,
@@ -690,16 +714,24 @@ Proven against the real deployed APO on the development machine:
 - Multi-bus plugins beyond one main pair plus deactivated extras. Side-chains are now handled
   (see sec. 7 item 20) but nothing *drives* one, and a plugin whose main output is not bus 0 is
   not considered at all.
-- Latency compensation. `IAudioProcessor::getLatencySamples` is not read, and protocol v1 has
-  nowhere to report it even if it were (sec. 3.7.1 -- the design is zero added latency).
+- Latency *compensation*. The figure is now read and shown -- `PluginInstance::latencySamples`,
+  on the rack row, refreshed whenever a plugin says it has changed (item 74) -- but nothing is
+  delayed to match it, and protocol v1 has nowhere to report it either (sec. 3.7.1 makes the whole
+  design zero added latency). A plugin that oversamples is late, the shell says so, and that is
+  the whole of the response.
 - MIDI/event input. The `IEventList`s are preallocated and always empty.
 - *Host-originated* automation. `inputParameterChanges` is now filled -- by the plugin's own editor,
   through `performEdit` -- but nothing in this project writes a parameter of its own accord. There
   is no host automation lane, no preset recall, no generic parameter list.
 - `beginEdit`/`endEdit` are drained and discarded. They bracket a gesture, which only matters to a
   host that keeps its own automation state.
-- `restartComponent` is queued and then ignored. A plugin that asks for a reconfiguration does
-  not get one.
+- `restartComponent`, for the flags nothing here models: parameter titles, MIDI-CC assignments,
+  note expression, bus titles, prefetchable support, routing info and keyswitches are named in the
+  log and otherwise ignored (item 74). What *is* acted on -- reconfiguration and parameter values
+  -- is covered by the suite.
+- `kReloadComponent` as the SDK defines it: unload the plugin completely and load it again. It is
+  honoured as a re-prepare instead, which keeps the instance, its parameters and its state. No
+  plugin has yet asked for one, so the difference has never been exercised.
 - More than one endpoint at a time, and endpoint switching while attached.
 - A real format change (sample rate or channel count) driven by Windows rather than by the
   harness.
@@ -786,19 +818,39 @@ that is a *path* comes back working, and a path that no longer resolves is invis
 by construction. Nothing follows from it that is worth building, which is why the list below is
 now ordinary component work with nothing numbered above it.
 
-Engine work still outstanding, roughly in order of how much it will be missed:
+Engine work still outstanding. Both items that stood here -- acting on `restartComponent` and
+reading `getLatencySamples` -- were done together on 2026-08-23, because the SDK makes them one
+job: the latency figure is only valid after a reactivation, so honouring the flag *is* how the
+number gets read. See item 74 and section 4. What is left is smaller and none of it is missed yet:
 
-1. **Act on `restartComponent`.** At minimum honour `kParamValuesChanged` and
-   `kLatencyChanged`; currently every flag is drained and discarded.
-2. Handle `IAudioProcessor::getLatencySamples` at least by reporting it, even though protocol v1
-   cannot compensate for it.
+1. A real plugin has not been seen to raise `kLatencyChanged`. The mechanism is covered by the
+   suite through the fixture, and Pult EQ's oversampling switch is the obvious specimen on this
+   machine -- it reports 1 sample at its default, which the rack row already shows -- but nobody
+   has flipped it and watched the log say so.
+2. `kReloadComponent` is honoured as a re-prepare rather than as a true unload and reload. Nothing
+   has asked for one; the day something does, the instance surviving is the assumption to question.
+3. Nothing throttles reconfigurations across ticks. One per servicing tick is the bound, and the
+   requests a rebuild provokes are dropped (item 74), which is enough for every plugin met so far
+   -- but a plugin that raises a fresh request on every tick would rebuild on every tick, and the
+   only sign would be the audio.
 
 Scanner work still outstanding:
 
-- **Find out what the two timed-out plugins are actually doing**, before tuning the 60 s deadline
-  around a guess. Attach a debugger to the child, or run `aip_scan` on one of them by hand and see
-  where it sits. The answer decides whether the default is too low or whether those plugins are
-  simply unscannable, and it is the difference between a 4-second scan and a 124-second one here.
+- ~~Find out what the two timed-out plugins are actually doing.~~ **Closed on 2026-08-23:** they
+  were showing the iLok licence manager and waiting for a dongle to be inserted. Nothing to do with
+  this code, and nothing a deadline can fix -- a plugin blocked on a human never finishes, and the
+  scan child has no UI thread for the prompt to be answered in even if someone were watching. So
+  the 60 s default stays as it is, and the 124-second scan is the honest price of two unlicensed
+  plugins on this machine, paid once: `ensureScanned` stamps every probed module regardless of
+  status, so a `TimedOut` entry is cached like any other and is not re-probed until the bundle
+  changes.
+
+  What is left of the item is a wording problem, not a timing one. The reason recorded is
+  `no progress for 60000 ms; the child was terminated`, which is true and useless to the person
+  reading it: the picker greys the plugin out and gives them no reason to suspect a licence they
+  could go and fix. `ScanStatus::TimedOut` is already distinct from `Crashed` and its own comment
+  guessed correctly at "a plugin waiting on something" -- so the fix is for the picker to say what
+  a timeout usually means, next to the plugin it happened to.
 - Report the cache in the picker. It says "21 plugin(s), 4 unusable" and not how many of those
   came from the cache or when they were probed, so a user who suspects the shell is wrong about a
   plugin has nothing to look at before pressing Rescan.
@@ -1726,6 +1778,47 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     from the constructor, before `show()`, so there is no visible window to ghost. A slow restore
     shows nothing at all rather than showing a lie, which is the better of the two failures and is
     why it was left alone.
+
+74. **`restartComponent` is answered by re-preparing the rack, and latency is read on the way out
+    of it.** The flags split three ways, by what this host can honestly do about each:
+
+    *Reconfiguration* -- `kReloadComponent`, `kIoChanged`, `kLatencyChanged` -- means the plugin is
+    asking to be deactivated and reactivated, which is what `Engine::rebuild` does to every
+    instance. So a request goes through the path a format change already takes, at the format
+    already built: retract, re-prepare, warm up, republish. Chosen by the project owner over
+    building something separate, and it costs nothing extra to maintain.
+
+    `kLatencyChanged` belongs in that group and not with the flags that are merely reported, which
+    is the one thing here worth spelling out. `IAudioProcessor::getLatencySamples` is documented as
+    returning the new figure only *after* `setActive(true)`, so a host that hears the flag and
+    re-reads the number without reactivating reads the latency of the configuration the plugin has
+    just left. That is why `PluginInstance::prepare` is the only place the figure is read, and why
+    honouring the flag and reporting latency turned out to be a single job rather than two.
+
+    *Informational* -- `kParamValuesChanged` -- changes nothing in the engine. There is no cache of
+    parameter values here: they live in the plugin's controller, which is what anything on screen
+    reads from. So it is passed out as a signal, and the only thing that acts on it is the shell's
+    own generic editor, whose sliders are the one place a stale value can be sitting. Its poll stays
+    as well -- a plugin is not obliged to announce a value it changed, so the callback makes that
+    window quicker rather than correct.
+
+    *Everything else* is named in the log and ignored: parameter titles, MIDI-CC assignment, note
+    expression, bus titles, prefetchable support, routing info, keyswitches. None of them describes
+    anything this system models, and saying which one arrived is worth more than silence -- silence
+    is indistinguishable from the request never having been delivered.
+
+    The trap, and the reason the drain happens twice. A plugin that announces its new latency from
+    inside its own reactivation is ordinary rather than broken: JUCE wrappers learn their latency in
+    `prepareToPlay`, which is where a reactivation takes them. A host that acts on every request it
+    sees therefore rebuilds, gets another request, and never stops -- audibly, and forever. So after
+    a restart-driven rebuild the queues are drained a second time and the reconfiguration requests
+    found there are counted (`RestartReport::suppressed`) and dropped, while the informational ones
+    are kept. The fixture grew an `Echo` parameter specifically to be that plugin, and the test
+    asserts convergence rather than just correctness of the first rebuild.
+
+    What this is not: throttling. One rebuild per servicing tick is the only bound, which is enough
+    for a plugin that asks once and for one that asks from inside its own reactivation, and not
+    enough for a plugin that asks again on every tick. Nothing here has ever done that.
 
 ---
 

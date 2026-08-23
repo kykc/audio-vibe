@@ -140,6 +140,19 @@ void EngineHost::tick() {
     }
     engine_.serviceParameterEdits();
 
+    // Drained above, acted on above, reported here. A restart request is rare enough that the
+    // signals below cost nothing per tick, and `RestartReport` describes this tick only -- read it
+    // now or not at all.
+    const engine::Engine::RestartReport& restart = engine_.lastRestart();
+    if (restart.any()) {
+        if (restart.parameterValues) {
+            Q_EMIT pluginParametersChanged();
+        }
+        Q_EMIT pluginRestarted(restart.reconfigured,
+                               QString::fromStdString(restart.unhandled),
+                               QString::fromStdString(restart.error));
+    }
+
     Q_EMIT serviced();
 }
 

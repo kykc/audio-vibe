@@ -127,6 +127,34 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
         log(QStringLiteral("chain not built: %1").arg(error));
         rack_->refresh();
     });
+    // A plugin that moved its own values -- a preset loaded inside it, usually. Only the editors
+    // the shell drew itself can be showing something stale; a plugin's own view heard about it
+    // before we did.
+    connect(&host_, &EngineHost::pluginParametersChanged, this, [this] {
+        editors_.refreshValues();
+    });
+    // Said out loud, all of it. A restart that rebuilt the rack is a real interruption to the
+    // audio and belongs in the log next to whatever the user did to cause it; a restart that
+    // asked for something this host does not do is worth more than silence, because silence is
+    // indistinguishable from the request never arriving.
+    connect(&host_, &EngineHost::pluginRestarted, this,
+            [this](bool reconfigured, const QString& unhandled, const QString& error) {
+                if (reconfigured) {
+                    log(QStringLiteral("a plugin asked to be restarted: rack re-prepared at "
+                                       "the same format"));
+                    logWarmUp();
+                    rack_->refresh();
+                }
+                if (!error.isEmpty()) {
+                    log(QStringLiteral("a plugin asked to be restarted, and it failed: %1")
+                            .arg(error));
+                }
+                if (!unhandled.isEmpty()) {
+                    log(QStringLiteral("a plugin reported a change this shell does not act on "
+                                       "(%1)")
+                            .arg(unhandled));
+                }
+            });
     // Directly connected, because it has to have happened by the time the message returns: a
     // process that is about to be taken away has no later.
     sessionEnd_ = new SessionEndFilter(this);

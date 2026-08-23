@@ -213,7 +213,7 @@ bool GenericEditorWindow::build(QString& error) {
 
     poll_ = new QTimer(this);
     poll_->setInterval(kPollIntervalMs);
-    connect(poll_, &QTimer::timeout, this, &GenericEditorWindow::poll);
+    connect(poll_, &QTimer::timeout, this, &GenericEditorWindow::refreshValues);
     poll_->start();
     return true;
 }
@@ -226,7 +226,8 @@ void GenericEditorWindow::release() noexcept {
     }
     // The sliders outlive this call -- Qt owns them -- and a queued signal reaching one of them
     // afterwards must not become a call into a plugin the engine has since destroyed. Clearing
-    // the instance is what `onSliderMoved` and `poll` check, and disabling is belt and braces.
+    // the instance is what `onSliderMoved` and `refreshValues` check, and disabling is belt and
+    // braces.
     for (const Row& row : rows_) {
         if (row.slider != nullptr) {
             row.slider->setEnabled(false);
@@ -292,7 +293,8 @@ void GenericEditorWindow::onSliderMoved(std::size_t rowIndex, int position) {
     updateValueLabel(row, normalized);
 }
 
-void GenericEditorWindow::poll() {
+// Skips any row whose slider is under the mouse; see the note at the top of the header.
+void GenericEditorWindow::refreshValues() {
     if (instance_ == nullptr) {
         return;
     }

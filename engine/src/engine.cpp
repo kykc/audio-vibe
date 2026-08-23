@@ -1,10 +1,55 @@
 #include "aip/engine/engine.h"
 
 #include <algorithm>
+#include <string>
 
 namespace Vst = Steinberg::Vst;
 
 namespace aip::engine {
+
+namespace {
+
+/// The restart flags that mean "deactivate me and bring me back", which is exactly what a
+/// re-prepare of the rack does. `kLatencyChanged` belongs here and not with the informational
+/// flags for a reason the SDK spells out: `getLatencySamples` returns the new figure only after
+/// `setActive(true)`, so a host that re-read the number without reactivating would be reporting
+/// the latency of the configuration the plugin had just left.
+constexpr std::int32_t kReconfigurationFlags =
+    Vst::kReloadComponent | Vst::kIoChanged | Vst::kLatencyChanged;
+
+/// Names the flags this host does nothing about, for a log line that admits it. Each of these
+/// describes something the system does not model at all -- there are no parameter titles cached
+/// anywhere, no MIDI, no note expression, no routing graph -- so the useful response is to say
+/// which one arrived and leave it at that. Returns an empty string when there was none.
+std::string nameUnhandledFlags(std::int32_t flags) {
+    struct Named {
+        std::int32_t flag;
+        const char* name;
+    };
+    static constexpr Named kNames[] = {
+        {Vst::kParamTitlesChanged, "parameter titles"},
+        {Vst::kMidiCCAssignmentChanged, "MIDI CC assignment"},
+        {Vst::kNoteExpressionChanged, "note expression"},
+        {Vst::kIoTitlesChanged, "bus titles"},
+        {Vst::kPrefetchableSupportChanged, "prefetchable support"},
+        {Vst::kRoutingInfoChanged, "routing info"},
+        {Vst::kKeyswitchChanged, "keyswitches"},
+    };
+
+    std::string named;
+    for (const Named& entry : kNames) {
+        if ((flags & entry.flag) == 0) {
+            continue;
+        }
+        if (!named.empty()) {
+            named += ", ";
+        }
+        named += entry.name;
+    }
+    return named;
+}
+
+} // namespace
 
 Engine::Engine() : host_(Steinberg::owned(new Vst::HostApplication())) {}
 
@@ -360,8 +405,8 @@ void Engine::clearPlugins() {
 
 // --------------------------------------------------------------------------- plugin callbacks
 
-std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
-    std::size_t consumed = 0;
+Engine::DrainTally Engine::drainRack(std::size_t maxPerPlugin) {
+    DrainTally tally;
     // The whole rack, not just what is published: a bypassed plugin's editor is still live, and
     // its queue would otherwise fill up and start dropping.
     for (const RackEntry& entry : rack_) {
@@ -374,10 +419,17 @@ std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
             continue;
         }
         PluginInstance* instance = entry.instance.get();
-        const auto apply = [controller, instance](const ParameterEdit& edit) {
+        const auto apply = [controller, instance, &tally](const ParameterEdit& edit) {
+            if (edit.kind == ParameterEdit::Kind::RestartComponent) {
+                ++tally.restartRequests;
+                tally.flags |= edit.flags;
+                if ((edit.flags & kReconfigurationFlags) != 0) {
+                    ++tally.reconfigurationRequests;
+                }
+                return;
+            }
             // begin/end bracket a gesture and matter only to a host that keeps its own automation
-            // state, which this one does not yet; restartComponent is deliberately not acted on
-            // until there is a policy for it.
+            // state, which this one does not yet.
             if (edit.kind != ParameterEdit::Kind::PerformEdit) {
                 return;
             }
@@ -391,8 +443,61 @@ std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
                 (void)instance->queueParameter(edit.paramId, edit.value);
             }
         };
-        consumed += handler->drain(maxPerPlugin, apply);
+        tally.edits += handler->drain(maxPerPlugin, apply);
     }
+    return tally;
+}
+
+std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
+    lastRestart_ = RestartReport{};
+
+    const DrainTally first = drainRack(maxPerPlugin);
+    std::size_t consumed = first.edits;
+    if (first.restartRequests == 0) {
+        return consumed;
+    }
+
+    lastRestart_.requests = first.restartRequests;
+    lastRestart_.flags = first.flags;
+    lastRestart_.parameterValues = (first.flags & Vst::kParamValuesChanged) != 0;
+    lastRestart_.unhandled = nameUnhandledFlags(first.flags);
+
+    if (first.reconfigurationRequests == 0) {
+        return consumed;
+    }
+    if (!builtFormat_.valid()) {
+        // Nothing is prepared, so there is nothing to deactivate and nothing the plugin can be
+        // waiting for. The next `prepare` is the reconfiguration it asked for, and it will read
+        // the new latency on its way out of it.
+        return consumed;
+    }
+
+    // The format-change path at the format already built. `rebuild` retracts, re-prepares every
+    // instance -- which is the deactivate/reactivate the plugin asked for -- warms them and
+    // republishes. Rebuilding the whole rack for one plugin's request is the honest reading of
+    // `kIoChanged`: a bus count that moved changes the shape of the chain, not of one link in it.
+    std::string error;
+    if (!rebuild(builtFormat_, error)) {
+        lastRestart_.error = error;
+        return consumed;
+    }
+    lastRestart_.reconfigured = true;
+
+    // The second pass, and the reason it exists: a plugin that announces its new latency from
+    // inside its own reactivation is ordinary rather than broken -- JUCE wrappers do it from
+    // `prepareToPlay` -- and a rebuild that acts on the request its own rebuild produced never
+    // stops. So the requests queued during the rebuild above are drained here and the
+    // reconfiguration ones are counted and dropped. The informational flags are kept: a plugin
+    // that reset its parameters while reactivating is telling the truth and something on screen
+    // still needs to know.
+    const DrainTally echoed = drainRack(maxPerPlugin);
+    consumed += echoed.edits;
+    lastRestart_.requests += echoed.restartRequests;
+    lastRestart_.suppressed = echoed.reconfigurationRequests;
+    lastRestart_.flags |= echoed.flags;
+    lastRestart_.parameterValues =
+        lastRestart_.parameterValues || (echoed.flags & Vst::kParamValuesChanged) != 0;
+    lastRestart_.unhandled = nameUnhandledFlags(lastRestart_.flags);
     return consumed;
 }
 

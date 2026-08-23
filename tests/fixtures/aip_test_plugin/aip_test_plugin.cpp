@@ -13,10 +13,35 @@
 //
 // Behaviour, in full:
 //
-//   Gain   (id 0)  output = input * (normalized * 2), so the 0.5 default is unity
-//   Edits  (id 1)  performEdit calls per process() = round(normalized * 8), from the audio thread
-//   Meter  (id 2)  the parameter those callbacks report; its value is the block's first sample
-//   Offset (id 3)  a constant added *after* the gain; 0 by default
+//   Gain    (id 0)  output = input * (normalized * 2), so the 0.5 default is unity
+//   Edits   (id 1)  performEdit calls per process() = round(normalized * 8), from the audio thread
+//   Meter   (id 2)  the parameter those callbacks report; its value is the block's first sample
+//   Offset  (id 3)  a constant added *after* the gain; 0 by default
+//   Latency (id 4)  reported latency = round(normalized * 512) samples, announced with
+//                   restartComponent(kLatencyChanged) and *not* readable until reactivation
+//   Restart (id 5)  restartComponent(round(normalized * 2047)) -- the flag word, raw
+//   Echo    (id 6)  above 0.5, every setActive(true) announces kLatencyChanged again
+//
+// The last three are what a host's restart handling has to be pointed at, and none of them is
+// saved in the state: they are triggers, not settings.
+//
+// Latency models the SDK's contract rather than the convenient version of it. `getLatencySamples`
+// keeps returning the *old* figure until `setActive(true)` happens, which is exactly what the
+// interface says ("should return the new latency after setActive (true) was called"). A host that
+// hears kLatencyChanged and merely re-reads the number therefore reads a stale one, and a host
+// that deactivates and reactivates first does not -- so the fixture can tell those two hosts
+// apart, which is the whole point of having it.
+//
+// Echo is the plugin that makes a naive host loop forever. Announcing a latency change from
+// inside one's own reactivation is not misbehaviour -- a JUCE wrapper does it from
+// `prepareToPlay`, which is where it learns its own latency -- but a host that reacts to every
+// such announcement by reactivating produces another one, and never stops. Off by default,
+// because it is the pathological case rather than the common one.
+//
+// Restart takes the flag word directly, so a test can raise any combination it likes -- including
+// the ones this host deliberately does nothing about, which are as much a part of the behaviour
+// as the ones it acts on. The span covers every flag the SDK defines, `kReloadComponent` through
+// `kKeyswitchChanged`, so the value to send for a flag word F is F / kRestartFlagSpan.
 //
 // Its main busses are declared mono and accept anything up to eight channels, which is the shape
 // of plugin that catches a host skipping the negotiation altogether: one that asks for nothing
@@ -74,6 +99,9 @@ enum ParamIds : ParamID {
     kEditsId = 1,
     kMeterId = 2,
     kOffsetId = 3,
+    kLatencyId = 4,
+    kRestartId = 5,
+    kEchoId = 6,
 };
 
 /// The gain a normalized value of 1.0 maps to. 0.5 is therefore unity, which keeps "did the host
@@ -82,6 +110,15 @@ constexpr double kMaxGain = 2.0;
 
 /// performEdit calls per block at a normalized `Edits` of 1.0.
 constexpr int32 kMaxEditsPerBlock = 8;
+
+/// Reported latency at a normalized `Latency` of 1.0. A round number of samples rather than a
+/// plausible one: a test asserting on 256 is asserting on arithmetic it can do itself.
+constexpr int32 kMaxLatencySamples = 512;
+
+/// `Restart` maps [0, 1] onto [0, this], so the flag word F is requested with F / span. Covers
+/// every RestartFlags bit the SDK defines, up to and including `kKeyswitchChanged` (1 << 10),
+/// because the flags this host ignores need testing as much as the ones it obeys.
+constexpr int32 kRestartFlagSpan = 2047;
 
 /// Above this the plugin refuses the bus arrangement. Gives the host tests a deterministic
 /// refusal to check against, which is otherwise hard to arrange.
@@ -130,7 +167,35 @@ public:
                                 ParameterInfo::kIsReadOnly, kMeterId);
         parameters.addParameter(STR16("Offset"), nullptr, 0, 0.0,
                                 ParameterInfo::kCanAutomate, kOffsetId);
+        parameters.addParameter(STR16("Latency"), nullptr, 0, 0.0,
+                                ParameterInfo::kCanAutomate, kLatencyId);
+        parameters.addParameter(STR16("Restart"), nullptr, 0, 0.0,
+                                ParameterInfo::kCanAutomate, kRestartId);
+        parameters.addParameter(STR16("Echo"), nullptr, 0, 0.0,
+                                ParameterInfo::kCanAutomate, kEchoId);
         return kResultOk;
+    }
+
+    // What the host is allowed to believe, and only after a reactivation. See the note about
+    // Latency at the top of the file.
+    uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE {
+        return latencySamples.load(std::memory_order_relaxed);
+    }
+
+    tresult PLUGIN_API setActive(TBool state) SMTG_OVERRIDE {
+        const tresult result = SingleComponentEffect::setActive(state);
+        if (result == kResultOk && state != 0) {
+            // The moment the SDK names as the one after which the new figure is readable.
+            latencySamples.store(pendingLatencySamples.load(std::memory_order_relaxed),
+                                 std::memory_order_relaxed);
+            if (echoNormalized.load(std::memory_order_relaxed) > 0.5 &&
+                componentHandler != nullptr) {
+                // The pathological plugin: it tells the host about its latency from inside the
+                // very reactivation the host performed to learn it. See the note at the top.
+                componentHandler->restartComponent(kLatencyChanged);
+            }
+        }
+        return result;
     }
 
     tresult PLUGIN_API canProcessSampleSize(int32 symbolicSampleSize) SMTG_OVERRIDE {
@@ -172,6 +237,12 @@ public:
             editsNormalized.store(value, std::memory_order_relaxed);
         } else if (tag == kOffsetId) {
             offsetNormalized.store(value, std::memory_order_relaxed);
+        } else if (tag == kLatencyId) {
+            announceLatency(value);
+        } else if (tag == kRestartId) {
+            requestRestart(value);
+        } else if (tag == kEchoId) {
+            echoNormalized.store(value, std::memory_order_relaxed);
         }
         return result;
     }
@@ -319,6 +390,16 @@ private:
             case kOffsetId:
                 offsetNormalized.store(value, std::memory_order_relaxed);
                 break;
+            case kLatencyId:
+                // Deliberately reachable from here as well as from setParamNormalized: a restart
+                // request raised on the processing thread takes the lock-free ring rather than the
+                // control-plane vector, and a host that only drains one of the two would pass
+                // every control-thread test and drop this.
+                announceLatency(value);
+                break;
+            case kRestartId:
+                requestRestart(value);
+                break;
             default:
                 break;
             }
@@ -337,6 +418,37 @@ private:
         }
     }
 
+    /// Latency the plugin has decided on, which the host may not know about yet, and the figure
+    /// `getLatencySamples` is allowed to return. Edge-triggered: setting `Latency` to the value it
+    /// already holds announces nothing, because a plugin that re-announced an unchanged latency on
+    /// every parameter set would make a host that obeys it rebuild forever.
+    void announceLatency(ParamValue value) {
+        const ParamValue previous = latencyNormalized.exchange(value, std::memory_order_relaxed);
+        if (previous == value) {
+            return;
+        }
+        pendingLatencySamples.store(
+            static_cast<uint32>(std::lround(value * kMaxLatencySamples)),
+            std::memory_order_relaxed);
+        if (componentHandler != nullptr) {
+            componentHandler->restartComponent(kLatencyChanged);
+        }
+    }
+
+    /// Raises whatever flag word `Restart` encodes, once per change of the value. Zero raises
+    /// nothing, which is what makes 0.0 a usable default.
+    void requestRestart(ParamValue value) {
+        const ParamValue previous = restartNormalized.exchange(value, std::memory_order_relaxed);
+        if (previous == value || componentHandler == nullptr) {
+            return;
+        }
+        const auto flags = static_cast<int32>(std::lround(value * kRestartFlagSpan));
+        if (flags == 0) {
+            return;
+        }
+        componentHandler->restartComponent(flags);
+    }
+
     /// See the top of `process`. Not atomic: written once, on whichever thread gets there first,
     /// and read by nothing that matters.
     bool firstProcessDone = false;
@@ -345,6 +457,11 @@ private:
     std::atomic<ParamValue> gainNormalized{0.5};
     std::atomic<ParamValue> editsNormalized{0.0};
     std::atomic<ParamValue> offsetNormalized{0.0};
+    std::atomic<ParamValue> latencyNormalized{0.0};
+    std::atomic<ParamValue> restartNormalized{0.0};
+    std::atomic<ParamValue> echoNormalized{0.0};
+    std::atomic<uint32> pendingLatencySamples{0};
+    std::atomic<uint32> latencySamples{0};
     bool processing = false;
 };
 

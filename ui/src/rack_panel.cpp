@@ -110,6 +110,16 @@ void RackPanel::refresh() {
             if (host_.engine().builtFormatIsSpeculative()) {
                 line += QStringLiteral(" (expected)");
             }
+            // Only when there is some. Nearly every plugin reports zero, and a "0 samples late"
+            // on every row would be noise hiding the one row where the number matters -- and it
+            // does matter, because nothing here compensates for it (sec. 3.7.1). A plugin that
+            // switches its oversampling on is silently half a millisecond behind the rest of the
+            // system, and this line is the only place that says so.
+            if (const std::uint32_t latency = plugin->latencySamples(); latency != 0) {
+                line += QStringLiteral("  %1 sample%2 late")
+                            .arg(latency)
+                            .arg(latency == 1 ? QString() : QStringLiteral("s"));
+            }
         } else {
             line += QStringLiteral("  [not prepared]");
         }

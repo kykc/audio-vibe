@@ -16,9 +16,12 @@
 //     controller itself and reports through IComponentHandler, and neither of those happens when
 //     the control is ours -- see `PluginInstance::setParameter`.
 //   * the plugin can move its own parameters, from automation of its own or from the processor,
-//     and the window has to follow. There is no callback that says so, so the values are polled;
-//     the control the user is currently holding is left alone, because a poll that fights the
-//     mouse is worse than a stale reading.
+//     and the window has to follow. There is one callback that says so -- `kParamValuesChanged`,
+//     which arrives through `refreshValues()` -- but it is a courtesy and not a guarantee: a
+//     plugin that changes a value without announcing it is not breaking any rule. So the values
+//     are polled as well, and the callback only makes the window quicker rather than correct.
+//     Either way the control the user is currently holding is left alone, because a refresh that
+//     fights the mouse is worse than a stale reading.
 
 #pragma once
 
@@ -58,6 +61,10 @@ public:
 
     [[nodiscard]] QString describe() const override;
 
+    /// Re-reads every row from the controller. The timer below does this too; this is the same
+    /// work on demand, for when the plugin has just said it moved its own values.
+    void refreshValues() override;
+
     /// Parameters that got a row. Smaller than the controller's count whenever the plugin marks
     /// some of them hidden.
     [[nodiscard]] std::size_t parameterCount() const noexcept { return rows_.size(); }
@@ -93,10 +100,6 @@ private:
     /// Audio-thread-free, control-thread work: the slider position the user just chose, sent to
     /// the plugin and echoed into the value label.
     void onSliderMoved(std::size_t rowIndex, int position);
-
-    /// Picks up values the plugin changed behind our back. Skips any row whose slider is under
-    /// the mouse.
-    void poll();
 
     void updateValueLabel(const Row& row, Steinberg::Vst::ParamValue normalized);
 

@@ -554,6 +554,13 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
     }
     processor_->setProcessing(true);
 
+    // Here and nowhere else. The SDK is explicit that `getLatencySamples` returns the new latency
+    // only "after setActive(true) was called", so a read taken before this point can describe the
+    // configuration the plugin has just been moved out of. It is also why acting on
+    // `kLatencyChanged` has to mean re-preparing rather than merely re-reading the number --
+    // see `Engine::RestartReport`.
+    latencySamples_ = static_cast<std::uint32_t>(processor_->getLatencySamples());
+
     format_ = format;
     prepared_ = true;
     return true;
@@ -638,6 +645,7 @@ void PluginInstance::unprepare() noexcept {
     format_ = StreamFormat{};
     inputChannels_ = 0;
     outputChannels_ = 0;
+    latencySamples_ = 0;
     inputSilenceFlags_ = 0;
 }
 

@@ -207,6 +207,18 @@ public:
 
     [[nodiscard]] std::uint32_t outputChannelCount() const noexcept { return outputChannels_; }
 
+    /// What the plugin says it delays the signal by, read from `IAudioProcessor::getLatencySamples`
+    /// at the end of `prepare` -- which is where the SDK says the number becomes valid, "after
+    /// setActive(true) was called". Reading it anywhere else can return the latency of the
+    /// configuration the plugin has just left.
+    ///
+    /// Reported, never compensated for. Sec. 3.7.1 makes the whole design zero added latency and
+    /// protocol v1 has nowhere to carry a delay even if we wanted to, so this number changes
+    /// nothing about the audio -- what it changes is whether a user can find out that the plugin
+    /// they just switched to oversampling is now half a millisecond behind the rest of the system.
+    /// Zero until `prepare` has succeeded, and zero for the great majority of plugins.
+    [[nodiscard]] std::uint32_t latencySamples() const noexcept { return latencySamples_; }
+
     /// True when the plugin was given a wider bus than the stream and is being fed silence in
     /// the surplus channels. Worth surfacing: it is the condition under which a plugin that
     /// links its detector across channels sees a quieter signal than the stream actually
@@ -382,6 +394,8 @@ private:
     /// The negotiated main-bus widths. See inputChannelCount().
     std::uint32_t inputChannels_ = 0;
     std::uint32_t outputChannels_ = 0;
+    /// See latencySamples(). Refreshed at the end of every successful prepare, and only there.
+    std::uint32_t latencySamples_ = 0;
     /// Silence bits for the padding channels of the main input bus, computed once by prepare()
     /// so process() only has to store them. Zero whenever the plugin took the stream's width.
     std::uint64_t inputSilenceFlags_ = 0;

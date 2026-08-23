@@ -51,6 +51,11 @@ public:
 
     [[nodiscard]] std::size_t openCount() const noexcept { return windows_.size(); }
 
+    /// Tells every open editor to re-read its values, because a plugin has just said it moved
+    /// them itself. Only the windows the shell drew do anything about it -- see
+    /// `PluginEditorWindow::refreshValues`.
+    void refreshValues();
+
 Q_SIGNALS:
     /// Progress and failure text for the shell's status line. A plugin failing to produce an
     /// editor is ordinary, not exceptional -- plenty of effects have none.

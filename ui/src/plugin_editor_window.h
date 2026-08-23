@@ -42,6 +42,14 @@ public:
     /// anything per-plugin worth knowing about it. Called just after the window opens.
     [[nodiscard]] virtual QString describe() const = 0;
 
+    /// Re-read every value from the plugin, because it has just said that it moved them itself
+    /// (`restartComponent(kParamValuesChanged)`, usually a preset being loaded inside the plugin).
+    ///
+    /// A no-op by default, and that is the right answer for a plugin's own view: it is the
+    /// controller's own client and hears about the change before we do. Only a window *we* drew
+    /// from the parameter list can be showing something stale.
+    virtual void refreshValues() {}
+
 Q_SIGNALS:
     /// The user closed the window. Emitted before Qt deletes it, so a listener can drop its
     /// pointer while the object is still valid.

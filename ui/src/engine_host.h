@@ -108,6 +108,22 @@ Q_SIGNALS:
     /// A rebuild was attempted and failed. Audio keeps flowing, unprocessed.
     void chainFailed(const QString& error);
 
+    /// A plugin moved its own parameters and said so, through
+    /// `restartComponent(kParamValuesChanged)`. Nothing in the engine changes -- the values live
+    /// in the plugin's controller, which is where anything displaying them reads from -- so this
+    /// exists for the windows that are now showing something stale.
+    void pluginParametersChanged();
+
+    /// A plugin asked to be restarted and this is what came of it. `reconfigured` says the rack
+    /// was re-prepared at the format it was already running, which is how `kLatencyChanged`,
+    /// `kIoChanged` and `kReloadComponent` are honoured; `unhandled` names the flags nothing was
+    /// done about; `error` is why a reconfiguration that was asked for did not happen.
+    ///
+    /// Deliberately not folded into `chainBuilt`. That signal means "the geometry the audio thread
+    /// reported changed and the chain followed it", and a restart is the other thing entirely: the
+    /// geometry is the same and the plugin asked for the rebuild itself.
+    void pluginRestarted(bool reconfigured, const QString& unhandled, const QString& error);
+
     /// One servicing tick completed; the status is worth re-reading.
     void serviced();
 

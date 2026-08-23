@@ -73,6 +73,12 @@ void EditorManager::close(engine::PluginInstance& instance) {
     Q_EMIT openCountChanged();
 }
 
+void EditorManager::refreshValues() {
+    for (const auto& [instance, window] : windows_) {
+        window->refreshValues();
+    }
+}
+
 void EditorManager::closeAll() {
     // Copied out first: closing mutates the map.
     std::vector<PluginEditorWindow*> open;
