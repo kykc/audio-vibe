@@ -159,6 +159,7 @@ TEST_CASE("a session survives being written and read back", "[config]") {
     written.endpointId = "{0.0.0.00000000}.{deadbeef-0000-1111-2222-333344445555}";
     written.endpointName = "Speakers (Test Device)";
     written.attached = true;
+    written.chainBypassed = true;
     written.window = {120, 80, 1024, 768, true};
 
     config::RackEntry first;
@@ -186,6 +187,7 @@ TEST_CASE("a session survives being written and read back", "[config]") {
     REQUIRE(read.endpointId == written.endpointId);
     REQUIRE(read.endpointName == written.endpointName);
     REQUIRE(read.attached);
+    REQUIRE(read.chainBypassed);
     REQUIRE(read.window.x == 120);
     REQUIRE(read.window.y == 80);
     REQUIRE(read.window.width == 1024);
@@ -319,13 +321,16 @@ TEST_CASE("a preset survives being written and read back", "[config]") {
     written.push_back(second);
 
     std::string error;
-    REQUIRE(config::writePreset(dir.preset(), written, error));
+    REQUIRE(config::writePreset(dir.preset(), written, true, error));
     REQUIRE(error.empty());
 
     std::vector<config::RackEntry> read;
-    REQUIRE(config::readPreset(dir.preset(), read, error));
+    bool chainBypassed = false;
+    REQUIRE(config::readPreset(dir.preset(), read, chainBypassed, error));
     REQUIRE(error.empty());
 
+    // The whole-chain bypass is part of the chain, so it is part of the preset (preset_file.h).
+    REQUIRE(chainBypassed);
     REQUIRE(read.size() == 2);
     REQUIRE(read[0].path == first.path);
     REQUIRE(read[0].classId == first.classId);
@@ -358,7 +363,7 @@ TEST_CASE("a preset holds the rack and nothing else", "[config]") {
     session.rack.push_back(entry);
 
     std::string error;
-    REQUIRE(config::writePreset(dir.preset(), session.rack, error));
+    REQUIRE(config::writePreset(dir.preset(), session.rack, session.chainBypassed, error));
 
     std::ifstream file(dir.preset(), std::ios::binary);
     const std::string text((std::istreambuf_iterator<char>(file)),
@@ -417,8 +422,9 @@ TEST_CASE("a preset that is not understood is refused whole", "[config]") {
         }
 
         std::vector<config::RackEntry> rack{sentinel};
+        bool chainBypassed = false;
         std::string error;
-        REQUIRE_FALSE(config::readPreset(dir.preset(), rack, error));
+        REQUIRE_FALSE(config::readPreset(dir.preset(), rack, chainBypassed, error));
         REQUIRE(error.find(item.expect) != std::string::npos);
         REQUIRE(rack.size() == 1);
         REQUIRE(rack[0].path == sentinel.path);
@@ -426,8 +432,10 @@ TEST_CASE("a preset that is not understood is refused whole", "[config]") {
 
     // And one that is not there at all, which is the same answer for a different reason.
     std::vector<config::RackEntry> rack{sentinel};
+    bool chainBypassed = false;
     std::string error;
-    REQUIRE_FALSE(config::readPreset(dir.path() / "no_such_preset.yaml", rack, error));
+    REQUIRE_FALSE(config::readPreset(dir.path() / "no_such_preset.yaml", rack, chainBypassed,
+                                     error));
     REQUIRE_FALSE(error.empty());
     REQUIRE(rack.size() == 1);
 }
@@ -442,10 +450,13 @@ TEST_CASE("a preset for the empty chain is a preset, not a failure", "[config]")
     // Spelled out, unlike an empty file, so it says what it means: the user asked for a chain
     // with nothing in it, which is a state worth being able to return to.
     std::vector<config::RackEntry> rack;
+    bool chainBypassed = true;
     std::string error;
-    REQUIRE(config::readPreset(dir.preset(), rack, error));
+    REQUIRE(config::readPreset(dir.preset(), rack, chainBypassed, error));
     REQUIRE(error.empty());
     REQUIRE(rack.empty());
+    // No `chainBypassed` key, which is every preset written before there was one: not bypassed.
+    REQUIRE_FALSE(chainBypassed);
 }
 
 TEST_CASE("a preset does not carry a verdict about what is safe to load", "[config]") {
@@ -457,8 +468,9 @@ TEST_CASE("a preset does not carry a verdict about what is safe to load", "[conf
     }
 
     std::vector<config::RackEntry> rack;
+    bool chainBypassed = false;
     std::string error;
-    REQUIRE(config::readPreset(dir.preset(), rack, error));
+    REQUIRE(config::readPreset(dir.preset(), rack, chainBypassed, error));
     REQUIRE(rack.size() == 1);
     // What is dangerous is a property of this machine and this session, decided again by
     // `blockUnsafeEntries` once the preset is in the rack. A `blocked` hand-written here, or
@@ -480,13 +492,15 @@ TEST_CASE("a chain saved as a preset comes back holding what it held", "[config]
         engine.pluginAt(0)->controller()->setParamNormalized(kGainParam, 0.75);
         engine.pluginAt(1)->controller()->setParamNormalized(kOffsetParam, 0.25);
         REQUIRE(engine.setBypass(1, true));
+        engine.setChainBypass(true);
         config::capture(engine, saved);
     }
+    REQUIRE(saved.chainBypassed);
 
-    REQUIRE(config::writePreset(dir.preset(), saved.rack, error));
+    REQUIRE(config::writePreset(dir.preset(), saved.rack, saved.chainBypassed, error));
 
     config::Session loaded;
-    REQUIRE(config::readPreset(dir.preset(), loaded.rack, error));
+    REQUIRE(config::readPreset(dir.preset(), loaded.rack, loaded.chainBypassed, error));
 
     // Rebuilt through the same `apply` a session restore uses, which is the whole of what the
     // Load Preset button does once it has emptied the rack.
@@ -500,6 +514,9 @@ TEST_CASE("a chain saved as a preset comes back holding what it held", "[config]
     REQUIRE(restored.pluginAt(1)->controller()->getParamNormalized(kGainParam) == 0.5);
     REQUIRE(restored.bypassed(1));
     REQUIRE_FALSE(restored.bypassed(0));
+    // And the chain's own bypass with them: a chain saved out of the signal path comes back out
+    // of it, rather than starting to process the moment the preset is loaded.
+    REQUIRE(restored.chainBypassed());
 }
 
 // ------------------------------------------------------------------------------- the catalog
@@ -674,11 +691,15 @@ TEST_CASE("a plugin comes back holding what it held", "[config][engine]") {
         engine.pluginAt(0)->controller()->setParamNormalized(kGainParam, 0.75);
         engine.pluginAt(1)->controller()->setParamNormalized(kOffsetParam, 0.25);
         REQUIRE(engine.setBypass(1, true));
+        // A chain-wide bypass on top of a per-plugin one, because the two are different facts and
+        // a restore that folded them together would still satisfy either check on its own.
+        engine.setChainBypass(true);
 
         config::capture(engine, session);
     }
 
     REQUIRE(session.rack.size() == 2);
+    REQUIRE(session.chainBypassed);
     REQUIRE_FALSE(session.rack[0].state.component.empty());
     REQUIRE(session.rack[0].name == "AIP Test Plugin");
     REQUIRE_FALSE(session.rack[0].classId.empty());
@@ -703,6 +724,7 @@ TEST_CASE("a plugin comes back holding what it held", "[config][engine]") {
     REQUIRE(restored.pluginAt(1)->controller()->getParamNormalized(kGainParam) == 0.5);
     REQUIRE(restored.bypassed(1));
     REQUIRE_FALSE(restored.bypassed(0));
+    REQUIRE(restored.chainBypassed());
 }
 
 TEST_CASE("a plugin that refuses its state is still loaded, and says so", "[config][engine]") {

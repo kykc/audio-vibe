@@ -63,6 +63,29 @@ public:
 
     [[nodiscard]] bool bypassed(std::size_t index) const noexcept;
 
+    // -------------------------------------------------------------------- the chain bypass ----
+    //
+    // A property of the chain, not of any plugin in it: bypassed, the valet hands the king's own
+    // samples straight back, and nothing in the rack runs. It is what a user reaches for to hear
+    // what the machine sounds like without this application in the way, so it has to be
+    // instantaneous in both directions and cost the rack nothing -- which is why it is a flag the
+    // audio thread reads rather than a chain that is unpublished. See ChainProcessor's own note.
+    //
+    // It survives a rebuild, a format change, an attach and a detach, because none of those is
+    // the user changing their mind about it. It is saved with the session and with a preset
+    // (config/session.h), for the same reason: it is part of what the chain is, not of what this
+    // run happens to be doing.
+    //
+    // One consequence worth knowing. Nothing drains a plugin's parameter ring while the chain is
+    // bypassed, so values pushed at the processor during a bypass are dropped exactly as they are
+    // for a bypassed plugin -- see `PluginInstance::droppedParameters`. The controller has them
+    // either way, so an editor shows the truth; the processor catches up when the plugin next
+    // gets one.
+
+    void setChainBypass(bool bypass) noexcept { processor_.setBypassed(bypass); }
+
+    [[nodiscard]] bool chainBypassed() const noexcept { return processor_.bypassed(); }
+
     // ------------------------------------------------------------------ mutating the rack -----
     // Each of these takes effect immediately: the rack is edited and a fresh view published, so
     // there is no separate commit step. Sec. 7.4.3 permits these transitions to be audible; what

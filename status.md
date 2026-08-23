@@ -292,8 +292,11 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             main_window (the shell: endpoint attach, counters, log), session_end_filter (the
             message Windows sends before it ends the session, which is what keeps a reboot from
             being mistaken for a crash), rack_panel (a direct view of
-            the engine's rack; no second model -- bypass is the check box on each row, and Save
-            and Load Preset are the whole chain to and from a file of the user's choosing),
+            the engine's rack; no second model -- per-plugin bypass is the check box on each row,
+            reordering is a dragged row, Bypass is the whole chain out of the signal path, and
+            Save and Load Preset are the whole chain to and from a file of the user's choosing),
+            rack_list (that list: it intercepts the drop so the engine reorders the rack and the
+            view never reorders itself),
             plugin_catalog (the scan report, carried across
             runs in the session file and re-probed per entry only where a bundle's stamp has
             changed, plus the progress dialog that fills it),
@@ -428,6 +431,13 @@ Proven, and re-checkable by running the suite:
   un-bypassing, and a full re-prepare for a different sample rate all leave every other plugin's
   parameters exactly as they were. Negative control run: making `rebuild` reinstantiate -- the
   old behaviour -- fails the state-survival assertions.
+- **The whole-chain bypass hands the block back bit-for-bit.** Distinct from bypassing every
+  plugin: the chain stays published and prepared and the audio thread never reaches it, so the
+  output is the king's own samples rather than something that went through an empty chain. Proven
+  together with the counters that say so (`blocksBypassed` inside `blocksPassedThrough`, and
+  `blocksProcessed` standing still), and with the flag surviving an append, a per-plugin bypass, a
+  re-prepare at another sample rate, a teardown and an emptied rack -- every one of which
+  republishes, and none of which may switch the audio back on.
 - **Reordering the rack reorders processing.** Checked with a non-commutative pair (a gain and a
   post-gain offset), because two gains would produce identical output either way round and the
   test would prove nothing. Negative control run: making `movePlugin` a no-op fails it.
@@ -506,8 +516,8 @@ Proven, and re-checkable by running the suite:
   cannot be checked against the file system has to be re-probed, not believed.
 - A bundle stamps identically twice and differently after one byte is appended to one file inside
   it -- checked by copying the fixture bundle and editing the copy.
-- A session survives being written and read back: rack order, bypass flags, both state blobs,
-  window geometry and endpoint id. A file from a future format version is refused with the
+- A session survives being written and read back: rack order, bypass flags, the chain bypass,
+  both state blobs, window geometry and endpoint id. A file from a future format version is refused with the
   version in the message rather than half-read; an *empty* file is not an error, because an empty
   file next to the executable is the documented way to ask for portable mode.
 - Source tree is ASCII-only (sec. 6.6), enforced by a tree walk on every `ctest` run -- `ui/`,
@@ -2146,6 +2156,54 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     against the tool's own meters. Validation is the interesting part and has its own tests: a
     tone above Nyquist is not the tone that was asked for but its alias, and a tool that produced
     one silently would be lying to whatever is metering the other end.
+
+83. **The whole-chain bypass is a flag the audio thread reads, not an unpublished chain.** Asked
+    for by the project owner on 2026-08-24, as a button with different semantics from the one
+    item 69 replaced: that one was per-plugin, this one takes the entire chain out of the signal
+    path and hands the king its own samples straight back. Three ways it could have been built,
+    and only one of them is instantaneous both ways: publish a null chain (a deactivate and a
+    full rebuild to come back), bypass every rack entry (the same, plus it destroys the user's
+    per-plugin bypass flags), or a `std::atomic<bool>` in `ChainProcessor` that `processBlock`
+    reads before it loads the chain pointer. The last one costs one relaxed load per block, keeps
+    every plugin prepared and every parameter set, and makes coming back cost nothing at all --
+    which is what a user comparing processed against unprocessed is actually asking for. Relaxed
+    on both sides is deliberate: it orders nothing, and the worst a stale read can do is process
+    one block either side of the click, which sec. 7.4.3 already permits of a user-initiated
+    transition.
+
+    It is a property of the *chain*, so it is in the serialized state on both sides of
+    `config::capture`/`config::apply` and in both files that carry a chain -- `chainBypassed` at
+    the top level of the session file and of a preset (`kKeyChainBypassed` in `config/rack_yaml.h`
+    with the rest of the shared spelling). A preset saved out of the signal path comes back out of
+    it. A missing key reads as false, which is what every preset written before it means, so the
+    format version did not move.
+
+    The counter split follows `formatMismatches`: a bypassed block increments `blocksBypassed`
+    *and* `blocksPassedThrough`, because both are true and the first says why. And because
+    "attached, blocks flowing, nothing happening to the audio" is the one state this shell can be
+    in that looks exactly like a fault, it is said in three places -- the button's checked state,
+    `, chain bypassed` on the link line, and a log line on a session that restores into it.
+
+84. **Reordering is a dragged row, and the drop is intercepted rather than handled.** Asked for by
+    the project owner on 2026-08-24, replacing the Move up / Move down buttons. Qt's
+    `InternalMove` does the obvious thing and it is the wrong thing here: it reorders the *view's*
+    items itself, so between the drop and the engine hearing about it the list would be the
+    authority on rack order -- and a move the engine refused would sit on screen looking as though
+    it had worked. Worse, a QListWidget that recreates a moved row re-emits `itemChanged` for its
+    check state, which this panel reads as a bypass edit *at a row index the engine has not moved
+    yet*: the wrong plugin, silently bypassed.
+
+    So `RackList::dropEvent` works out which row was dragged and which gap it was dropped into,
+    emits `reorderRequested(from, to)`, and changes nothing. Two details are load-bearing. The gap
+    index is converted to the engine's sense of `to` -- `movePlugin` erases before it inserts, so
+    a gap below where the row started is one position further along than the rack will see it.
+    And the event is accepted as an **IgnoreAction**: `QAbstractItemView::startDrag` deletes the
+    dragged row itself when the drag comes back as a MoveAction, and there is nothing here for it
+    to delete. The rebuild that follows is queued, for the same reason the check box's is -- it
+    runs inside the view's own handling of the drop.
+
+    The cost is that reordering is now mouse-only; the buttons were the keyboard path and nothing
+    replaced them. Worth knowing before someone asks why.
 
 ---
 

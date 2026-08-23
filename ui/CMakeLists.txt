@@ -17,6 +17,8 @@ add_executable(aip_ui WIN32
     src/main_window.h
     src/session_end_filter.cpp
     src/session_end_filter.h
+    src/rack_list.cpp
+    src/rack_list.h
     src/rack_panel.cpp
     src/rack_panel.h
     src/plugin_catalog.cpp

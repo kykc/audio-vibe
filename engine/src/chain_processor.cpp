@@ -80,6 +80,17 @@ void ChainProcessor::processBlock(ipc::BlockInfo& block) noexcept {
         observedFormat_.store(observed, std::memory_order_relaxed);
     }
 
+    // Before the chain is even looked at: bypass means the block goes back as it came, and that
+    // holds whether or not anything is published and whatever geometry the block is in. It is
+    // deliberately *after* the geometry has been recorded, so the control thread keeps building
+    // and rebuilding the chain while the user listens past it -- switching back has to be a
+    // pointer's worth of work, not a rebuild's.
+    if (bypassed_.load(std::memory_order_relaxed)) {
+        blocksBypassed_.fetch_add(1, std::memory_order_relaxed);
+        blocksPassedThrough_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
     PluginChain* chain = current_.load(std::memory_order_seq_cst);
     if (chain == nullptr) {
         blocksPassedThrough_.fetch_add(1, std::memory_order_relaxed);

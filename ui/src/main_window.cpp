@@ -526,6 +526,12 @@ void MainWindow::loadSession() {
             .arg(restored)
             .arg(session.rack.size())
             .arg(fromPath(sessionPath_)));
+    // Worth a line of its own. A shell that comes up processing nothing is what a broken start
+    // looks like, and the button holding it that way is one panel down.
+    if (session.chainBypassed) {
+        log(QStringLiteral("session: the chain is bypassed -- audio passes through unprocessed "
+                           "until Bypass is released"));
+    }
     if (!session.catalog.empty()) {
         log(QStringLiteral("session: %1 scanned plugin(s) remembered; the next Add re-probes only "
                            "what has changed")
@@ -818,6 +824,12 @@ void MainWindow::updateStatus() {
         // two counters that only move when something is wrong -- see EngineHost::Status::idle.
         link += QStringLiteral(", idle");
     }
+    if (status.chainBypassed) {
+        // Said here as well as on the button that sets it. "Attached, blocks flowing, nothing
+        // happening to the audio" is the one state this shell can be in that looks exactly like a
+        // fault, and the button doing it is a panel away.
+        link += QStringLiteral(", chain bypassed");
+    }
     if (status.attached) {
         link += QStringLiteral("  --  %1").arg(status.endpointName);
         link += QStringLiteral("  --  %1 attach cycle(s)").arg(status.attachCycles);
@@ -844,11 +856,12 @@ void MainWindow::updateStatus() {
 
     if (status.builtFormat.valid()) {
         text += QStringLiteral("chain %1 Hz x%2 ch: processed %3   passed through %4   "
-                               "format misses %5\n")
+                               "bypassed %5   format misses %6\n")
                     .arg(status.builtFormat.sampleRate)
                     .arg(status.builtFormat.channelCount)
                     .arg(status.chainBlocks)
                     .arg(status.passedThrough)
+                    .arg(status.bypassedBlocks)
                     .arg(status.formatMismatches);
     } else {
         text += QStringLiteral("chain: none built yet -- the format comes from the first block "

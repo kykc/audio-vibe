@@ -172,8 +172,10 @@ EngineHost::Status EngineHost::status() {
 
     const engine::ChainProcessor& processor = engine_.chainProcessor();
     status.builtFormat = engine_.builtFormat();
+    status.chainBypassed = engine_.chainBypassed();
     status.chainBlocks = processor.blocksProcessed();
     status.passedThrough = processor.blocksPassedThrough();
+    status.bypassedBlocks = processor.blocksBypassed();
     status.formatMismatches = processor.formatMismatches();
     status.droppedEdits = engine_.droppedParameterEdits();
     status.deliveredParameters = engine_.deliveredParameters();

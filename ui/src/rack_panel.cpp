@@ -2,6 +2,7 @@
 
 #include "plugin_picker.h"
 #include "qt_paths.h"
+#include "rack_list.h"
 
 #include "aip/config/preset_file.h"
 #include "aip/config/session.h"
@@ -40,8 +41,13 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     auto* row = new QHBoxLayout();
     outer->addLayout(row, 1);
 
-    list_ = new QListWidget(this);
+    list_ = new RackList(this);
     list_->setAlternatingRowColors(true);
+    // The only thing on screen that says the rows can be dragged. Reordering has no buttons any
+    // more, and a chain whose order cannot be changed by anything visible is worse than one extra
+    // tooltip.
+    list_->setToolTip(QStringLiteral("Drag a plugin up or down to reorder the chain. The check "
+                                     "box takes it out of the chain without removing it."));
     row->addWidget(list_, 1);
 
     auto* buttons = new QVBoxLayout();
@@ -55,20 +61,29 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
 
     addButton_ = button(QStringLiteral("Add..."));
     editorButton_ = button(QStringLiteral("Editor"));
-    upButton_ = button(QStringLiteral("Move up"));
-    downButton_ = button(QStringLiteral("Move down"));
     removeButton_ = button(QStringLiteral("Remove"));
-    // Below the stretch, and away from the rest: everything above acts on one plugin, these two
+    // Below the stretch, and away from the rest: everything above acts on one plugin, these three
     // act on the whole chain, and Load Preset is the only button here that throws work away.
     buttons->addStretch(1);
+    bypassButton_ = button(QStringLiteral("Bypass"));
+    // Checkable, because it is a state and not an action: the pressed button *is* the display of
+    // it, and there is nowhere else on this panel the fact could live without becoming a second
+    // copy of something the engine already knows.
+    bypassButton_->setCheckable(true);
+    bypassButton_->setToolTip(
+        QStringLiteral("Take the whole chain out of the signal path: the endpoint's audio is "
+                       "handed straight back, unprocessed. The rack stays loaded and every "
+                       "plugin keeps its settings, so switching back is immediate."));
     savePresetButton_ = button(QStringLiteral("Save Preset"));
     loadPresetButton_ = button(QStringLiteral("Load Preset"));
 
     connect(addButton_, &QPushButton::clicked, this, &RackPanel::addPlugin);
     connect(editorButton_, &QPushButton::clicked, this, &RackPanel::openEditorForSelected);
-    connect(upButton_, &QPushButton::clicked, this, [this] { moveSelected(-1); });
-    connect(downButton_, &QPushButton::clicked, this, [this] { moveSelected(1); });
     connect(removeButton_, &QPushButton::clicked, this, &RackPanel::removeSelected);
+    connect(list_, &RackList::reorderRequested, this, &RackPanel::reorder);
+    // `clicked`, not `toggled`: refresh() sets the button from the engine, and `toggled` fires on
+    // that too -- which would report the engine's own state straight back at it.
+    connect(bypassButton_, &QPushButton::clicked, this, &RackPanel::setChainBypass);
     connect(savePresetButton_, &QPushButton::clicked, this, &RackPanel::savePreset);
     connect(loadPresetButton_, &QPushButton::clicked, this, &RackPanel::loadPreset);
     connect(list_, &QListWidget::currentRowChanged, this, [this](int) { updateButtons(); });
@@ -133,6 +148,10 @@ void RackPanel::refresh() {
         // box is set from it here on every rebuild and never remembered between them.
         item->setCheckState(host_.engine().bypassed(i) ? Qt::Unchecked : Qt::Checked);
     }
+    // Set from the engine on every rebuild, like everything else here. Nothing on this panel
+    // remembers whether the chain is bypassed between refreshes.
+    bypassButton_->setChecked(host_.engine().chainBypassed());
+
     refreshing_ = false;
 
     if (previous >= 0 && previous < list_->count()) {
@@ -148,8 +167,6 @@ void RackPanel::updateButtons() {
     const bool any = index >= 0;
     editorButton_->setEnabled(any);
     removeButton_->setEnabled(any);
-    upButton_->setEnabled(any && index > 0);
-    downButton_->setEnabled(any && index + 1 < list_->count());
     // Saving nothing writes a file whose only use is emptying a rack, which is not what anyone
     // pressing Save Preset means. Loading is always available -- an empty rack is the most
     // ordinary thing to load a preset into.
@@ -214,21 +231,28 @@ void RackPanel::removeSelected() {
     refresh();
 }
 
-void RackPanel::moveSelected(int delta) {
-    const int index = selectedIndex();
-    const int target = index + delta;
-    if (index < 0 || target < 0 || target >= list_->count()) {
+void RackPanel::reorder(int from, int to) {
+    if (from < 0 || to < 0 || from == to) {
         return;
     }
     // Reordering only changes which instances the published view names, so no editor has to be
     // disturbed: the instances themselves are neither destroyed nor re-prepared.
-    if (!host_.engine().movePlugin(static_cast<std::size_t>(index),
-                                   static_cast<std::size_t>(target))) {
+    const bool moved = host_.engine().movePlugin(static_cast<std::size_t>(from),
+                                                 static_cast<std::size_t>(to));
+    if (!moved) {
         Q_EMIT message(QStringLiteral("could not move that plugin"));
-        return;
     }
-    refresh();
-    list_->setCurrentRow(target);
+    // Queued, for the same reason the check box's rebuild is: this runs inside the view's own
+    // handling of the drop, and clearing the list out from under it there is not safe. The
+    // rebuild re-reads the engine, so a refused move simply leaves the row where it was.
+    const int selected = moved ? to : from;
+    QMetaObject::invokeMethod(
+        this,
+        [this, selected] {
+            refresh();
+            list_->setCurrentRow(selected);
+        },
+        Qt::QueuedConnection);
 }
 
 void RackPanel::setBypassFromCheck(QListWidgetItem* item) {
@@ -282,7 +306,7 @@ void RackPanel::savePreset() {
     config::capture(host_.engine(), current);
 
     std::string error;
-    if (!config::writePreset(toPath(path), current.rack, error)) {
+    if (!config::writePreset(toPath(path), current.rack, current.chainBypassed, error)) {
         const QString text = QString::fromStdString(error);
         Q_EMIT message(QStringLiteral("preset not saved: %1").arg(text));
         QMessageBox::warning(this, QStringLiteral("The preset was not saved"), text);
@@ -303,8 +327,9 @@ void RackPanel::loadPreset() {
     // the user nothing at all -- which is the whole reason `readPreset` refuses a file rather
     // than salvaging what it can of one (config/preset_file.h).
     std::vector<config::RackEntry> entries;
+    bool chainBypassed = false;
     std::string error;
-    if (!config::readPreset(toPath(path), entries, error)) {
+    if (!config::readPreset(toPath(path), entries, chainBypassed, error)) {
         const QString text = QString::fromStdString(error);
         Q_EMIT message(QStringLiteral("preset not loaded: %1").arg(text));
         QMessageBox::warning(this, QStringLiteral("That is not a preset this build can read"),
@@ -339,6 +364,10 @@ void RackPanel::loadPreset() {
     // the next start reads the chain that was in the file all along, which does not name it.
     config::Session preset;
     preset.rack = std::move(entries);
+    // Part of the chain the preset describes, and therefore part of what loading it replaces --
+    // a preset saved with the chain switched out of the path comes back that way, and one saved
+    // in the path switches it back in. `config::apply` is what sets it on the engine.
+    preset.chainBypassed = chainBypassed;
 
     std::vector<std::string> problems;
     const std::size_t loaded = config::apply(preset, host_.engine(), problems, nullptr);
@@ -353,6 +382,15 @@ void RackPanel::loadPreset() {
     // below the load rather than above it.
     Q_EMIT rackReplaced();
     refresh();
+}
+
+void RackPanel::setChainBypass(bool bypass) {
+    // No rack mutation, no republication, nothing to fail: the engine sets a flag the audio
+    // thread reads on its next block (engine/engine.h). Nothing needs closing or rebuilding, and
+    // the button is already showing the state it just asked for.
+    host_.engine().setChainBypass(bypass);
+    Q_EMIT message(bypass ? QStringLiteral("chain bypassed: audio passes through unprocessed")
+                          : QStringLiteral("chain back in the signal path"));
 }
 
 void RackPanel::openEditorForSelected() {

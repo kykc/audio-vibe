@@ -36,11 +36,32 @@ public:
 
     // ------------------------------------------------------------------ audio thread ---------
 
-    /// Runs the published chain over the block, or passes the block through untouched when
-    /// there is no chain or the block's geometry is not the one the chain was built for.
-    /// Passing through is the only safe response to a format change: rebuilding is control-plane
-    /// work (sec. 7.4.3) and the change is reported through `observedFormat`.
+    /// Runs the published chain over the block, or passes the block through untouched when the
+    /// chain is bypassed, when there is no chain, or when the block's geometry is not the one the
+    /// chain was built for. Passing through is the only safe response to a format change:
+    /// rebuilding is control-plane work (sec. 7.4.3) and the change is reported through
+    /// `observedFormat`.
     void processBlock(ipc::BlockInfo& block) noexcept override;
+
+    // ------------------------------------------------------------------- chain bypass --------
+    //
+    // Either thread. The whole-chain bypass is one atomic bool rather than a retracted chain, and
+    // that is the point of it: the rack stays loaded, every plugin stays prepared and keeps its
+    // parameters, and switching back costs the audio thread the same load it already does. A
+    // bypass that unpublished the chain would deactivate the plugins and pay for a full rebuild
+    // to come back, which is not what a user comparing processed against unprocessed is asking
+    // for.
+    //
+    // What a bypassed block gets is the king's own samples, handed back exactly as they arrived:
+    // `processBlock` returns before the chain is even read.
+
+    void setBypassed(bool bypassed) noexcept {
+        bypassed_.store(bypassed, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] bool bypassed() const noexcept {
+        return bypassed_.load(std::memory_order_relaxed);
+    }
 
     // ---------------------------------------------------------------- control thread ---------
 
@@ -87,6 +108,14 @@ public:
         return formatMismatches_.load(std::memory_order_relaxed);
     }
 
+    /// Blocks handed back untouched because the chain was bypassed. A subset of
+    /// `blocksPassedThrough`, in the same way `formatMismatches` is: both say *why* a block was
+    /// passed through, and a chain that is doing nothing on purpose has to be distinguishable
+    /// from one that is doing nothing because it could not run.
+    [[nodiscard]] std::uint64_t blocksBypassed() const noexcept {
+        return blocksBypassed_.load(std::memory_order_relaxed);
+    }
+
 private:
     /// Even means the audio thread is outside `processBlock`; odd means it is inside. The audio
     /// thread raises it *before* loading `current_`, which is what makes an even reading taken
@@ -95,6 +124,10 @@ private:
     /// load is exactly the pattern x86 is allowed to reorder.
     std::atomic<std::uint64_t> epoch_{0};
     std::atomic<PluginChain*> current_{nullptr};
+    /// See setBypassed(). Relaxed on both sides: it orders nothing and guards nothing -- the
+    /// worst a stale read can cost is one block processed either side of the user's click, which
+    /// is well inside what sec. 7.4.3 already permits a user-initiated transition to sound like.
+    std::atomic<bool> bypassed_{false};
 
     std::unique_ptr<PluginChain> owned_;
     std::vector<std::unique_ptr<PluginChain>> parked_;
@@ -108,6 +141,7 @@ private:
     std::atomic<std::uint64_t> blocksProcessed_{0};
     std::atomic<std::uint64_t> blocksPassedThrough_{0};
     std::atomic<std::uint64_t> formatMismatches_{0};
+    std::atomic<std::uint64_t> blocksBypassed_{0};
 };
 
 } // namespace aip::engine

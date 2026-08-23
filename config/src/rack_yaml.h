@@ -31,6 +31,9 @@ inline constexpr const char* kKeyName = "name";
 inline constexpr const char* kKeyPath = "path";
 inline constexpr const char* kKeyClass = "class";
 inline constexpr const char* kKeyBypassed = "bypassed";
+/// The whole-chain bypass, and therefore a key of the file's *top level* rather than of an entry
+/// -- in both files, because it is part of the chain both of them carry.
+inline constexpr const char* kKeyChainBypassed = "chainBypassed";
 inline constexpr const char* kKeyBlocked = "blocked";
 inline constexpr const char* kKeyBlockedReason = "blockedReason";
 inline constexpr const char* kKeyState = "state";

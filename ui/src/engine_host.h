@@ -58,8 +58,13 @@ public:
         bool idle = false;
 
         engine::StreamFormat builtFormat;
+        /// The whole-chain bypass, as the engine holds it. On screen next to the link state
+        /// rather than only on the button that sets it: a shell that is attached and processing
+        /// nothing has to say which of the two it is doing.
+        bool chainBypassed = false;
         std::uint64_t chainBlocks = 0;
         std::uint64_t passedThrough = 0;
+        std::uint64_t bypassedBlocks = 0;
         std::uint64_t formatMismatches = 0;
         std::uint64_t droppedEdits = 0;
         std::uint64_t deliveredParameters = 0;

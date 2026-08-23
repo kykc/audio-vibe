@@ -1,9 +1,21 @@
 // The plugin rack: what is loaded, in what order, and which ones are bypassed.
 //
 // This is a direct view of `engine::Engine`'s rack and nothing else -- there is no second model of
-// the rack on this side to fall out of step with the engine's. Every button, and the check box on
-// each row, calls the engine and then rebuilds the list from what the engine now says. That costs
-// a few list items per click and removes a whole class of bug in exchange.
+// the rack on this side to fall out of step with the engine's. Every button, the check box on
+// each row, and a row dragged to a new position calls the engine and then rebuilds the list from
+// what the engine now says. That costs a few list items per gesture and removes a whole class of
+// bug in exchange.
+//
+// Reordering is drag and drop and has no buttons, which is why the list is a `RackList` rather
+// than a plain QListWidget: the drop has to reach the engine before it reaches the view, or the
+// view would be the one deciding the order. See rack_list.h.
+//
+// The Bypass button is the one control here that acts on the chain rather than on a plugin in
+// it: pressed, the valet hands the king's samples straight back and nothing in the rack runs
+// (engine/engine.h). It is a toggle rather than a momentary press because it is a state the user
+// puts the application into -- it is saved with the session and with a preset -- and it is the
+// one button on this panel that stays meaningful with an empty rack, so it is the one that is
+// never disabled.
 //
 // Presets are the one thing here that is not a direct view of the engine. A preset is the rack
 // written to a file the user names, and loading one *replaces* the rack rather than adding to it
@@ -26,11 +38,12 @@
 #include <QString>
 #include <QWidget>
 
-class QListWidget;
 class QListWidgetItem;
 class QPushButton;
 
 namespace aip::ui {
+
+class RackList;
 
 class RackPanel final : public QWidget {
     Q_OBJECT
@@ -59,8 +72,9 @@ Q_SIGNALS:
 private:
     void addPlugin();
     void removeSelected();
-    void moveSelected(int delta);
+    void reorder(int from, int to);
     void setBypassFromCheck(QListWidgetItem* item);
+    void setChainBypass(bool bypass);
     void openEditorForSelected();
     void savePreset();
     void loadPreset();
@@ -83,7 +97,7 @@ private:
     /// picker's Rescan button throws the whole thing away and starts again.
     PluginCatalog catalog_;
 
-    QListWidget* list_ = nullptr;
+    RackList* list_ = nullptr;
 
     /// Set while refresh() is filling the list. Setting an item's check state emits the same
     /// signal a user's click does, and without this the rebuild would report every box it ticks
@@ -92,9 +106,8 @@ private:
 
     QPushButton* addButton_ = nullptr;
     QPushButton* removeButton_ = nullptr;
-    QPushButton* upButton_ = nullptr;
-    QPushButton* downButton_ = nullptr;
     QPushButton* editorButton_ = nullptr;
+    QPushButton* bypassButton_ = nullptr;
     QPushButton* savePresetButton_ = nullptr;
     QPushButton* loadPresetButton_ = nullptr;
 };

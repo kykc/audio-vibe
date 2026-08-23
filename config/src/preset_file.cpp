@@ -22,7 +22,8 @@ std::string describePosition(std::size_t index) {
 
 } // namespace
 
-bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, std::string& error) {
+bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainBypassed,
+                std::string& error) {
     error.clear();
 
     // Through the path overload rather than a narrow string: on Windows that is the wide native
@@ -64,6 +65,11 @@ bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, std::string&
         return false;
     }
 
+    // Absent means false, and the file is still a preset -- the key is younger than the format,
+    // and refusing everything written before it would be refusing every preset anyone has.
+    bool bypassed = false;
+    readScalar(root, kKeyChainBypassed, bypassed);
+
     // Built to the side and handed over only once the whole file is understood. `rack` is the
     // caller's current chain in every use that matters, and it must survive a refusal intact.
     std::vector<RackEntry> loaded;
@@ -103,10 +109,12 @@ bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, std::string&
     }
 
     rack = std::move(loaded);
+    chainBypassed = bypassed;
     return true;
 }
 
-bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, std::string& error) {
+bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool chainBypassed,
+                 std::string& error) {
     error.clear();
     if (path.empty()) {
         error = "no location to save to";
@@ -126,6 +134,7 @@ bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, std::
     YAML::Emitter out;
     out << YAML::BeginMap;
     out << YAML::Key << kKeyVersion << YAML::Value << kPresetFormatVersion;
+    out << YAML::Key << kKeyChainBypassed << YAML::Value << chainBypassed;
     out << YAML::Key << kKeyRack << YAML::Value << YAML::BeginSeq;
     for (const RackEntry& entry : rack) {
         writeRackEntry(out, entry);
@@ -148,7 +157,7 @@ bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, std::
             error = "cannot write " + temporary.string();
             return false;
         }
-        file << "# audio-ipc2 chain preset: the rack, and nothing else about the shell.\n";
+        file << "# audio-ipc2 chain preset: the chain, and nothing else about the shell.\n";
         file << "# Load it from the Rack panel's Load Preset button, which replaces whatever is\n";
         file << "# in the rack with what is written here.\n";
         file << out.c_str() << '\n';

@@ -408,12 +408,20 @@ registered are greyed out, sorted to the bottom, and cannot be selected -- attac
 never work, because there is no other side to the rendezvous, and it looks exactly like a device
 nobody is playing to. Hover for the reason.
 
-**Rack.** The plugin chain, in order. Each row's **check box is the bypass control** and reads the
-way a rack reads: ticked is in the chain, cleared is bypassed. Buttons act on the selected plugin
--- `Add...` (goes through the out-of-process scanner, so a hostile plugin cannot kill the shell),
-`Editor`, `Move up`, `Move down`, `Remove` -- and, set apart below, `Save Preset` and
-`Load Preset`, which act on the whole chain. The rack can be mutated while audio is flowing
-without disturbing the plugins you are not touching.
+**Rack.** The plugin chain, in order. Each row's **check box is the bypass control for that
+plugin** and reads the way a rack reads: ticked is in the chain, cleared is bypassed. **Drag a row
+to reorder the chain**; there are no move buttons. Buttons act on the selected plugin -- `Add...`
+(goes through the out-of-process scanner, so a hostile plugin cannot kill the shell), `Editor`,
+`Remove` -- and, set apart below, three that act on the whole chain: `Bypass`, `Save Preset` and
+`Load Preset`. The rack can be mutated while audio is flowing without disturbing the plugins you
+are not touching.
+
+`Bypass` takes the **whole chain** out of the signal path: the endpoint's audio is handed straight
+back, bit for bit, and nothing in the rack runs. It stays pressed until you release it, and while
+it is pressed the link line says `chain bypassed`. Nothing is unloaded and nothing is
+re-prepared -- every plugin keeps its settings and its editor, so switching back is immediate --
+and the state is saved, with the session and with a preset, because a chain that was switched out
+of the path is how you left it.
 
 **Counters.** The numbers that say whether the thing is healthy, on two lines:
 
@@ -434,8 +442,8 @@ process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25
 
 Below that is a log view of what the shell has done.
 
-The session -- the rack, each plugin's own state, the cached scan report, the window geometry and
-the last endpoint -- is one YAML file, written next to the executable if that directory is
+The session -- the rack, each plugin's own state, whether the chain was bypassed, the cached scan
+report, the window geometry and the last endpoint -- is one YAML file, written next to the executable if that directory is
 writable and in AppData otherwise. It is saved on close *and* on `WM_QUERYENDSESSION`, so a
 Windows restart with the shell open does not throw it away.
 

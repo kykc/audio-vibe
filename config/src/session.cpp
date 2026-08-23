@@ -14,6 +14,7 @@ std::string describe(const RackEntry& entry) {
 void capture(const engine::Engine& engine, Session& session) {
     session.rack.clear();
     session.rack.reserve(engine.pluginCount());
+    session.chainBypassed = engine.chainBypassed();
 
     for (std::size_t i = 0; i < engine.pluginCount(); ++i) {
         const engine::PluginInstance* instance = engine.pluginAt(i);
@@ -148,6 +149,11 @@ std::size_t apply(const Session& session, engine::Engine& engine,
         }
         ++restored;
     }
+
+    // Last, and unconditionally -- including for an empty rack, which is a chain someone can
+    // perfectly well have left switched out of the path. It is set after the plugins rather than
+    // before only for tidiness; nothing above reads it.
+    engine.setChainBypass(session.chainBypassed);
 
     return restored;
 }

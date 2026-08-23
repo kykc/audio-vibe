@@ -344,6 +344,87 @@ TEST_CASE("rack mutation preserves the plugins it does not touch", "[engine][rac
     }
 }
 
+TEST_CASE("the chain bypass hands the block back untouched", "[engine][chain]") {
+    // The whole-chain bypass, which is a different thing from bypassing every plugin in the rack:
+    // the chain stays published and prepared, and the audio thread simply never reaches it. What
+    // this proves is that it is bit-exact -- a bypass that ran anything at all would show up here
+    // as a scaled ramp -- and that nothing about the rack was disturbed on the way through.
+    constexpr std::int32_t kFrames = 64;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    setParameter(host, 0, kGainParam, 1.0); // 2x
+    setParameter(host, 1, kGainParam, 1.0); // 2x again: 4x through the chain
+
+    CHECK_FALSE(host.chainBypassed());
+
+    Rig rig(host.blockProcessor(), L"engine-chain-bypass");
+    const std::vector<float> in = signedRamp(kFrames);
+
+    const std::vector<float> processed = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(processed[i] == Approx(in[i] * 4.f));
+    }
+
+    const std::uint64_t ranBefore = host.chainProcessor().blocksProcessed();
+    const std::uint64_t passedBefore = host.chainProcessor().blocksPassedThrough();
+
+    host.setChainBypass(true);
+    CHECK(host.chainBypassed());
+
+    // Bit-for-bit, not approximately: the samples the king published are the samples it gets
+    // back, because nothing touched them.
+    const std::vector<float> bypassed = rig.run(in);
+    CHECK(bypassed == in);
+    CHECK(host.chainProcessor().blocksBypassed() == 1);
+    // A bypassed block is passed through, and says why. Neither counter may claim it was run.
+    CHECK(host.chainProcessor().blocksPassedThrough() == passedBefore + 1);
+    CHECK(host.chainProcessor().blocksProcessed() == ranBefore);
+
+    // Nothing left the rack and nothing was unpublished -- that is what makes coming back
+    // instantaneous, and what keeps every parameter the user set.
+    CHECK(host.pluginCount() == 2);
+    REQUIRE(host.chainProcessor().current() != nullptr);
+    CHECK(host.chainProcessor().current()->size() == 2);
+
+    host.setChainBypass(false);
+    const std::vector<float> restored = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(restored[i] == Approx(in[i] * 4.f));
+    }
+}
+
+TEST_CASE("the chain bypass survives what happens to the rack under it", "[engine][chain]") {
+    // It is a property of the chain, not of a chain object: publishing a new view over the rack
+    // must not quietly switch the audio back on. Every one of these republishes.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    host.setChainBypass(true);
+
+    REQUIRE(host.appendPlugin(kTestPluginPath, error));
+    CHECK(host.chainBypassed());
+
+    REQUIRE(host.setBypass(0, true));
+    CHECK(host.chainBypassed());
+
+    REQUIRE(host.rebuild(stereoFormat(44100), error));
+    CHECK(host.chainBypassed());
+
+    host.teardown();
+    CHECK(host.chainBypassed());
+
+    // And with nothing in the rack at all, which is a chain someone can perfectly well have
+    // switched out of the path before they built it.
+    host.clearPlugins();
+    CHECK(host.chainBypassed());
+}
+
 TEST_CASE("reordering the rack reorders processing", "[engine][rack]") {
     // Two gains would not do: multiplication commutes, so a rack that ran them backwards would
     // produce byte-identical output and this test would pass while proving nothing. The fixture's

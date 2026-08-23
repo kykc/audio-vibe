@@ -80,6 +80,12 @@ struct WindowGeometry {
 
 struct Session {
     std::vector<RackEntry> rack;
+    /// The whole-chain bypass (`engine::Engine::setChainBypass`), which is a fact about the chain
+    /// rather than about any plugin in it -- so it travels with the rack, into a preset file as
+    /// well as into the session file. A chain that was saved switched out of the signal path
+    /// comes back that way; the alternative is an application that starts processing audio
+    /// system-wide because it forgot it had been told not to.
+    bool chainBypassed = false;
     /// Every plugin the last scan knew about, usable or not. Independent of `rack` -- the rack is
     /// what the user built, this is what the picker offers them to build it from.
     std::vector<CatalogEntry> catalog;
@@ -95,9 +101,10 @@ struct Session {
     bool attached = false;
 };
 
-/// Reads the engine's rack into `session.rack`, asking every plugin for its state. Control
-/// thread, and it is not cheap -- a plugin's `getState` can be a real serialization -- so this is
-/// a thing to do when the user asks or when the shell closes, not on a timer.
+/// Reads the engine's rack into `session.rack` and its chain bypass into
+/// `session.chainBypassed`, asking every plugin for its state. Control thread, and it is not
+/// cheap -- a plugin's `getState` can be a real serialization -- so this is a thing to do when
+/// the user asks or when the shell closes, not on a timer.
 ///
 /// The rest of `session` is left alone: the engine knows nothing about windows or endpoints.
 void capture(const engine::Engine& engine, Session& session);
@@ -111,6 +118,12 @@ void capture(const engine::Engine& engine, Session& session);
 /// least useful response to one plugin having gone missing is to discard the other four.
 ///
 /// An entry marked `blocked` is skipped without being touched, and says so in `problems`.
+///
+/// `session.chainBypassed` is applied to the engine as it stands, because it describes the chain
+/// being restored and not the plugins in it. Note what that means for the appending case: a
+/// second `apply` sets the bypass to whatever *that* session says, which is right for the two
+/// callers there are -- a session restore into a fresh engine, and a preset load, which clears
+/// the rack first.
 ///
 /// `guard` is what makes the *next* start survive a plugin that takes this one down: every load
 /// is bracketed by it, so a shell that never comes back from `initialize` leaves behind the name

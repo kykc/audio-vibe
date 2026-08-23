@@ -200,6 +200,8 @@ bool readSession(const fs::path& path, Session& session, std::string& error) {
         return false;
     }
 
+    readScalar(root, kKeyChainBypassed, session.chainBypassed);
+
     if (const YAML::Node endpoint = root[kKeyEndpoint]; endpoint && endpoint.IsMap()) {
         readScalar(endpoint, kKeyId, session.endpointId);
         readScalar(endpoint, kKeyName, session.endpointName);
@@ -291,6 +293,7 @@ bool writeSession(const fs::path& path, const Session& session, std::string& err
     YAML::Emitter out;
     out << YAML::BeginMap;
     out << YAML::Key << kKeyVersion << YAML::Value << kSessionFormatVersion;
+    out << YAML::Key << kKeyChainBypassed << YAML::Value << session.chainBypassed;
 
     out << YAML::Key << kKeyEndpoint << YAML::Value << YAML::BeginMap;
     out << YAML::Key << kKeyId << YAML::Value << session.endpointId;
