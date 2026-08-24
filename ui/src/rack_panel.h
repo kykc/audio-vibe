@@ -10,6 +10,12 @@
 // than a plain QListWidget: the drop has to reach the engine before it reaches the view, or the
 // view would be the one deciding the order. See rack_list.h.
 //
+// Add has two routes and one button. Plain, it opens the picker on what the scanner found, which
+// is what almost everyone wants almost always. With Ctrl held it opens a native file dialog on a
+// `.vst3` binary instead -- for the plugin that is not installed where the SDK looks, or the one
+// being built. Both end in the same probe and the same insert; the difference is only how the path
+// is named (plugin_picker.h).
+//
 // The Bypass button is the one control here that acts on the chain rather than on a plugin in
 // it: pressed, the valet hands the king's samples straight back and nothing in the rack runs
 // (engine/engine.h). It is a toggle rather than a momentary press because it is a state the user
@@ -84,6 +90,11 @@ private:
     /// left off. Not saved with the session: it is about the last few minutes, not about the
     /// setup, and a stale path restored from a file is worse than none.
     QString presetDirectory_;
+
+    /// The same, for the Ctrl+Add file dialog. Kept apart from the preset one because the two are
+    /// never in the same place: one points into a plugin install or a build tree, the other at
+    /// wherever the user keeps their presets.
+    QString pluginFileDirectory_;
 
     /// -1 when nothing is selected.
     [[nodiscard]] int selectedIndex() const;

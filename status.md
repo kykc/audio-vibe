@@ -301,7 +301,8 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             runs in the session file and re-probed per entry only where a bundle's stamp has
             changed, plus the progress dialog that fills it),
             plugin_picker (scanned classes with vendor and category; unusable modules greyed out
-            with the reason; Rescan; a browsed bundle probed in a child before it is accepted),
+            with the reason; Rescan; a browsed bundle probed in a child before it is accepted;
+            Ctrl+Add for a native file dialog on the binary itself, probed the same way -- item 86),
             qt_paths.h (QString to std::filesystem::path, wide, in one place),
             engine_host (names the GUI thread as *the* control thread; the
             100 ms servicing tick), editor_manager (which editors are open, and the guarantee
@@ -768,6 +769,21 @@ Proven against the real deployed APO on the development machine:
   a scan started while a previous one is somehow still running, a module exposing more than one
   class, and the greyed-out entries -- which need a machine whose broken plugins are the ones being
   looked at rather than scrolled past.
+- **The Ctrl+Add *gesture* (item 86). Everything downstream of it is proven; the modifier itself is
+  not.** On 2026-08-24 the inner-DLL path was driven end to end on this machine, with
+  `ZL Equalizer 2.vst3\Contents\x86_64-win\ZL Equalizer 2.vst3`: `aip_scan` probes it out of
+  process and reports a usable class, `aip_ui --vst3` loads it and the rack names it, the session
+  file records that path with its class id and state, and the next start restores it -- "1 of 1
+  plugin(s) restored". So the loader branch, the scanner, the engine and `config/` all take a file
+  path, which is what the feature rests on.
+
+  What is untried is the click. This environment cannot inject real input -- `SendInput` and
+  `SetCursorPos` both come back `ERROR_ACCESS_DENIED`, even in session 2 on `WinSta0\Default` --
+  and a posted `WM_LBUTTONDOWN` does not carry a modifier Qt will see (sec. 8 item 32), so a
+  synthetic Ctrl+click opens the picker exactly as a plain click does. That is a limitation of the
+  harness and not evidence about the feature. Someone at the keyboard should press it once, and
+  while they are there, confirm that the native dialog will walk into a bundle's
+  `Contents\x86_64-win` with the `*.vst3` filter applied.
 - **That a format change is acted on during a scan.** A scan while attached is now known not to
   cost audio (see above), which was the half that could have caused a dropout. The other half is
   untried: nothing has driven a format change while a scan was running, so item 44's claim that the
@@ -2249,6 +2265,36 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     button into its capture for this frame style, though it draws all three for the shell's. A
     screenshot is not evidence here; the title-bar info is.
 
+86. **Ctrl on Add opens a native file dialog on the plugin binary, and that is a second route
+    rather than a replacement.** Asked for by the project owner on 2026-08-24. The picker's own
+    reasoning (plugin_picker.h) is unchanged and still right: a `.vst3` is a bundle *directory*, so
+    a native open dialog cannot select one, which is why the scanned list is what Add opens and why
+    Browse inside it is a *directory* dialog with `DontUseNativeDialog`. What Ctrl+Add adds is the
+    case that reasoning does not cover -- a plugin the scan cannot reach, because it is not
+    installed where the SDK walks or because it is a build output the user wants loaded from the
+    build tree.
+
+    What it selects is therefore the **binary**, not the bundle: `Contents/x86_64-win/Name.vst3`,
+    or a bare pre-bundle `.vst3`. That is not a compromise forced by the dialog, it is a path the
+    loader already supports -- `Win32Module::load` branches on `is_directory` and loads a file as a
+    plain DLL -- and `config::stampFor` already stamps a bare file, so the entry the probe merges
+    into the catalog is cached and re-validated like any other. Nothing below the UI needed
+    changing.
+
+    Three things it deliberately keeps and one it deliberately drops. It keeps the child-process
+    probe, the refusal dialog and the catalog merge, all shared with Browse (`explainRefusal`):
+    naming a file by hand is allowed to be direct and is not allowed to be unguarded, and the
+    argument for that is the one the whole scanner exists for (design_doc.md sec. 7.2): a plugin the
+    shell was merely *pointed* at must not be able to take the shell down. It keeps its own
+    remembered directory, next to the preset one. And it drops `ensureScanned`: this route is for a
+    file the catalog has nothing to say about, so making it wait out a first scan would defeat it --
+    which, by item 43's arithmetic, is also a way to add a plugin on a machine whose scan is slow or
+    hanging.
+
+    The modifier is read with `QGuiApplication::keyboardModifiers()` inside the `clicked` slot,
+    because `clicked` carries none. And it is on the Add button's tooltip, which is the only thing
+    on screen that says Ctrl does anything -- an undiscoverable modifier is a feature nobody has.
+
 ---
 
 ## 8. Traps already paid for
@@ -2488,6 +2534,23 @@ integration. These are the ones found while implementing. Re-discovering any is 
     `Audiosrv` after the write -- `apo_admin --restart-audio` -- and then play. Symptom without it
     is an install that looks correct in `--list` and produces no `DllGetClassObject` at all, which
     is indistinguishable from trap 26 until you look at the trace log.
+
+32. **A posted mouse message carries no modifier Qt will believe, and this session cannot inject a
+    real one.** Driving the shell from PowerShell works for everything up to the point where a
+    *modifier* matters. `PostMessage(WM_LBUTTONDOWN, MK_LBUTTON | MK_CONTROL)` clicks the button
+    and arrives with no Ctrl: Qt's Windows plugin takes a mouse event's modifiers from the physical
+    keyboard state, not from the message's `wParam`, so `MK_CONTROL` is discarded and
+    `QGuiApplication::keyboardModifiers()` is empty. Posting `WM_KEYDOWN VK_CONTROL` to the same
+    window first does not help either. The visible result is a Ctrl+click that behaves as a plain
+    click -- which reads exactly like a modifier check that does not work.
+
+    Nor is real input available as a fallback: in this environment `SendInput` and `SetCursorPos`
+    both return `ERROR_ACCESS_DENIED` (5) even in session 2 with the process on `WinSta0\Default`
+    and that desktop being the input desktop, and `SetThreadDesktop` on a freshly opened input
+    desktop fails `ERROR_BUSY` because the thread already owns windows. So: a modifier gesture
+    cannot be tested from here at all. Test what is under it instead -- the same code path reached
+    by a command-line switch, a session file, or the tool the child process runs -- and say plainly
+    in section 4 that the gesture is unclicked.
 
 ---
 

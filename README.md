@@ -416,6 +416,15 @@ to reorder the chain**; there are no move buttons. Buttons act on the selected p
 `Load Preset`. The rack can be mutated while audio is flowing without disturbing the plugins you
 are not touching.
 
+**Ctrl+click `Add...`** to skip the list and name a file yourself, in the platform's own open
+dialog. What it selects is the plugin *binary* -- the DLL inside the bundle, at
+`Contents/x86_64-win/Name.vst3`, or a bare pre-bundle `.vst3` -- because a native file dialog
+cannot return a bundle directory; for a whole bundle, use `Browse` inside the picker. This is the
+route to a plugin that is not installed where the SDK looks, or one you have just built and want to
+load out of the build tree, and it does not scan first -- so it is also the way in that costs
+nothing on a machine whose scan takes minutes. The file is still probed in a child process before
+it is accepted; pointing at it by hand is direct, not unguarded.
+
 An `Editor` opens the plugin's own editor, or a control per parameter for a plugin that has no
 editor to show. Editor windows are deliberately plainer than the shell: no title-bar icon, and no
 minimize or maximize button -- an editor belongs to its plugin, and its caption says which one.

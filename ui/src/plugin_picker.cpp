@@ -76,6 +76,13 @@ struct Row {
         .arg(QString::fromStdString(module.path), reason, QString::fromStdString(module.error));
 }
 
+/// The dialog that says why a hand-picked path was refused. Both ways of naming a path by hand --
+/// the Browse button and Ctrl+Add -- end here when the probe says no, and it is the one place that
+/// wording lives.
+void explainRefusal(QWidget* parent, const scanner::ScannedModule& probed) {
+    QMessageBox::warning(parent, QStringLiteral("Cannot add this plugin"), describe(probed));
+}
+
 [[nodiscard]] const char* statusWord(scanner::ScanStatus status) {
     switch (status) {
     case scanner::ScanStatus::Crashed:
@@ -239,9 +246,11 @@ private:
         // is the difference between browsing being a convenience and browsing being the one way
         // left to kill the shell with a bad plugin.
         const scanner::ScannedModule probed = catalog_.probeOne(this, path);
+        // Rebuilt before the refusal is shown, not after: the probe merged an entry either way,
+        // and the list behind the message box should already be showing it.
         rebuild();
         if (!probed.usable()) {
-            QMessageBox::warning(this, QStringLiteral("Cannot add this plugin"), describe(probed));
+            explainRefusal(this, probed);
             return;
         }
         browsed_ = path;
@@ -269,6 +278,37 @@ PluginChoice choosePlugin(QWidget* parent, PluginCatalog& catalog) {
         return {};
     }
     return picker.chosen();
+}
+
+PluginChoice chooseVst3File(QWidget* parent, PluginCatalog& catalog, QString& directory) {
+    // The native dialog, deliberately -- this is the route for someone who already knows the path,
+    // and the shell's own dialogs are the wrong thing to make them work through. `All files` is
+    // second because a plugin built moments ago may not be named `.vst3` yet.
+    QString start = directory;
+    if (start.isEmpty()) {
+        // Only the first time, and only as somewhere to stand: the standard location is where a
+        // bundle whose inside they want to reach almost certainly is.
+        const QString common = qEnvironmentVariable("CommonProgramFiles");
+        start = common.isEmpty() ? QString() : common + QStringLiteral("/VST3");
+    }
+    const QString path = QFileDialog::getOpenFileName(parent, QStringLiteral("Load a VST3 plugin binary"), start,
+        QStringLiteral("VST3 plugin (*.vst3);;All files (*)"));
+    if (path.isEmpty()) {
+        return {};
+    }
+    directory = QFileInfo(path).absolutePath();
+
+    // Same child process, same refusal, as the picker's Browse. Naming the file rather than the
+    // bundle changes which path the loader takes (`Module::create` loads a file as a plain DLL);
+    // it does not change whether a plugin that faults on load is allowed near this process.
+    const scanner::ScannedModule probed = catalog.probeOne(parent, path);
+    if (!probed.usable()) {
+        explainRefusal(parent, probed);
+        return {};
+    }
+    // No class id, for the same reason a browsed bundle carries none: the module was named, not one
+    // class in it, so the engine takes the first audio effect it offers.
+    return PluginChoice{path, QString()};
 }
 
 } // namespace aip::ui

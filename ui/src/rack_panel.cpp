@@ -9,6 +9,7 @@
 
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -59,6 +60,11 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     };
 
     addButton_ = button(QStringLiteral("Add..."));
+    // The only thing on screen that says Ctrl does anything. A modifier nobody is told about is a
+    // feature nobody has, and this one cannot be inferred from a button reading `Add...`.
+    addButton_->setToolTip(QStringLiteral("Choose from the plugins found on this machine.\n\nHold "
+                                          "Ctrl to point at a .vst3 binary instead -- the DLL "
+                                          "inside a bundle, or one that is not installed."));
     editorButton_ = button(QStringLiteral("Editor"));
     removeButton_ = button(QStringLiteral("Remove"));
     // Below the stretch, and away from the rest: everything above acts on one plugin, these three
@@ -168,7 +174,13 @@ void RackPanel::updateButtons() {
 }
 
 void RackPanel::addPlugin() {
-    const PluginChoice choice = choosePlugin(this, catalog_);
+    // Ctrl held means "I know which file I want": the scanned list is skipped and the platform's
+    // own open dialog is put on the binary itself (plugin_picker.h). Asked of the application and
+    // not of an event, because `clicked` carries no modifiers -- `keyboardModifiers()` is the state
+    // as of the event being delivered, which is the click that got us here.
+    const bool direct = (QGuiApplication::keyboardModifiers() & Qt::ControlModifier) != Qt::NoModifier;
+    const PluginChoice choice =
+        direct ? chooseVst3File(this, catalog_, pluginFileDirectory_) : choosePlugin(this, catalog_);
     if (choice.isEmpty()) {
         return;
     }
