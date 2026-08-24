@@ -10,5 +10,3 @@
 * Why timeouts are not climbing after attaching to the idle device right after starting UI?
 * branding: name, proper small icon, etc.
 * gracefully handle plugin path changes (plugin id? class?), concerns both main state and presets.
-* if control is pressed when clicking on add -> add from file
-* if control is pressed when clicking on editor -> built in editor even if there is non-default

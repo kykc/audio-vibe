@@ -10,6 +10,11 @@
 // than a plain QListWidget: the drop has to reach the engine before it reaches the view, or the
 // view would be the one deciding the order. See rack_list.h.
 //
+// Two of these controls read the Ctrl key, and both mean the same thing by it: "the plain thing is
+// not what I want this time". On Add it means a file dialog instead of the scanned list; on Editor
+// -- and on a double-clicked row, which is the same request -- it means the shell's own sliders
+// instead of the editor the plugin drew. Neither is discoverable, so both say so in a tooltip.
+//
 // Add has two routes and one button. Plain, it opens the picker on what the scanner found, which
 // is what almost everyone wants almost always. With Ctrl held it opens a native file dialog on a
 // `.vst3` binary instead -- for the plugin that is not installed where the SDK looks, or the one

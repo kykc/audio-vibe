@@ -58,6 +58,8 @@ public:
 
     [[nodiscard]] engine::PluginInstance* instance() const noexcept override { return instance_; }
 
+    [[nodiscard]] EditorKind kind() const noexcept override { return EditorKind::Generic; }
+
     [[nodiscard]] QString describe() const override;
 
     /// Re-reads every row from the controller. The timer below does this too; this is the same

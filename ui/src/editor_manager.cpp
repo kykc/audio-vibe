@@ -14,31 +14,49 @@ bool EditorManager::isOpen(engine::PluginInstance& instance) const {
     return windows_.find(&instance) != windows_.end();
 }
 
-void EditorManager::open(engine::PluginInstance& instance, QWidget* parent) {
+void EditorManager::open(engine::PluginInstance& instance, QWidget* parent, EditorKind kind) {
     const auto existing = windows_.find(&instance);
-    if (existing != windows_.end()) {
+    if (existing != windows_.end() && existing->second->kind() == kind) {
         existing->second->raise();
         existing->second->activateWindow();
         return;
     }
+    // Not held across the build below: `close()` erases from the map and would leave it dangling.
+    const bool replacing = existing != windows_.end();
 
     const QString name = QString::fromStdString(instance.name());
 
     QString nativeError;
-    PluginEditorWindow* window = EditorWindow::create(instance, parent, nativeError);
+    PluginEditorWindow* window = nullptr;
+    if (kind == EditorKind::PluginsOwn) {
+        window = EditorWindow::create(instance, parent, nativeError);
+    }
 
     // Any failure falls through to the generic editor, not just "no view". A plugin that offers a
     // view we cannot embed -- no HWND support, a refused window -- is in the same position from
     // the user's side as one that offers none: its parameters are still there, and sliders still
     // reach them. The reason the plugin's own editor was not used is carried into the message
     // rather than discarded, because "why am I looking at sliders" is the first thing to ask.
+    //
+    // A `Generic` request arrives here with `window` still null and nothing to explain, which is
+    // the same line doing the asking for a different reason.
     QString genericError;
     if (window == nullptr) {
         window = GenericEditorWindow::create(instance, parent, genericError);
     }
     if (window == nullptr) {
-        Q_EMIT message(QStringLiteral("%1: %2; %3").arg(name, nativeError, genericError));
+        Q_EMIT message(kind == EditorKind::Generic ? QStringLiteral("%1: %2").arg(name, genericError)
+                                                   : QStringLiteral("%1: %2; %3").arg(name, nativeError, genericError));
         return;
+    }
+
+    // Only now, with the replacement built and in hand: a plugin that could not produce the kind
+    // that was asked for has left the editor the user already had alone. The two windows do
+    // overlap for the few lines between the create above and this close, which is safe -- neither
+    // holds anything of the other's, the controller they both talk to is the instance's and
+    // outlives both, and this is all one thread.
+    if (replacing) {
+        close(instance);
     }
 
     connect(window, &PluginEditorWindow::closed, this, &EditorManager::onWindowClosed);

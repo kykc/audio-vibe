@@ -49,6 +49,8 @@ public:
 
     [[nodiscard]] engine::PluginInstance* instance() const noexcept override { return instance_; }
 
+    [[nodiscard]] EditorKind kind() const noexcept override { return EditorKind::PluginsOwn; }
+
     [[nodiscard]] QString describe() const override;
 
     /// How many windows the plugin created inside the HWND we gave it. Zero means it accepted the

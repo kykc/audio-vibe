@@ -1,7 +1,8 @@
 // What every plugin editor window has in common, whoever drew it.
 //
 // There are two kinds. `EditorWindow` embeds the plugin's own `IPlugView`; `GenericEditorWindow`
-// draws a control per parameter because the plugin has no view to embed. From `EditorManager`'s
+// draws a control per parameter -- because the plugin has no view to embed, or because the user
+// asked for the sliders over the view it does have (Ctrl+Editor). From `EditorManager`'s
 // point of view they differ in nothing that matters: both hold something of the plugin's that has
 // to be given back before the engine is allowed to destroy or re-prepare the instance, and both
 // tell the manager when the user closes them.
@@ -39,6 +40,21 @@ namespace aip::ui {
 inline constexpr Qt::WindowFlags kEditorWindowFlags =
     Qt::Window | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint;
 
+/// Which of the two an editor window is, and which of the two a caller is asking for.
+///
+/// The distinction was invisible from outside until the user was given a say in it: `open` tried
+/// the plugin's view and fell back, and nothing else had a reason to care which arrived. Now that
+/// Ctrl+Editor can ask for the sliders over a view that exists, the two need naming -- both to say
+/// what is wanted and to answer "is what is already open the thing being asked for".
+enum class EditorKind {
+    /// The plugin's own `IPlugView`, with the sliders as the fallback when there is none.
+    PluginsOwn,
+    /// The sliders the shell draws, whatever the plugin may or may not offer. No fallback: a
+    /// plugin whose controller exposes no visible parameter has nothing to draw, and the honest
+    /// answer there is a message and no window.
+    Generic,
+};
+
 class PluginEditorWindow : public QWidget {
     Q_OBJECT
 
@@ -56,6 +72,11 @@ public:
     /// Null once `release()` has run: the instance is no longer this window's business, and
     /// holding on to the pointer would be holding on to something the engine may have destroyed.
     [[nodiscard]] virtual engine::PluginInstance* instance() const noexcept = 0;
+
+    /// Which kind this window is. Asked by `EditorManager` to tell an editor that is already open
+    /// from the one being requested; a virtual rather than a `qobject_cast` so that the two kinds
+    /// are enumerated in one place and not wherever somebody needs to distinguish them.
+    [[nodiscard]] virtual EditorKind kind() const noexcept = 0;
 
     /// One line for the shell's status bar, saying what kind of editor this turned out to be and
     /// anything per-plugin worth knowing about it. Called just after the window opens.

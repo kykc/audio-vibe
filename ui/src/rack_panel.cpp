@@ -66,6 +66,10 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
                                           "Ctrl to point at a .vst3 binary instead -- the DLL "
                                           "inside a bundle, or one that is not installed."));
     editorButton_ = button(QStringLiteral("Editor"));
+    editorButton_->setToolTip(QStringLiteral("Open the selected plugin's own editor, or a control "
+                                             "per parameter if it has none.\n\nHold Ctrl for those "
+                                             "controls even when the plugin has an editor of its "
+                                             "own -- Ctrl and a double-clicked row do the same."));
     removeButton_ = button(QStringLiteral("Remove"));
     // Below the stretch, and away from the rest: everything above acts on one plugin, these three
     // act on the whole chain, and Load Preset is the only button here that throws work away.
@@ -400,7 +404,15 @@ void RackPanel::openEditorForSelected() {
     if (plugin == nullptr) {
         return;
     }
-    editors_.open(*plugin, window());
+    // Ctrl held asks for the shell's own sliders over the editor the plugin drew for itself --
+    // useful when a plugin's editor hides a parameter it exposes, or is unreadable, or is simply
+    // in the way of seeing a number. Read the same way Add reads it, and it reaches here from the
+    // button and from a double-clicked row alike, which is the intent: the modifier belongs to
+    // "open an editor", not to one control.
+    const EditorKind kind = (QGuiApplication::keyboardModifiers() & Qt::ControlModifier) != Qt::NoModifier
+        ? EditorKind::Generic
+        : EditorKind::PluginsOwn;
+    editors_.open(*plugin, window(), kind);
     refresh();
     list_->setCurrentRow(index);
 }

@@ -33,13 +33,22 @@ public:
     explicit EditorManager(QObject* parent = nullptr);
     ~EditorManager() override;
 
-    /// Opens the editor for `instance`, or raises it if it is already open.
+    /// Opens the editor for `instance`, or raises it if the kind asked for is already open.
     ///
-    /// The plugin's own editor when it has one, and a window of sliders built from its parameter
-    /// list when it does not -- VST3 permits a plugin to offer no view at all, and one that does
-    /// so is otherwise unreachable once loaded. Which of the two it turned out to be goes to the
-    /// status line rather than being silent, because the difference is worth noticing.
-    void open(engine::PluginInstance& instance, QWidget* parent);
+    /// `PluginsOwn` is the plugin's own editor when it has one, and a window of sliders built from
+    /// its parameter list when it does not -- VST3 permits a plugin to offer no view at all, and
+    /// one that does so is otherwise unreachable once loaded. Which of the two it turned out to be
+    /// goes to the status line rather than being silent, because the difference is worth noticing.
+    ///
+    /// `Generic` asks for those sliders over a view the plugin does have, and is what Ctrl+Editor
+    /// sends. It has no fallback in the other direction: the request is explicit, so a plugin with
+    /// nothing to draw gets a message rather than a window the user did not ask for.
+    ///
+    /// Asking for the kind that is *not* the one on screen replaces it, rather than raising what
+    /// is there. There is one editor per instance and the request says which one is wanted, so
+    /// raising the other kind would be the button quietly refusing. The replacement is built
+    /// before the incumbent is closed, so a request that cannot be honoured costs nothing.
+    void open(engine::PluginInstance& instance, QWidget* parent, EditorKind kind = EditorKind::PluginsOwn);
 
     /// Releases and destroys the editor for `instance`, if there is one. Returns immediately when
     /// there is not. After this call the instance may be destroyed or re-prepared.

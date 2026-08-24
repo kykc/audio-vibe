@@ -305,8 +305,9 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             Ctrl+Add for a native file dialog on the binary itself, probed the same way -- item 86),
             qt_paths.h (QString to std::filesystem::path, wide, in one place),
             engine_host (names the GUI thread as *the* control thread; the
-            100 ms servicing tick), editor_manager (which editors are open, and the guarantee
-            none outlives its plugin), editor_window (one editor, embedded per sec. 5.1),
+            100 ms servicing tick), editor_manager (which editors are open, which *kind* each one
+            is, and the guarantee none outlives its plugin -- item 87),
+            editor_window (one editor, embedded per sec. 5.1),
             plug_frame (IPlugFrame), window_chrome (the application icon every window wears,
             and the shell's blank caption -- item 35),
             aip_ui.rc + assets/ -- the application icon, declared on the executable and nowhere
@@ -769,21 +770,30 @@ Proven against the real deployed APO on the development machine:
   a scan started while a previous one is somehow still running, a module exposing more than one
   class, and the greyed-out entries -- which need a machine whose broken plugins are the ones being
   looked at rather than scrolled past.
-- **The Ctrl+Add *gesture* (item 86). Everything downstream of it is proven; the modifier itself is
-  not.** On 2026-08-24 the inner-DLL path was driven end to end on this machine, with
+- **The two Ctrl *gestures* (items 86 and 87). Everything downstream of them is proven; the
+  modifier itself is not.** Item 86's inner-DLL path was driven end to end on this machine on
+  2026-08-24, with
   `ZL Equalizer 2.vst3\Contents\x86_64-win\ZL Equalizer 2.vst3`: `aip_scan` probes it out of
   process and reports a usable class, `aip_ui --vst3` loads it and the rack names it, the session
   file records that path with its class id and state, and the next start restores it -- "1 of 1
   plugin(s) restored". So the loader branch, the scanner, the engine and `config/` all take a file
   path, which is what the feature rests on.
 
-  What is untried is the click. This environment cannot inject real input -- `SendInput` and
-  `SetCursorPos` both come back `ERROR_ACCESS_DENIED`, even in session 2 on `WinSta0\Default` --
-  and a posted `WM_LBUTTONDOWN` does not carry a modifier Qt will see (sec. 8 item 32), so a
-  synthetic Ctrl+click opens the picker exactly as a plain click does. That is a limitation of the
-  harness and not evidence about the feature. Someone at the keyboard should press it once, and
-  while they are there, confirm that the native dialog will walk into a bundle's
-  `Contents\x86_64-win` with the `*.vst3` filter applied.
+  Item 87's downstream half was driven the same day and further: with the double-click temporarily
+  wired to `EditorKind::Generic`, `ZL Equalizer 2` -- a plugin with an editor of its own -- went
+  from its own view to 610 generic rows reading real values, back to its own view, and a repeat
+  request for the kind already open added no window and no log line. So the replacement path, the
+  no-fallback path and the raise path are all exercised; only the modifier that selects them is
+  not.
+
+  What is untried in both is the Ctrl itself. This environment cannot inject real input --
+  `SendInput` and `SetCursorPos` both come back `ERROR_ACCESS_DENIED`, even in session 2 on
+  `WinSta0\Default` -- and neither a posted `WM_LBUTTONDOWN` nor a posted `WM_KEYDOWN VK_CONTROL`
+  carries a modifier Qt will see (sec. 8 item 32), so a synthetic Ctrl+click and a synthetic
+  Ctrl+Space both behave as the plain gesture. That is a limitation of the harness and not evidence
+  about the features. Someone at the keyboard should press both once, and while they are there,
+  confirm that the native dialog will walk into a bundle's `Contents\x86_64-win` with the `*.vst3`
+  filter applied.
 - **That a format change is acted on during a scan.** A scan while attached is now known not to
   cost audio (see above), which was the half that could have caused a dropout. The other half is
   untried: nothing has driven a format change while a scan was running, so item 44's claim that the
@@ -2295,6 +2305,44 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     because `clicked` carries none. And it is on the Add button's tooltip, which is the only thing
     on screen that says Ctrl does anything -- an undiscoverable modifier is a feature nobody has.
 
+87. **Ctrl on Editor asks for the generic editor over a view the plugin does have, and the two
+    kinds of editor now have names.** Asked for by the project owner on 2026-08-24, and the second
+    Ctrl route on this panel (item 86 is the first); both mean "not the plain thing this time", and
+    both are on a tooltip for the reason item 86 ends with.
+
+    The generic editor was built for the plugin that offers no view (item 59), and until now that
+    was the only way to see it: `open` tried the
+    plugin's view and fell back. So the fallback was an implementation detail and nothing outside
+    ever named it. Letting the user choose changes that, which is why there is now an `EditorKind`
+    -- `PluginsOwn` or `Generic` -- passed into `EditorManager::open` and answered by a virtual
+    `kind()` on the window. A `qobject_cast` in the manager would have done the same job while
+    putting the list of kinds somewhere other than where the kinds are declared.
+
+    Three decisions inside it, none of them forced:
+
+    - **`Generic` does not fall back the other way.** `PluginsOwn` degrades to the sliders, because
+      "no view" is the plugin's answer and the user still needs the parameters. A `Generic` request
+      that finds no visible parameter gets a message and no window: the request was explicit, and
+      quietly opening the plugin's own editor instead would be answering a different question.
+    - **The kind that is not on screen replaces the kind that is.** There is one editor per
+      instance -- the map is keyed by `PluginInstance*` -- and two editors on one plugin, both
+      writing its parameters, is a mess nobody asked for. The alternative was to raise whatever is
+      open, which makes Ctrl+Editor look broken exactly when it is being used on purpose. Asking
+      for the kind already open still just raises it.
+    - **The replacement is built before the incumbent is closed.** A plugin that cannot produce the
+      requested kind therefore costs the user nothing -- the editor they had is still open. The two
+      windows overlap for a few lines, which is safe: neither holds anything of the other's, the
+      controller they both talk to belongs to the instance and outlives both, and it is all one
+      thread. Closing first would have been one line shorter and would have thrown away a working
+      editor on a failed request.
+
+    Verified on this machine on 2026-08-24 against `ZL Equalizer 2`, which has an editor of its own:
+    its own view (600 x 371 logical, one child window) replaced by 610 generic rows reading real
+    values, replaced back by its own view, and a second request for the kind already open adding no
+    window and no log line. Stranded plugins, audio-thread allocations, frees and locks all stayed
+    zero across the four transitions. The `Ctrl` in "Ctrl+Editor" is the one part that could not be
+    driven from here -- see sec. 4 and sec. 8 item 32.
+
 ---
 
 ## 8. Traps already paid for
@@ -2541,16 +2589,21 @@ integration. These are the ones found while implementing. Re-discovering any is 
     and arrives with no Ctrl: Qt's Windows plugin takes a mouse event's modifiers from the physical
     keyboard state, not from the message's `wParam`, so `MK_CONTROL` is discarded and
     `QGuiApplication::keyboardModifiers()` is empty. Posting `WM_KEYDOWN VK_CONTROL` to the same
-    window first does not help either. The visible result is a Ctrl+click that behaves as a plain
-    click -- which reads exactly like a modifier check that does not work.
+    window first does not help either, and neither does the keyboard route: posted `WM_KEYDOWN`
+    messages *do* drive Qt -- Tab moves the focus ring, Space presses the focused button, both
+    confirmed -- but a posted `VK_CONTROL` held around a posted `VK_SPACE` still produces a plain
+    activation. The visible result either way is a Ctrl gesture that behaves as the plain one --
+    which reads exactly like a modifier check that does not work.
 
     Nor is real input available as a fallback: in this environment `SendInput` and `SetCursorPos`
     both return `ERROR_ACCESS_DENIED` (5) even in session 2 with the process on `WinSta0\Default`
     and that desktop being the input desktop, and `SetThreadDesktop` on a freshly opened input
     desktop fails `ERROR_BUSY` because the thread already owns windows. So: a modifier gesture
     cannot be tested from here at all. Test what is under it instead -- the same code path reached
-    by a command-line switch, a session file, or the tool the child process runs -- and say plainly
-    in section 4 that the gesture is unclicked.
+    by a command-line switch, a session file, the tool the child process runs, or a temporary edit
+    that wires the branch to a gesture that *can* be posted (item 87 was proven that way, with the
+    double-click routed to `EditorKind::Generic` for one build) -- and say plainly in section 4 that
+    the gesture is unclicked.
 
 ---
 

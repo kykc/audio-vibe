@@ -426,9 +426,15 @@ nothing on a machine whose scan takes minutes. The file is still probed in a chi
 it is accepted; pointing at it by hand is direct, not unguarded.
 
 An `Editor` opens the plugin's own editor, or a control per parameter for a plugin that has no
-editor to show. Editor windows are deliberately plainer than the shell: no title-bar icon, and no
-minimize or maximize button -- an editor belongs to its plugin, and its caption says which one.
-They stay resizable where the plugin's view is.
+editor to show. **Ctrl+click `Editor`** -- or Ctrl+double-click the row -- to get those controls
+even when the plugin *does* have an editor of its own: one row per parameter, with the value as the
+plugin spells it, which is the way to reach a parameter its editor hides and the way to read a
+number its editor only draws. There is one editor per plugin, so asking for the kind that is not
+on screen replaces the one that is, and asking for the kind that is already there just raises it.
+
+Editor windows are deliberately plainer than the shell: no title-bar icon, and no minimize or
+maximize button -- an editor belongs to its plugin, and its caption says which one. They stay
+resizable where the plugin's view is.
 
 `Bypass` takes the **whole chain** out of the signal path: the endpoint's audio is handed straight
 back, bit for bit, and nothing in the rack runs. It stays pressed until you release it, and while
