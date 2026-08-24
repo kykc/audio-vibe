@@ -52,6 +52,10 @@ cmake/      the two pinned third-party dependencies: the VST3 SDK and yaml-cpp
   MSVC is not redistributable, so pixi *activates* a local install rather than providing one.
   ARM64 build tools are **not** needed -- ARM64 is deferred (design_doc.md sec. 11.5).
 - **[pixi](https://pixi.sh)**, which brings everything else (CMake, Ninja, Qt 6, Catch2).
+- The **Microsoft Visual C++ 2015-2022 x64 redistributable** -- a prerequisite for *running* what
+  is built, here or anywhere the portable folder is copied to (design_doc.md sec. 6.7). Visual
+  Studio installs it, so a build machine already satisfies it; a machine that only runs the package
+  may not.
 - **Long path support**, both halves. The VST3 SDK has ~120-character internal paths and a deep
   source root breaks the build in ways that do not point at their cause:
 
@@ -69,6 +73,8 @@ pixi run configure    # CMake, Ninja Multi-Config
 pixi run build        # RelWithDebInfo
 pixi run test         # ctest
 pixi run package      # build/package -- a portable folder needing no pixi, Qt or VS
+                      # (one prerequisite: the MSVC redistributable -- sec. 6.7),
+                      # with the APO and its tools in build/package/apo
 ```
 
 **The first build downloads about 124 MB** (the VST3 SDK archive) and compiles five SDK
@@ -252,10 +258,29 @@ ui/RelWithDebInfo/aip_ui.exe
 apo/RelWithDebInfo/aip_apo.dll
 ```
 
-`pixi run package` produces `build/package`, which contains **only `aip_ui.exe` and
-`aip_scan.exe`** plus their Qt dependencies -- it is the portable shell, not a developer kit. The
-APO and the three tools here are not in it, and the installer that would carry them does not
-exist yet.
+`pixi run package` produces `build/package`: `aip_ui.exe` and `aip_scan.exe` plus their Qt
+dependencies, and an `apo\` subfolder with **`aip_apo.dll`, `apo_admin.exe` and `apo_host.exe`** --
+enough to register the APO on a machine and manage it there, which is what the folder is for. It
+is still not a developer kit: `valet_probe` and `editor_spike` are not in it, and the installer
+that would replace this folder does not exist yet.
+
+`apo\` is a separate folder because it is a separate act. Running the shell costs nothing and ends
+when it is closed; putting the APO into an endpoint's effect chain rewrites machine state, needs
+elevation, and stays until it is undone. It ships a `README.txt` with the commands in order, and
+with the two ways the whole thing silently does nothing -- registration records the path the DLL
+was registered from, and the audio engine, running as a service account, cannot read a folder under
+your user profile.
+
+**The folder needs one thing from the machine: the [Microsoft Visual C++ 2015-2022 x64
+redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).** Qt and everything under it are
+in the folder; the MSVC runtime deliberately is not (design_doc.md sec. 6.7). A copy in our own
+folder would be patched by nobody -- it would freeze at whatever version the build machine held,
+security fixes included -- while the redistributable puts one serviced copy in `System32` that
+Windows Update maintains and every application shares. Any machine with Visual Studio, or with
+almost any other native application installed, already has it. Without it, `aip_ui.exe` fails to
+start with a loader dialog naming `VCRUNTIME140.dll`. Note that `aip_apo.dll` is the exception and
+needs nothing: it is built `/MT` precisely so that nothing inside `audiodg.exe` depends on a
+redistributable.
 
 ### `valet_probe` -- the client, without the GUI
 

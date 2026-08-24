@@ -185,7 +185,8 @@ To hand the thing to someone who has none of this installed:
 
 ```
 pixi run package       # build/package -- a folder that runs on a machine with no pixi,
-                       # no Qt and no Visual Studio. Copy it anywhere.
+                       # no Qt and no Visual Studio. Copy it anywhere. build/package/apo
+                       # is the APO and the tools that register and manage it (item 88).
 ```
 
 The shell also takes a command line, for checking a state without clicking through to it. Note
@@ -323,8 +324,11 @@ cmake/      vst3sdk.cmake -- the pinned SDK, and every workaround sec. 6.3 calls
             yamlcpp.cmake -- yaml-cpp 0.8.0, pinned the same way, static, plus the two policy
             overrides CMake 4 needs to configure it at all (trap 23).
             package.cmake + package_impl.cmake -- the portable folder: a dependency walk for the
-            DLLs, an explicit list for the Qt plugins nothing imports, and the redistributable
-            CRT. No windeployqt (trap 24)
+            DLLs, an explicit list for the Qt plugins nothing imports, run once per folder because
+            the shell and `apo/` resolve their imports separately (item 88). The MSVC runtime is
+            excluded by name, being a prerequisite and not a payload (design_doc.md sec. 6.7).
+            No windeployqt (trap 24).
+            apo_readme.txt -- the operating instructions that ship inside `apo/`
 tests/      76 Catch2 tests. harness/synthetic_king (the sec. 4.7 producer), harness/
             test_processors, harness/wait_for, fixtures/aip_test_plugin (a real VST3 plugin
             built from the SDK), fixtures/aip_hostile_plugin (two that misbehave on purpose --
@@ -668,6 +672,29 @@ Proven against the real deployed APO on the development machine:
   halves at once, since a session file next to the executable is what portable mode means.
   `aip_scan.exe` runs from the same folder too, probing the fixture and printing its wire format,
   so the scanner has its child where it looks for it (item 42).
+
+  Re-driven on 2026-08-24 after the MSVC runtime was taken out of the package (item 88): 22 DLLs
+  now instead of 30, and the same test -- the folder copied out of the build tree, run from a shell
+  with no pixi environment on `PATH` -- still comes up, enumerates the endpoint and restores its own
+  portable `aip_config.yaml`. `aip_scan.exe` still probes an installed plugin from there and ends
+  `end ok`, and `apo\apo_admin.exe` still reports the endpoint's GFX slot. All three are `/MD`, so
+  what that shows is the machine's own redistributable being found in `System32` -- which is what
+  design_doc.md sec. 6.7 relies on. It does *not* show what happens on a machine without it; that
+  is the one thing this machine cannot demonstrate, since Visual Studio put it there.
+- **The packaged `apo/` folder runs from where it is packaged, as far as it can be tested without
+  changing this machine.** On 2026-08-24, with the folder freshly written: `apo_admin --list` runs
+  from `build/package/apo` with no pixi environment on `PATH` and reports this machine's endpoint
+  and GFX slot correctly, so the staged CRT is doing its job; and `LoadLibraryW` on the packaged
+  `aip_apo.dll` succeeds and finds all four COM entry points -- `DllGetClassObject`,
+  `DllCanUnloadNow`, `DllRegisterServer`, `DllUnregisterServer` -- so the DLL that would be
+  registered is intact and its imports resolve.
+
+  What has *not* been done from the package is the registration itself: `regsvr32 aip_apo.dll`
+  followed by `apo_admin --install --restart-audio` would move this machine's live APO from the
+  path it is registered at now (`C:\aip\aip_apo.dll`) to a path inside `build/`, which is a
+  deliberate act on the project owner's machine and not a test to run unasked. So the last step of
+  item 88's README -- register, slot, attach -- is reasoning plus two proven halves, and one
+  elevated prompt away from being verified.
 - **A plugin that kills the shell costs one start, not the application.** Driven end to end on
   2026-08-22 with `aip_crash_plugin`, the fixture that faults inside `GetPluginFactory` -- in the
   loader's own call, before any of our code is on the stack. A session naming it takes the shell
@@ -1668,6 +1695,10 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     nothing imports one: those are a list, and the list is a decision recorded in
     `package_impl.cmake` next to the reason for each entry.
 
+    One thing deliberately does not go in: the MSVC runtime, which is a machine prerequisite
+    (design_doc.md sec. 6.7). That was not so when this item was written -- the redistributable
+    DLLs were copied in from the local Visual Studio -- and item 88 records the change.
+
     Three things go in that are not dependencies of anything. `aip_scan.exe`, because the scanner
     looks for its child beside the running executable (item 42) and a package without it reports
     every plugin on the machine as broken. A `qt.conf` pinning `Plugins = plugins`, because
@@ -2336,12 +2367,65 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
       thread. Closing first would have been one line shorter and would have thrown away a working
       editor on a failed request.
 
-    Verified on this machine on 2026-08-24 against `ZL Equalizer 2`, which has an editor of its own:
+    Verified on this machine on 2026-08-24 against `ZL Equalizer 2`, which has an editor of its
+    own:
     its own view (600 x 371 logical, one child window) replaced by 610 generic rows reading real
     values, replaced back by its own view, and a second request for the kind already open adding no
     window and no log line. Stranded plugins, audio-thread allocations, frees and locks all stayed
     zero across the four transitions. The `Ctrl` in "Ctrl+Editor" is the one part that could not be
     driven from here -- see sec. 4 and sec. 8 item 32.
+
+88. **The portable folder carries the APO in an `apo/` subfolder, self-contained rather than
+    sharing.** Asked for by the project owner on 2026-08-24: the package should be able to register
+    and manage the APO on the machine it is copied to. So `aip_apo.dll`, `apo_admin.exe` and
+    `apo_host.exe` go in, and item 57's dependency walk is now run once per folder rather than once
+    for the package.
+
+    **A subfolder and not the root**, which was the alternative and is what "next to the shell"
+    would have meant. Running the shell costs nothing and is undone by closing it. Putting a CLSID
+    into an endpoint's GFX slot rewrites machine state, needs elevation, and can silence the machine
+    until it is put back -- and the folder boundary is the cheapest possible way to say that the
+    two are not the same act. It is also where the shipped `README.txt` can sit without being read
+    as instructions for the shell.
+
+    **The dependency walk runs once per folder**, because Windows resolves an executable's imports
+    against its own directory and never against the parent's: a DLL `apo\apo_admin.exe` needs has
+    to be in `apo\`, not merely somewhere in the package. As it turns out the two folders need
+    disjoint sets and `apo/` comes out with nothing but its own three files -- measured rather than
+    assumed: `apo_admin.exe` and `apo_host.exe` import `MSVCP140`, `VCRUNTIME140` and
+    `VCRUNTIME140_1`, which the machine provides (design_doc.md sec. 6.7, and the paragraph below);
+    `aip_apo.dll` imports `AVRT`, `ole32`, `ADVAPI32` and `KERNEL32` and nothing else, which is the
+    static CRT in `apo/CMakeLists.txt` doing exactly what it is there for. The per-folder walk stays
+    because that outcome is a property of what these five binaries link today, not a rule.
+
+    **The MSVC runtime came out of the package the same day it went in**, on the project owner's
+    instruction: it is a machine prerequisite, and the decision is normative in design_doc.md
+    sec. 6.7 rather than recorded here -- a private copy of a DLL that Windows Update services in
+    `System32` is a copy nobody patches. Two practical notes that belong with the code rather than
+    with the specification. The exclusion has to name the `msvcp140*` / `vcruntime140*` /
+    `concrt140*` family in `PRE_EXCLUDE_REGEXES` and cannot rely on the `System32` post-exclude,
+    because conda-forge's Qt ships its own copies of those DLLs in `Library/bin` -- the very
+    directory the walk searches -- so they resolve there and get copied in regardless of intent.
+    And `InstallRequiredSystemLibraries` is gone from `package.cmake`, with a comment saying so,
+    because its absence is the decision and an absence leaves nothing to read.
+
+    **`aip_apo.dll` is a MODULE to the dependency walk, not an executable**, because nothing links
+    it -- the audio engine loads it from the path `regsvr32` recorded. That recorded path is the
+    reason this folder is a deployment location rather than a staging area, and the reason the
+    shipped README leads with "put this folder where it is going to stay".
+
+    Two things in that README are the difference between this working and silently not working, and
+    both were checked on this machine rather than repeated from memory. Moving the folder after
+    registration leaves `InprocServer32` naming a DLL that is not there. And the audio engine runs
+    as a service account: `C:\Users\Kykc` grants rights to SYSTEM, Administrators and the user
+    only, while the path this project actually deploys to -- `C:\aip`, per the live registration --
+    grants `BUILTIN\Users:(RX)`. A package unzipped onto the desktop would register, slot, and never
+    load.
+
+    `apo_host.exe` is in there with the two management commands even though it manages nothing. It
+    is the one tool that proves the DLL loads and processes with `audiodg.exe` out of the loop, so
+    on a machine where nothing is happening it is the difference between a diagnosis and a guess --
+    which is also why `apo/README.md` lists it beside `regsvr32` and `apo_admin`.
 
 ---
 

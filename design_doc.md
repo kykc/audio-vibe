@@ -732,6 +732,48 @@ example a test fixture exercising an endpoint name with non-Latin characters. Wr
 escape sequences -- `L"\u00e9"`, never the literal e-acute character -- so that the source file
 stays ASCII while the runtime value does not.
 
+### 6.7 The MSVC runtime is a machine prerequisite, not a payload (normative)
+
+**Every machine that runs this software must have the Microsoft Visual C++ 2015-2022 x64
+redistributable (`vc_redist.x64.exe`, toolset v14.x) installed, at a version no older than the
+toolset the binaries were built with. The portable package does not carry it.** Sec. 6.2 lists what
+a machine needs to *build*; this is what a machine needs to *run*, and it is the only such
+requirement -- Qt and everything under it ship in the folder.
+
+Four of the five binaries need it, because they are built `/MD`: `aip_ui.exe`, `aip_scan.exe`,
+`apo_admin.exe` and `apo_host.exe` import `MSVCP140.dll`, `VCRUNTIME140.dll` and
+`VCRUNTIME140_1.dll`. The fifth is the one that must not, and does not: `aip_apo.dll` is built
+`/MT` -- the static CRT that sec. 5.2's table already gives it, for this exact reason -- and
+imports only `AVRT`, `ole32`, `ADVAPI32` and `KERNEL32`. That asymmetry is not
+an accident of this decision -- it predates it. An APO is loaded into `audiodg.exe`, and a system
+audio process is the last place to introduce a dependency on a redistributable a user may not have
+installed.
+
+The alternative was app-local deployment: copy the redistributable DLLs beside each executable,
+which is permitted and is what CMake's `InstallRequiredSystemLibraries` exists to make easy. It is
+rejected for one reason that outweighs self-containment:
+
+**A private copy is not serviced.** The redistributable installs into `System32`, where every
+application on the machine shares one copy and Windows Update patches it. A copy in our own folder
+is patched by nobody: it freezes at whatever version the build tree happened to hold on the day the
+package was made, security fixes included, and the only way to update it is to ship a new package.
+Central deployment is Microsoft's own recommendation for exactly this reason, and app-local
+deployment is the documented exception for the case where an installer cannot be run.
+
+Two consequences, both accepted:
+
+- **The package is not fully self-contained**, and must not be described as such. It is a folder
+  that needs no pixi, no Qt and no Visual Studio -- and one prerequisite.
+- **On a machine without the redistributable, the failure is a loader dialog** naming
+  `VCRUNTIME140.dll`. That is a diagnosable failure with a searchable message, unlike a missing Qt
+  platform plugin (sec. 6.3 and status.md sec. 8 item 21), which is why this prerequisite is
+  allowed to be a prerequisite rather than a payload.
+
+The dependency walk that builds the package therefore excludes the whole `msvcp140*` /
+`vcruntime140*` / `concrt140*` family by name, and the exclusion is load-bearing rather than
+belt-and-braces: conda-forge's Qt ships its own copies of those DLLs in the directory the walk
+searches, so without it they would be resolved and copied in regardless of intent.
+
 ---
 
 ## 7. Target architecture

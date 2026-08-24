@@ -12,14 +12,15 @@ if(POLICY CMP0207)
 endif()
 
 foreach(required AIP_PACKAGE_DIR AIP_PACKAGE_EXECUTABLES AIP_PACKAGE_QT_PLUGIN_DIR
-                 AIP_PACKAGE_SEARCH_DIRS)
+                 AIP_PACKAGE_SEARCH_DIRS AIP_PACKAGE_APO_EXECUTABLES AIP_PACKAGE_APO_MODULES)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "${required} was not passed to package_impl.cmake")
     endif()
 endforeach()
 
 string(REPLACE "|" ";" AIP_PACKAGE_EXECUTABLES "${AIP_PACKAGE_EXECUTABLES}")
-string(REPLACE "|" ";" AIP_PACKAGE_CRT_LIBS "${AIP_PACKAGE_CRT_LIBS}")
+string(REPLACE "|" ";" AIP_PACKAGE_APO_EXECUTABLES "${AIP_PACKAGE_APO_EXECUTABLES}")
+string(REPLACE "|" ";" AIP_PACKAGE_APO_MODULES "${AIP_PACKAGE_APO_MODULES}")
 string(REPLACE "|" ";" AIP_PACKAGE_SEARCH_DIRS "${AIP_PACKAGE_SEARCH_DIRS}")
 
 # Which Qt plugins go in. A dependency walk cannot discover these -- they are loaded by name at
@@ -35,6 +36,73 @@ string(REPLACE "|" ";" AIP_PACKAGE_SEARCH_DIRS "${AIP_PACKAGE_SEARCH_DIRS}")
 #                  out on someone else's machine the first time an icon is added.
 #   iconengines    same reasoning, for the SVG icon engine.
 set(AIP_QT_PLUGIN_DIRS platforms styles imageformats iconengines)
+
+# ------------------------------------------------------------------------------ staging a folder
+
+# Everything Windows itself provides. `api-ms-win-*` and `ext-ms-win-*` are the API sets that
+# front the system CRT and are never redistributed; the rest is the usual system surface. Held in
+# a variable because two folders are staged now -- the shell and `apo/` -- and a second copy of
+# this list is a second thing to keep in step.
+#
+# The MSVC runtime is in this list for a different reason than the rest, and the reason matters
+# enough to say twice: it is not shipped because it is a machine prerequisite (design_doc.md
+# sec. 6.7), not because Windows provides it. Excluding it by name is not optional -- conda-forge's
+# Qt ships its own `msvcp140.dll` and friends in `Library/bin`, which is exactly the directory the
+# walk searches, so without these two patterns the walk resolves them there and copies them in
+# whatever this file says it does not do.
+set(AIP_SYSTEM_DLL_REGEXES
+    "^api-ms-.*"
+    "^ext-ms-.*"
+    "^(msvcp140|vcruntime140|concrt140|vccorlib140).*\.dll$"
+    "^(kernel32|user32|gdi32|shell32|ole32|oleaut32|advapi32|comdlg32|comctl32)\.dll$"
+    "^(ws2_32|winmm|avrt|mmdevapi|version|imm32|dwmapi|uxtheme|d3d11|dxgi|d3d9|opengl32)\.dll$"
+    "^(setupapi|winspool|netapi32|userenv|crypt32|bcrypt|ncrypt|secur32|shlwapi)\.dll$"
+    "^(msvcrt|ntdll|rpcrt4|sechost|combase|psapi|powrprof|wtsapi32|dbghelp)\.dll$"
+)
+
+# And anything that resolved into Windows anyway -- which is also where the machine's own MSVC
+# runtime lives, so this catches it a second time on a machine that has it installed.
+set(AIP_SYSTEM_PATH_REGEXES "[Ss]ystem32" "[Ww]inSxS")
+
+# Walks the import tables of what has already been copied into `destination` and copies what they
+# need in beside them.
+#
+# Called once per folder rather than once for the whole package, because Windows resolves an
+# executable's imports against its own directory and never against the parent's: a DLL that
+# `apo\apo_admin.exe` needs has to be in `apo\`, not merely somewhere in the package. Today the two
+# folders happen to need disjoint sets -- the shell needs Qt, and the APO tools need only the
+# machine's own CRT -- but that is an outcome of what they link, not something to rely on.
+function(aip_stage_folder destination)
+    cmake_parse_arguments(PARSE_ARGV 1 ARG "" "" "EXECUTABLES;MODULES")
+
+    # The plugins and the APO go in as MODULES, not EXECUTABLES: they are not linked into
+    # anything, and their own imports are part of what has to be shipped.
+    file(GET_RUNTIME_DEPENDENCIES
+        EXECUTABLES ${ARG_EXECUTABLES}
+        MODULES ${ARG_MODULES}
+        DIRECTORIES ${AIP_PACKAGE_SEARCH_DIRS}
+        RESOLVED_DEPENDENCIES_VAR resolved
+        UNRESOLVED_DEPENDENCIES_VAR unresolved
+        PRE_EXCLUDE_REGEXES ${AIP_SYSTEM_DLL_REGEXES}
+        POST_EXCLUDE_REGEXES ${AIP_SYSTEM_PATH_REGEXES}
+    )
+
+    foreach(dependency IN LISTS resolved)
+        file(COPY "${dependency}" DESTINATION "${destination}")
+    endforeach()
+
+    # Unresolved is not automatically a failure -- everything excluded above lands here, which now
+    # includes the MSVC runtime the target machine is expected to have -- but it is the one place a
+    # genuinely missing DLL shows up before someone else's machine does the reporting, so it is
+    # printed rather than swallowed.
+    if(unresolved)
+        message(STATUS "Not resolved for ${destination} "
+                       "(expected from Windows or the VC++ redistributable):")
+        foreach(name IN LISTS unresolved)
+            message(STATUS "  ${name}")
+        endforeach()
+    endif()
+endfunction()
 
 # ------------------------------------------------------------------------------------- the folder
 
@@ -73,49 +141,57 @@ endforeach()
 
 # ------------------------------------------------------------------------------- the dependencies
 
-# The plugins go in as MODULES, not EXECUTABLES: they are not linked into anything, and their own
-# imports are part of what has to be shipped.
-file(GET_RUNTIME_DEPENDENCIES
+aip_stage_folder("${AIP_PACKAGE_DIR}"
     EXECUTABLES ${staged_executables}
-    MODULES ${staged_plugins}
-    DIRECTORIES ${AIP_PACKAGE_SEARCH_DIRS}
-    RESOLVED_DEPENDENCIES_VAR resolved
-    UNRESOLVED_DEPENDENCIES_VAR unresolved
-    # Everything Windows itself provides. `api-ms-win-*` and `ext-ms-win-*` are the API sets that
-    # front the system CRT and are never redistributed; the rest is the usual system surface.
-    PRE_EXCLUDE_REGEXES
-        "^api-ms-.*"
-        "^ext-ms-.*"
-        "^(kernel32|user32|gdi32|shell32|ole32|oleaut32|advapi32|comdlg32|comctl32)\\.dll$"
-        "^(ws2_32|winmm|avrt|mmdevapi|version|imm32|dwmapi|uxtheme|d3d11|dxgi|d3d9|opengl32)\\.dll$"
-        "^(setupapi|winspool|netapi32|userenv|crypt32|bcrypt|ncrypt|secur32|shlwapi)\\.dll$"
-        "^(msvcrt|ntdll|rpcrt4|sechost|combase|psapi|powrprof|wtsapi32|dbghelp)\\.dll$"
-    # And anything that resolved into Windows anyway. The CRT is handled separately below, from
-    # the redistributable copy rather than from System32.
-    POST_EXCLUDE_REGEXES
-        "[Ss]ystem32"
-        "[Ww]inSxS"
-)
+    MODULES ${staged_plugins})
 
-foreach(dependency IN LISTS resolved)
-    file(COPY "${dependency}" DESTINATION "${AIP_PACKAGE_DIR}")
-endforeach()
+# ------------------------------------------------------------------------------------------- apo/
 
-# Unresolved is not automatically a failure -- a name Windows provides that the excludes above did
-# not name still lands here -- but it is the one place a missing DLL shows up before someone else's
-# machine does the reporting, so it is printed rather than swallowed.
-if(unresolved)
-    message(STATUS "Not resolved (expected to be provided by Windows):")
-    foreach(name IN LISTS unresolved)
-        message(STATUS "  ${name}")
-    endforeach()
-endif()
+# The half that changes the machine rather than running on it: the APO, the tool that puts it into
+# an endpoint's effect chain, and the tool that drives it with `audiodg.exe` out of the loop.
+#
+# `aip_apo.dll` is here rather than beside the shell because its path is *recorded* --
+# `regsvr32` writes it into `InprocServer32` and the audio engine loads it from there ever after --
+# so this folder is the deployment location, not a staging area. `apo_host.exe` needs the DLL
+# beside it too, which the same copy satisfies: its default `--dll` is "next to this executable".
+set(apo_dir "${AIP_PACKAGE_DIR}/apo")
+file(MAKE_DIRECTORY "${apo_dir}")
 
-foreach(runtime IN LISTS AIP_PACKAGE_CRT_LIBS)
-    if(EXISTS "${runtime}")
-        file(COPY "${runtime}" DESTINATION "${AIP_PACKAGE_DIR}")
+set(staged_apo_executables)
+foreach(executable IN LISTS AIP_PACKAGE_APO_EXECUTABLES)
+    if(NOT EXISTS "${executable}")
+        message(FATAL_ERROR "${executable} does not exist -- build before packaging")
     endif()
+    file(COPY "${executable}" DESTINATION "${apo_dir}")
+    get_filename_component(name "${executable}" NAME)
+    list(APPEND staged_apo_executables "${apo_dir}/${name}")
 endforeach()
+
+set(staged_apo_modules)
+foreach(module IN LISTS AIP_PACKAGE_APO_MODULES)
+    if(NOT EXISTS "${module}")
+        message(FATAL_ERROR "${module} does not exist -- build before packaging")
+    endif()
+    file(COPY "${module}" DESTINATION "${apo_dir}")
+    get_filename_component(name "${module}" NAME)
+    list(APPEND staged_apo_modules "${apo_dir}/${name}")
+endforeach()
+
+# Nothing is expected to come out of this walk today, and it is here for the day something does.
+# `aip_apo.dll` is /MT and imports only AVRT, ole32, ADVAPI32 and KERNEL32 -- deliberately, since a
+# VC redistributable inside `audiodg.exe` is exactly what the static CRT avoids
+# (apo/CMakeLists.txt). The two tools are ordinary /MD executables, so what they need is the MSVC
+# runtime, which the machine provides and this package does not carry.
+aip_stage_folder("${apo_dir}"
+    EXECUTABLES ${staged_apo_executables}
+    MODULES ${staged_apo_modules})
+
+# The operating instructions, in the folder they operate on. A file of its own rather than a string
+# here: it is forty lines of prose containing Windows paths, and every backslash in it would need
+# doubling to survive CMake's parser. `apo/README.md` is a different document -- that one is about
+# the source tree and the design; this one is the commands, in order, and the two ways the whole
+# thing silently does nothing.
+configure_file("${CMAKE_CURRENT_LIST_DIR}/apo_readme.txt" "${apo_dir}/README.txt" COPYONLY)
 
 # ------------------------------------------------------------------------------------ the settings
 
@@ -141,4 +217,7 @@ version: 1\n")
 
 file(GLOB packaged "${AIP_PACKAGE_DIR}/*.dll")
 list(LENGTH packaged dll_count)
-message(STATUS "Packaged ${dll_count} DLL(s) into ${AIP_PACKAGE_DIR}")
+file(GLOB apo_packaged "${apo_dir}/*.dll" "${apo_dir}/*.exe")
+list(LENGTH apo_packaged apo_count)
+message(STATUS "Packaged ${dll_count} DLL(s) into ${AIP_PACKAGE_DIR}"
+               " and ${apo_count} file(s) into ${apo_dir}")

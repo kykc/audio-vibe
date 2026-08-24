@@ -1,7 +1,13 @@
 # The portable package: a folder that runs `aip_ui.exe` on a machine that has none of this
-# installed -- no pixi environment, no Qt, no Visual Studio.
+# installed -- no pixi environment, no Qt, no Visual Studio -- and, in `apo/`, registers and
+# manages the APO on it.
 #
-# Three kinds of thing have to be in it, and only the first is found by looking at the executable:
+# The two halves are deliberately separate folders. Running the shell costs nothing and is undone
+# by closing it; putting an APO into an endpoint's effect chain rewrites machine state, needs
+# elevation, and can silence the machine until it is undone (apo/README.md). A folder boundary is
+# the cheapest way to say that they are not the same act.
+#
+# Two kinds of thing have to be in it, and only the first is found by looking at the executable:
 #
 #   imported DLLs    Qt6Core/Gui/Widgets and everything *they* import, which on a conda-forge Qt
 #                    is a long tail of separate packages -- harfbuzz, freetype, pcre2, zlib, icu,
@@ -10,8 +16,15 @@
 #   Qt plugins       loaded by name at run time, so nothing imports them and no dependency walk
 #                    can find them. Listed explicitly below, and then fed back into the walk,
 #                    because a plugin has imports of its own.
-#   the MSVC runtime the redistributable half of the compiler. Present on this machine because
-#                    Visual Studio is; not present on a machine that only wants to run the thing.
+#
+# What is deliberately **not** in it is the MSVC runtime -- `msvcp140*.dll`, `vcruntime140*.dll`,
+# `concrt140.dll`. It is a machine prerequisite instead (design_doc.md sec. 6.7): the user installs
+# the Microsoft Visual C++ 2015-2022 x64 redistributable, which puts a serviced copy in System32
+# where every application on the machine shares it and Windows Update patches it. Shipping our own
+# copy in the package folder would shadow that for our two processes and freeze them on whatever
+# version this build tree happened to hold, security fixes included. The excludes in
+# `package_impl.cmake` keep the dependency walk from quietly putting them back, because
+# conda-forge's Qt carries its own copies in the very directory the walk searches.
 #
 # Not `windeployqt`. It is the canonical tool and it does not work here without help: the
 # conda-forge layout has no `qtpaths` where it looks, so it fails with "Unable to query qtpaths"
@@ -30,24 +43,27 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
 set(AIP_PACKAGE_DIR "${CMAKE_BINARY_DIR}/package" CACHE PATH
     "Where `pixi run package` writes the portable folder.")
 
-# Fills CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS with the redistributable CRT DLLs from the local Visual
-# Studio. _SKIP stops the module installing them itself -- we only want the list.
-set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
-include(InstallRequiredSystemLibraries)
-
+# There is deliberately no `InstallRequiredSystemLibraries` here. It is the module that names the
+# local Visual Studio's redistributable CRT DLLs so they can be copied into a package, and this
+# package does not copy them -- see the header comment. Its absence is the decision, so it is
+# written down rather than left as a thing nobody thought of.
+#
 # Lists cannot survive a -D argument as themselves: the semicolons would be argument separators by
-# the time the script sees them. Joined here, split there.
-string(REPLACE ";" "|" AIP_PACKAGE_CRT_LIBS "${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}")
+# the time the script sees them, which is why the multi-value ones below are joined with `|` here
+# and split there.
 
 add_custom_target(aip_package
     COMMAND ${CMAKE_COMMAND}
         -D "AIP_PACKAGE_DIR=${AIP_PACKAGE_DIR}"
         -D "AIP_PACKAGE_EXECUTABLES=$<TARGET_FILE:aip_ui>|$<TARGET_FILE:aip_scan>"
+        # The APO half. `aip_apo.dll` is a MODULE to the dependency walk and not an executable --
+        # nothing links it, and `audiodg.exe` loads it by the path `regsvr32` recorded.
+        -D "AIP_PACKAGE_APO_EXECUTABLES=$<TARGET_FILE:apo_admin>|$<TARGET_FILE:apo_host>"
+        -D "AIP_PACKAGE_APO_MODULES=$<TARGET_FILE:aip_apo>"
         -D "AIP_PACKAGE_QT_PLUGIN_DIR=${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}"
         -D "AIP_PACKAGE_SEARCH_DIRS=${QT6_INSTALL_PREFIX}/bin"
-        -D "AIP_PACKAGE_CRT_LIBS=${AIP_PACKAGE_CRT_LIBS}"
         -P "${CMAKE_CURRENT_LIST_DIR}/package_impl.cmake"
-    DEPENDS aip_ui aip_scan
+    DEPENDS aip_ui aip_scan aip_apo apo_admin apo_host
     COMMENT "Building the portable package in ${AIP_PACKAGE_DIR}"
     VERBATIM
     USES_TERMINAL)
