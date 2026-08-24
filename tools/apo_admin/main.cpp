@@ -35,6 +35,10 @@
 
 #include <functiondiscoverykeys_devpkey.h>
 
+#include <propidl.h>
+#include <wrl/client.h>
+
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <string>
@@ -43,6 +47,8 @@
 using namespace aip;
 
 namespace {
+
+using Microsoft::WRL::ComPtr;
 
 constexpr wchar_t kRenderPath[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
 
@@ -82,6 +88,7 @@ constexpr ModernSlot kModernSlots[] = {
 
 struct Endpoint {
     std::wstring guid;
+    /// Composed to read exactly as the shell's device picker does -- see `composeFriendlyName`.
     std::wstring friendlyName;
     std::wstring currentGfx;
     std::wstring originalGfx;
@@ -89,7 +96,42 @@ struct Endpoint {
     /// which is the state the GFX policy needs.
     std::wstring modern[3];
     bool hasFxProperties = false;
+    /// The endpoint's `DeviceState` value, i.e. a `DEVICE_STATE_*` bit. Zero means the value was
+    /// missing, which no healthy endpoint should be -- see `ready()` for why that counts as
+    /// present rather than absent.
+    DWORD state = 0;
+    /// Whether this is the default console-role render endpoint, the same role the shell picks
+    /// (`ipc/src/endpoints.cpp`). Needs MMDevice, so it stays false if COM is unavailable.
+    bool isDefault = false;
 };
+
+/// Whether the endpoint is one you could play to right now -- what `--list` shows by default.
+///
+/// A missing `DeviceState` is treated as present, not absent. The bias is deliberate: this tool
+/// exists to *find* endpoints carrying a slot that should not be there, and an endpoint we cannot
+/// classify is the last one worth hiding. `--show-all` lifts the filter entirely.
+[[nodiscard]] bool ready(const Endpoint& endpoint) {
+    return endpoint.state == 0 || (endpoint.state & DEVICE_STATE_ACTIVE) != 0;
+}
+
+[[nodiscard]] const wchar_t* stateLabel(DWORD state) {
+    if (state == 0) {
+        return L"(no DeviceState value)";
+    }
+    if ((state & DEVICE_STATE_ACTIVE) != 0) {
+        return L"active";
+    }
+    if ((state & DEVICE_STATE_DISABLED) != 0) {
+        return L"disabled";
+    }
+    if ((state & DEVICE_STATE_UNPLUGGED) != 0) {
+        return L"unplugged";
+    }
+    if ((state & DEVICE_STATE_NOTPRESENT) != 0) {
+        return L"not present";
+    }
+    return L"unknown";
+}
 
 [[nodiscard]] bool readString(HKEY root, const std::wstring& path, const wchar_t* value, std::wstring& out) {
     HKEY key = nullptr;
@@ -110,6 +152,118 @@ struct Endpoint {
         out.pop_back();
     }
     return true;
+}
+
+/// Listing order: the default device, then whatever else is present, then the rest, each group
+/// alphabetical.
+///
+/// Default first because it is the answer to the question almost everyone is actually asking, and
+/// putting it at the top means `--endpoint 0` is usually already right. Present-before-absent
+/// second so that `--show-all`'s extra rows accumulate at the bottom instead of interleaving with
+/// the devices you can hear.
+[[nodiscard]] bool sortsBefore(const Endpoint& a, const Endpoint& b) {
+    if (a.isDefault != b.isDefault) {
+        return a.isDefault;
+    }
+    const bool readyA = ready(a);
+    const bool readyB = ready(b);
+    if (readyA != readyB) {
+        return readyA;
+    }
+    return ::_wcsicmp(a.friendlyName.c_str(), b.friendlyName.c_str()) < 0;
+}
+
+[[nodiscard]] bool readDword(HKEY root, const std::wstring& path, const wchar_t* value, DWORD& out) {
+    HKEY key = nullptr;
+    if (::RegOpenKeyExW(root, path.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+    DWORD data = 0;
+    DWORD bytes = sizeof(data);
+    DWORD type = 0;
+    const LSTATUS status = ::RegQueryValueExW(key, value, nullptr, &type, reinterpret_cast<BYTE*>(&data), &bytes);
+    ::RegCloseKey(key);
+    if (status != ERROR_SUCCESS || type != REG_DWORD || bytes != sizeof(data)) {
+        return false;
+    }
+    out = data;
+    return true;
+}
+
+/// Builds the name the shell shows -- `Speakers (High Definition Audio Device)`, not `Speakers`.
+///
+/// The shell reads `PKEY_Device_FriendlyName` off the MMDevice property store
+/// (`ipc/src/endpoints.cpp`), and MMDevice *synthesises* that string: on this machine the
+/// endpoint's stored `{a45c254e-...},14` is empty, while the API still returns the parenthesised
+/// form. So reading `,14` and stopping -- which is what the old `,2`-only version amounted to --
+/// gives a bare `Speakers` that matches nothing the user has seen elsewhere, and is ambiguous on
+/// exactly the machines that matter: two adapters both offering "Speakers".
+///
+/// The composition is `<endpoint name> (<adapter name>)`, from `PKEY_Device_DeviceDesc` and
+/// `PKEY_DeviceInterface_FriendlyName`, both of which sit in the same `Properties` key. A stored
+/// `,14` wins if there is one, since that is what MMDevice would have returned verbatim.
+///
+/// Done from the registry rather than by asking MMDevice because a disabled or unplugged endpoint
+/// has no MMDevice to ask -- the same reason `readEndpoints` walks the registry at all.
+[[nodiscard]] std::wstring composeFriendlyName(const std::wstring& propertiesPath) {
+    std::wstring stored;
+    if (readString(HKEY_LOCAL_MACHINE, propertiesPath, L"{a45c254e-df1c-4efd-8020-67d146a850e0},14", stored) &&
+        !stored.empty()) {
+        return stored;
+    }
+
+    std::wstring endpointName;
+    (void)readString(HKEY_LOCAL_MACHINE, propertiesPath, L"{a45c254e-df1c-4efd-8020-67d146a850e0},2", endpointName);
+    std::wstring adapterName;
+    (void)readString(HKEY_LOCAL_MACHINE, propertiesPath, L"{b3f8fa53-0004-438e-9003-51a46e139bfc},6", adapterName);
+
+    if (endpointName.empty()) {
+        return adapterName;
+    }
+    if (adapterName.empty()) {
+        return endpointName;
+    }
+    return endpointName + L" (" + adapterName + L")";
+}
+
+/// The GUID of the default console-role render endpoint, or empty if it cannot be determined.
+///
+/// `eConsole` and not `eMultimedia`, to agree with `ipc/src/endpoints.cpp` -- the point of
+/// marking it is that the reader recognises the device the shell calls default, and a tool that
+/// picked a different role would sometimes disagree with the UI for no visible reason.
+///
+/// This is the one thing here MMDevice must be asked for, because the mapping from role to
+/// endpoint is not in the registry in any form worth relying on. Failure is not an error: the
+/// listing simply loses its `<- default` marker and its preferred sort order.
+[[nodiscard]] std::wstring defaultEndpointGuid() {
+    const HRESULT init = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
+        return {};
+    }
+
+    std::wstring guid;
+    {
+        ComPtr<IMMDeviceEnumerator> enumerator;
+        ComPtr<IMMDevice> device;
+        ComPtr<IPropertyStore> store;
+        if (SUCCEEDED(
+                ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) &&
+            SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) &&
+            SUCCEEDED(device->OpenPropertyStore(STGM_READ, &store))) {
+            PROPVARIANT value{};
+            ::PropVariantInit(&value);
+            if (SUCCEEDED(store->GetValue(PKEY_AudioEndpoint_GUID, &value)) && value.vt == VT_LPWSTR &&
+                value.pwszVal != nullptr) {
+                guid.assign(value.pwszVal);
+            }
+            ::PropVariantClear(&value);
+        }
+    }
+
+    if (SUCCEEDED(init)) {
+        ::CoUninitialize();
+    }
+    return guid;
 }
 
 /// Sets one value under an existing key, asking for `KEY_SET_VALUE` and **nothing else**.
@@ -160,6 +314,12 @@ struct Endpoint {
 /// Endpoints as the registry sees them, not as MMDevice does: this tool must be able to work on
 /// a device that is unplugged or disabled, which enumeration would hide -- and those are exactly
 /// the endpoints where a stale slot sits unnoticed until someone plugs the thing back in.
+///
+/// The returned order is canonical -- default first, then present devices, then by name -- and is
+/// the order `--endpoint <index>` counts in. That matters: the indices `--list` prints have to be
+/// the ones the mutating paths accept, so the sort happens here, once, rather than in the printer
+/// where a filtered or reordered display would silently renumber somebody's target. `--show-all`
+/// therefore changes what is shown and never what index N means.
 [[nodiscard]] std::vector<Endpoint> readEndpoints() {
     std::vector<Endpoint> endpoints;
 
@@ -179,10 +339,10 @@ struct Endpoint {
         endpoint.guid.assign(name, nameChars);
 
         const std::wstring base = std::wstring(kRenderPath) + L"\\" + endpoint.guid;
-        // PKEY_Device_FriendlyName is `{a45c254e-...},14`; the endpoint's own name is `,2` under
-        // Properties. Best effort -- a nameless endpoint is still an endpoint.
-        (void)readString(HKEY_LOCAL_MACHINE, base + L"\\Properties", L"{a45c254e-df1c-4efd-8020-67d146a850e0},2",
-            endpoint.friendlyName);
+        // Best effort, both of them -- a nameless endpoint in an unreadable state is still an
+        // endpoint, and still the one that might be carrying our CLSID.
+        endpoint.friendlyName = composeFriendlyName(base + L"\\Properties");
+        (void)readDword(HKEY_LOCAL_MACHINE, base, L"DeviceState", endpoint.state);
 
         const std::wstring fx = base + L"\\FxProperties";
         HKEY fxKey = nullptr;
@@ -200,6 +360,16 @@ struct Endpoint {
     }
 
     ::RegCloseKey(render);
+
+    const std::wstring defaultGuid = defaultEndpointGuid();
+    for (Endpoint& endpoint : endpoints) {
+        endpoint.isDefault = !defaultGuid.empty() && ::_wcsicmp(endpoint.guid.c_str(), defaultGuid.c_str()) == 0;
+    }
+
+    // Stable so that endpoints `sortsBefore` cannot separate keep registry enumeration order,
+    // which at least does not shuffle between runs.
+    std::stable_sort(endpoints.begin(), endpoints.end(), sortsBefore);
+
     return endpoints;
 }
 
@@ -257,12 +427,39 @@ struct Endpoint {
     return exitCode == 0;
 }
 
-void printEndpoints(const std::vector<Endpoint>& endpoints) {
-    std::wprintf(L"Render endpoints (%zu):\n\n", endpoints.size());
+/// Prints the canonical list, hiding endpoints that are not there unless `showAll` says otherwise.
+///
+/// Default is filtered because the unfiltered list is mostly archaeology: every headphone jack and
+/// HDMI sink the machine has ever seen leaves an endpoint behind, and on a laptop that is a dozen
+/// entries none of which anyone wants to install onto. Hiding them makes the first line of output
+/// the answer to "which device am I actually listening through". The hidden ones still matter --
+/// that is what `--show-all` is for, and why a count of them is always printed rather than the
+/// filter being silent.
+///
+/// Indices are `endpoints`' own, not a running count of what is displayed, so `--endpoint 3` means
+/// the same endpoint whether or not `--show-all` was passed. In practice they come out contiguous
+/// anyway -- `sortsBefore` puts every hidden endpoint after every shown one -- but that is a
+/// consequence of the ordering and not something this printer relies on.
+void printEndpoints(const std::vector<Endpoint>& endpoints, bool showAll) {
+    std::size_t hidden = 0;
+    if (!showAll) {
+        for (const Endpoint& endpoint : endpoints) {
+            if (!ready(endpoint)) {
+                ++hidden;
+            }
+        }
+    }
+
+    std::wprintf(L"Render endpoints (%zu of %zu):\n\n", endpoints.size() - hidden, endpoints.size());
     for (std::size_t i = 0; i < endpoints.size(); ++i) {
         const Endpoint& endpoint = endpoints[i];
-        std::wprintf(L"  [%zu] %s\n", i, endpoint.friendlyName.empty() ? L"(unnamed)" : endpoint.friendlyName.c_str());
+        if (!showAll && !ready(endpoint)) {
+            continue;
+        }
+        std::wprintf(L"  [%zu] %s%s\n", i, endpoint.friendlyName.empty() ? L"(unnamed)" : endpoint.friendlyName.c_str(),
+            endpoint.isDefault ? L"  <- default" : L"");
         std::wprintf(L"      guid : %s\n", endpoint.guid.c_str());
+        std::wprintf(L"      state: %s\n", stateLabel(endpoint.state));
         if (!endpoint.hasFxProperties) {
             std::wprintf(L"      gfx  : (no FxProperties key)\n\n");
             continue;
@@ -286,15 +483,25 @@ void printEndpoints(const std::vector<Endpoint>& endpoints) {
         }
         std::wprintf(L"\n");
     }
+
+    if (hidden != 0) {
+        std::wprintf(L"  %zu endpoint(s) hidden because they are disabled, unplugged or absent.\n"
+                     L"  Pass --show-all to list them -- their GFX slots survive being unplugged.\n\n",
+            hidden);
+    }
 }
 
 void printUsage() {
     std::wprintf(L"apo_admin -- put this project's APO into a render endpoint's effect chain\n"
                  L"\n"
-                 L"  --list                    show every endpoint and what is in its GFX slot\n"
+                 L"  --list                    show the endpoints that are present, and what is in\n"
+                 L"                            each one's GFX slot. Default device first\n"
+                 L"  --show-all                with --list, include endpoints that are disabled,\n"
+                 L"                            unplugged or absent. Indices do not change\n"
                  L"  --install [--legacy]      write our CLSID into the GFX slot, saving what was there\n"
                  L"  --uninstall               restore whatever the slot held before --install\n"
-                 L"  --endpoint <guid|index>   act on one endpoint (default: all of them)\n"
+                 L"  --endpoint <guid|index>   act on one endpoint (default: all of them). The index\n"
+                 L"                            is the one --list prints; the guid is the stable one\n"
                  L"  --backup-dir <path>       where the .reg backup goes (default C:\\aip-backup)\n"
                  L"  --restart-audio           restart the audio service afterwards, so the change takes\n"
                  L"                            effect. Without it nothing happens until the endpoint is\n"
@@ -348,6 +555,7 @@ void printUsage() {
 
 struct Options {
     bool list = false;
+    bool showAll = false;
     bool install = false;
     bool uninstall = false;
     bool legacy = false;
@@ -379,6 +587,8 @@ int wmain(int argc, wchar_t** argv) {
         const bool hasNext = i + 1 < argc;
         if (arg == L"--list") {
             options.list = true;
+        } else if (arg == L"--show-all") {
+            options.showAll = true;
         } else if (arg == L"--install") {
             options.install = true;
         } else if (arg == L"--uninstall") {
@@ -417,7 +627,7 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     if (options.list) {
-        printEndpoints(endpoints);
+        printEndpoints(endpoints, options.showAll);
         return 0;
     }
 
@@ -426,7 +636,13 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 
-    // Which endpoints. An index is accepted because a GUID is not something anyone types twice.
+    // Which endpoints. An index is accepted because a GUID is not something anyone types twice --
+    // and it indexes `endpoints` in the same canonical order `--list` numbered, filtered or not.
+    //
+    // With no `--endpoint` this still means *every* endpoint, including the ones `--list` hides.
+    // That asymmetry is deliberate: a disabled endpoint's GFX slot is still written, still there
+    // when it comes back, and leaving it out of an uninstall is how a machine ends up with our
+    // CLSID in a slot nobody remembers.
     std::vector<Endpoint*> targets;
     if (options.endpoint.empty()) {
         for (Endpoint& endpoint : endpoints) {
