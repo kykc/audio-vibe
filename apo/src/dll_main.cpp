@@ -33,9 +33,7 @@ namespace {
 HINSTANCE gModule = nullptr;
 LONG gLockCount = 0;
 
-std::wstring clsidKeyPath() {
-    return std::wstring(L"SOFTWARE\\Classes\\CLSID\\").append(protocol::kApoClsid);
-}
+std::wstring clsidKeyPath() { return std::wstring(L"SOFTWARE\\Classes\\CLSID\\").append(protocol::kApoClsid); }
 
 /// This DLL's own path, which is what `InprocServer32` must contain. Taken from the loaded
 /// module rather than from an argument, so it is right regardless of where the file was copied
@@ -65,9 +63,7 @@ public:
         return E_NOINTERFACE;
     }
 
-    STDMETHODIMP_(ULONG) AddRef() override {
-        return static_cast<ULONG>(::InterlockedIncrement(&referenceCount_));
-    }
+    STDMETHODIMP_(ULONG) AddRef() override { return static_cast<ULONG>(::InterlockedIncrement(&referenceCount_)); }
 
     STDMETHODIMP_(ULONG) Release() override {
         const LONG remaining = ::InterlockedDecrement(&referenceCount_);
@@ -83,8 +79,7 @@ public:
             return E_POINTER;
         }
         *ppv = nullptr;
-        apo::trace(L"CreateInstance: outer=%s", outer != nullptr ? L"non-null (aggregating)"
-                                                                 : L"null");
+        apo::trace(L"CreateInstance: outer=%s", outer != nullptr ? L"non-null (aggregating)" : L"null");
 
         // **The audio engine aggregates its system-effect APOs.** It passes a non-null controlling
         // unknown, and an APO that answers CLASS_E_NOAGGREGATION is simply never created -- the
@@ -142,10 +137,8 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void* reserved) {
 }
 
 STDAPI DllCanUnloadNow() {
-    return (apo::AudioIpcApo::instanceCount() == 0 &&
-            ::InterlockedCompareExchange(&gLockCount, 0, 0) == 0)
-               ? S_OK
-               : S_FALSE;
+    return (apo::AudioIpcApo::instanceCount() == 0 && ::InterlockedCompareExchange(&gLockCount, 0, 0) == 0) ? S_OK
+                                                                                                            : S_FALSE;
 }
 
 STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv) {
@@ -206,8 +199,8 @@ STDAPI DllRegisterServer() {
     }
 
     if (status != ERROR_SUCCESS) {
-        apo::trace(L"DllRegisterServer: CLSID keys failed, status=%lu; rolling back",
-                   static_cast<unsigned long>(status));
+        apo::trace(
+            L"DllRegisterServer: CLSID keys failed, status=%lu; rolling back", static_cast<unsigned long>(status));
         // Leave nothing half-registered. A CLSID in the APO catalogue with no InprocServer32 is
         // an entry the engine will try to activate and fail on, once per stream, forever.
         (void)apo::registry::deleteTree(key);
@@ -229,13 +222,11 @@ STDAPI DllUnregisterServer() {
     const HRESULT unregistered = ::UnregisterAPO(__uuidof(apo::AudioIpcApo));
 
     if (status != ERROR_SUCCESS) {
-        apo::trace(L"DllUnregisterServer: CLSID keys failed, status=%lu",
-                   static_cast<unsigned long>(status));
+        apo::trace(L"DllUnregisterServer: CLSID keys failed, status=%lu", static_cast<unsigned long>(status));
         return HRESULT_FROM_WIN32(status);
     }
     if (FAILED(unregistered)) {
-        apo::trace(L"DllUnregisterServer: UnregisterAPO failed, hr=0x%08X",
-                   static_cast<unsigned>(unregistered));
+        apo::trace(L"DllUnregisterServer: UnregisterAPO failed, hr=0x%08X", static_cast<unsigned>(unregistered));
         return unregistered;
     }
 

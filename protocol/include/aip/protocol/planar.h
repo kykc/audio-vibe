@@ -68,8 +68,7 @@ enum class HeaderStatus {
     SizeNotDivisibleByChannelCount,
 };
 
-[[nodiscard]] inline HeaderStatus validateBlock(std::uint32_t channelCount,
-                                               std::int32_t size) noexcept {
+[[nodiscard]] inline HeaderStatus validateBlock(std::uint32_t channelCount, std::int32_t size) noexcept {
     if (channelCount == 0) {
         return HeaderStatus::ZeroChannelCount;
     }
@@ -87,8 +86,7 @@ enum class HeaderStatus {
 
 /// Interleaved -> planar. `size` is the total sample count (sec. 4.3). This is what the king does
 /// when it publishes a block; the conformance harness's synthetic king uses it directly.
-inline void deinterleave(const float* from, float* to, std::int32_t size,
-                         std::uint32_t channelCount) noexcept {
+inline void deinterleave(const float* from, float* to, std::int32_t size, std::uint32_t channelCount) noexcept {
     const std::int32_t channels = static_cast<std::int32_t>(channelCount);
     const std::int32_t perChannel = size / channels;
 
@@ -101,8 +99,7 @@ inline void deinterleave(const float* from, float* to, std::int32_t size,
 }
 
 /// Planar -> interleaved. What the king does when it reads the processed block back.
-inline void reinterleave(const float* from, float* to, std::int32_t size,
-                         std::uint32_t channelCount) noexcept {
+inline void reinterleave(const float* from, float* to, std::int32_t size, std::uint32_t channelCount) noexcept {
     const std::int32_t channels = static_cast<std::int32_t>(channelCount);
     const std::int32_t perChannel = size / channels;
 

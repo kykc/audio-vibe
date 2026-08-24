@@ -14,8 +14,7 @@ namespace {
 /// flags for a reason the SDK spells out: `getLatencySamples` returns the new figure only after
 /// `setActive(true)`, so a host that re-read the number without reactivating would be reporting
 /// the latency of the configuration the plugin had just left.
-constexpr std::int32_t kReconfigurationFlags =
-    Vst::kReloadComponent | Vst::kIoChanged | Vst::kLatencyChanged;
+constexpr std::int32_t kReconfigurationFlags = Vst::kReloadComponent | Vst::kIoChanged | Vst::kLatencyChanged;
 
 /// Names the flags this host does nothing about, for a log line that admits it. Each of these
 /// describes something the system does not model at all -- there are no parameter titles cached
@@ -26,6 +25,7 @@ std::string nameUnhandledFlags(std::int32_t flags) {
         std::int32_t flag;
         const char* name;
     };
+
     static constexpr Named kNames[] = {
         {Vst::kParamTitlesChanged, "parameter titles"},
         {Vst::kMidiCCAssignmentChanged, "MIDI CC assignment"},
@@ -88,9 +88,7 @@ PluginInstance* Engine::pluginAt(std::size_t index) const noexcept {
     return index < rack_.size() ? rack_[index].instance.get() : nullptr;
 }
 
-bool Engine::bypassed(std::size_t index) const noexcept {
-    return index < rack_.size() && rack_[index].bypassed;
-}
+bool Engine::bypassed(std::size_t index) const noexcept { return index < rack_.size() && rack_[index].bypassed; }
 
 // --------------------------------------------------------------------------------- publication
 
@@ -166,8 +164,7 @@ bool Engine::rebuild(const StreamFormat& format, std::string& error) {
     return true;
 }
 
-bool Engine::prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount,
-                                  std::string& error) {
+bool Engine::prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount, std::string& error) {
     error.clear();
 
     StreamFormat guess;
@@ -211,8 +208,7 @@ bool Engine::serviceFormatChange(std::string& error) {
 
     const StreamFormat observed = processor_.observedFormat();
     if (processor_.current() != nullptr && observed.sampleRate == builtFormat_.sampleRate &&
-        observed.channelCount == builtFormat_.channelCount &&
-        observed.maxFrames <= builtFormat_.maxFrames) {
+        observed.channelCount == builtFormat_.channelCount && observed.maxFrames <= builtFormat_.maxFrames) {
         // Only the block size moved, and it still fits. Nothing to do; remember it so the next
         // block of the same size does not walk this path again.
         //
@@ -256,8 +252,8 @@ bool Engine::insertPlugin(std::size_t index, const std::string& path, std::strin
     return insertPlugin(index, path, module->audioEffects().front().id, error);
 }
 
-bool Engine::insertPluginByClassId(std::size_t index, const std::string& path,
-                                   const std::string& classId, std::string& error) {
+bool Engine::insertPluginByClassId(
+    std::size_t index, const std::string& path, const std::string& classId, std::string& error) {
     error.clear();
     // An empty id means "whichever class the module offers first", which is what a caller that
     // never looked inside the module wants and what appendPlugin has always done.
@@ -272,9 +268,8 @@ bool Engine::insertPluginByClassId(std::size_t index, const std::string& path,
     return insertPlugin(index, path, *parsed, error);
 }
 
-bool Engine::insertPluginWithState(std::size_t index, const std::string& path,
-                                   const std::string& classId, const PluginState& state,
-                                   std::string& error) {
+bool Engine::insertPluginWithState(std::size_t index, const std::string& path, const std::string& classId,
+    const PluginState& state, std::string& error) {
     error.clear();
     if (classId.empty()) {
         PluginModule::Ptr module = moduleFor(path, error);
@@ -291,14 +286,12 @@ bool Engine::insertPluginWithState(std::size_t index, const std::string& path,
     return insertPluginImpl(index, path, *parsed, &state, error);
 }
 
-bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId,
-                          std::string& error) {
+bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId, std::string& error) {
     return insertPluginImpl(index, path, classId, nullptr, error);
 }
 
-bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
-                              const VST3::UID& classId, const PluginState* state,
-                              std::string& error) {
+bool Engine::insertPluginImpl(std::size_t index, const std::string& path, const VST3::UID& classId,
+    const PluginState* state, std::string& error) {
     error.clear();
     PluginModule::Ptr module = moduleFor(path, error);
     if (!module) {
@@ -306,14 +299,12 @@ bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
     }
 
     const auto& classes = module->audioEffects();
-    if (std::none_of(classes.begin(), classes.end(),
-                     [&](const PluginClass& c) { return c.id == classId; })) {
+    if (std::none_of(classes.begin(), classes.end(), [&](const PluginClass& c) { return c.id == classId; })) {
         error = path + " exposes no audio effect with that class id";
         return false;
     }
 
-    std::unique_ptr<PluginInstance> instance =
-        PluginInstance::create(module, classId, host_, error);
+    std::unique_ptr<PluginInstance> instance = PluginInstance::create(module, classId, host_, error);
     if (!instance) {
         return false;
     }
@@ -339,7 +330,7 @@ bool Engine::insertPluginImpl(std::size_t index, const std::string& path,
     }
 
     rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),
-                 RackEntry{std::move(instance), false});
+        RackEntry{std::move(instance), false});
     const bool published = publishRack();
     if (published) {
         error = stateWarning;
@@ -495,8 +486,7 @@ std::size_t Engine::serviceParameterEdits(std::size_t maxPerPlugin) {
     lastRestart_.requests += echoed.restartRequests;
     lastRestart_.suppressed = echoed.reconfigurationRequests;
     lastRestart_.flags |= echoed.flags;
-    lastRestart_.parameterValues =
-        lastRestart_.parameterValues || (echoed.flags & Vst::kParamValuesChanged) != 0;
+    lastRestart_.parameterValues = lastRestart_.parameterValues || (echoed.flags & Vst::kParamValuesChanged) != 0;
     lastRestart_.unhandled = nameUnhandledFlags(lastRestart_.flags);
     return consumed;
 }

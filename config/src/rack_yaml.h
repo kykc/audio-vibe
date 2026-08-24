@@ -60,8 +60,7 @@ void readScalar(const YAML::Node& node, const char* key, T& out) {
 /// decode, and leaves `out` empty when it does -- handing a plugin a truncated state is worse
 /// than handing it none. Whether that is a dropped field or a refused file is the caller's
 /// decision, and the two files answer it differently.
-[[nodiscard]] inline bool readBlob(const YAML::Node& node, const char* key,
-                                   std::vector<char>& out) {
+[[nodiscard]] inline bool readBlob(const YAML::Node& node, const char* key, std::vector<char>& out) {
     std::string encoded;
     readScalar(node, key, encoded);
     if (encoded.empty()) {

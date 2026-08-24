@@ -57,8 +57,7 @@ bool EngineHost::attach(const ipc::RenderEndpoint& endpoint, QString& error) {
     // Nothing below can fail: attaching is asynchronous by design. The supervisor starts detached
     // and stays that way until `audiodg.exe` has created the shared objects, which it only does
     // while something is playing on the endpoint.
-    auto supervisor =
-        std::make_unique<ipc::ValetSupervisor>(endpoint.guid, engine_.blockProcessor());
+    auto supervisor = std::make_unique<ipc::ValetSupervisor>(endpoint.guid, engine_.blockProcessor());
     supervisor->setStateCallback([this](ipc::LinkState state, ipc::ValetExitReason reason) {
         // Called on the supervisor's thread. Emitting a signal is all that is allowed to happen
         // here; the engine is the GUI thread's, and the queued delivery is what keeps it so.
@@ -77,12 +76,11 @@ bool EngineHost::attach(const ipc::RenderEndpoint& endpoint, QString& error) {
     // Failure is reported and otherwise ignored: the guess is an optimisation, and the first real
     // block will build the chain properly whatever happens here.
     std::string guessError;
-    if (engine_.prepareSpeculatively(endpoint.deviceSampleRate, endpoint.deviceChannelCount,
-                                     guessError)) {
+    if (engine_.prepareSpeculatively(endpoint.deviceSampleRate, endpoint.deviceChannelCount, guessError)) {
         const engine::StreamFormat built = engine_.builtFormat();
         if (built.valid()) {
-            Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames,
-                              engine_.builtFormatIsSpeculative());
+            Q_EMIT chainBuilt(
+                built.sampleRate, built.channelCount, built.maxFrames, engine_.builtFormatIsSpeculative());
         }
     } else {
         Q_EMIT chainFailed(QString::fromStdString(guessError));
@@ -115,8 +113,7 @@ void EngineHost::tick() {
         const ipc::ValetCounters::Snapshot counters = supervisor_->counters().snapshot();
         const double seconds = std::chrono::duration<double>(now - previousTick_).count();
         if (seconds > 0.0 && counters.blocks >= previousCounters_.blocks) {
-            blocksPerSecond_ = static_cast<double>(counters.blocks - previousCounters_.blocks) /
-                               seconds;
+            blocksPerSecond_ = static_cast<double>(counters.blocks - previousCounters_.blocks) / seconds;
         }
         // The block *counter* moving, not the rate: a rate computed over one tick can round to
         // zero for a slow endpoint, and the question here is whether anything arrived at all.
@@ -133,8 +130,7 @@ void EngineHost::tick() {
     std::string error;
     if (engine_.serviceFormatChange(error)) {
         const engine::StreamFormat built = engine_.builtFormat();
-        Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames,
-                          engine_.builtFormatIsSpeculative());
+        Q_EMIT chainBuilt(built.sampleRate, built.channelCount, built.maxFrames, engine_.builtFormatIsSpeculative());
     } else if (!error.empty()) {
         Q_EMIT chainFailed(QString::fromStdString(error));
     }
@@ -148,9 +144,8 @@ void EngineHost::tick() {
         if (restart.parameterValues) {
             Q_EMIT pluginParametersChanged();
         }
-        Q_EMIT pluginRestarted(restart.reconfigured,
-                               QString::fromStdString(restart.unhandled),
-                               QString::fromStdString(restart.error));
+        Q_EMIT pluginRestarted(
+            restart.reconfigured, QString::fromStdString(restart.unhandled), QString::fromStdString(restart.error));
     }
 
     Q_EMIT serviced();
@@ -168,7 +163,7 @@ EngineHost::Status EngineHost::status() {
     // link is not idle, it is finished, and saying "idle" of it would be the same kind of
     // misreading this flag exists to prevent.
     status.idle = status.attached && status.linkState == ipc::LinkState::Attached &&
-                  (std::chrono::steady_clock::now() - lastBlockAt_) >= kIdleAfter;
+        (std::chrono::steady_clock::now() - lastBlockAt_) >= kIdleAfter;
 
     const engine::ChainProcessor& processor = engine_.chainProcessor();
     status.builtFormat = engine_.builtFormat();

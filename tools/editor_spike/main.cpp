@@ -43,10 +43,10 @@
 
 #include <QApplication>
 #include <QImage>
-#include <QSet>
 #include <QLabel>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QSet>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -86,9 +86,8 @@ public:
             ::RegisterClassExW(&wc);
             registered = true;
         }
-        hwnd_ = ::CreateWindowExW(0, kClassName, L"", WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-                                  0, 0, width, height, nullptr, nullptr,
-                                  ::GetModuleHandleW(nullptr), nullptr);
+        hwnd_ = ::CreateWindowExW(0, kClassName, L"", WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, width, height,
+            nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     }
 
     ~NativeHostWindow() {
@@ -122,12 +121,11 @@ class PlugFrame final : public Steinberg::FObject, public Steinberg::IPlugFrame 
 public:
     explicit PlugFrame(EditorWidget& owner) : owner_(owner) {}
 
-    Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view,
-                                             Steinberg::ViewRect* newSize) override;
+    Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view, Steinberg::ViewRect* newSize) override;
 
     OBJ_METHODS(PlugFrame, Steinberg::FObject)
     DEFINE_INTERFACES
-        DEF_INTERFACE(Steinberg::IPlugFrame)
+    DEF_INTERFACE(Steinberg::IPlugFrame)
     END_DEFINE_INTERFACES(Steinberg::FObject)
     REFCOUNT_METHODS(Steinberg::FObject)
 
@@ -151,11 +149,8 @@ public:
         // measurements, as `ui/src/editor_window.cpp`. This process is per-monitor-DPI-aware, so
         // the plugin's own window can read its monitor's DPI and does; sending it as well applies
         // the factor twice, and NeuralAmpModeler compounds it where JUCE ignores it outright.
-        std::printf("  scale      : dpr %.2f, plugin %s IPlugViewContentScaleSupport (not sent)\n",
-                    devicePixelRatioF(),
-                    Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_)
-                        ? "implements"
-                        : "does not implement");
+        std::printf("  scale      : dpr %.2f, plugin %s IPlugViewContentScaleSupport (not sent)\n", devicePixelRatioF(),
+            Steinberg::U::cast<Steinberg::IPlugViewContentScaleSupport>(view_) ? "implements" : "does not implement");
 
         Steinberg::ViewRect rect{};
         if (view_->getSize(&rect) != kResultTrue) {
@@ -172,8 +167,7 @@ public:
         view_->setFrame(frame_);
 
         if (useContainer_) {
-            native_ = std::make_unique<NativeHostWindow>(rect.right - rect.left,
-                                                         rect.bottom - rect.top);
+            native_ = std::make_unique<NativeHostWindow>(rect.right - rect.left, rect.bottom - rect.top);
             if (native_->hwnd() == nullptr) {
                 std::puts("  FAILED     : could not create the native host window");
                 return;
@@ -192,8 +186,8 @@ public:
         }
 
         resize(width, height);
-        std::printf("  requested  : %d x %d physical, %d x %d logical\n",
-                    rect.right - rect.left, rect.bottom - rect.top, width, height);
+        std::printf("  requested  : %d x %d physical, %d x %d logical\n", rect.right - rect.left,
+            rect.bottom - rect.top, width, height);
     }
 
     /// `ViewRect` (physical pixels) <-> `QWidget` geometry (logical). Unconditional: what the
@@ -228,11 +222,9 @@ public:
 
         Steinberg::ViewRect rect{};
         if (view_->getSize(&rect) == kResultTrue) {
-            std::printf("  attached   : plugin reports %d x %d\n", rect.right - rect.left,
-                        rect.bottom - rect.top);
+            std::printf("  attached   : plugin reports %d x %d\n", rect.right - rect.left, rect.bottom - rect.top);
         }
-        std::printf("  resizable  : %s\n",
-                    view_->canResize() == kResultTrue ? "yes" : "no");
+        std::printf("  resizable  : %s\n", view_->canResize() == kResultTrue ? "yes" : "no");
         std::printf("  children   : %d HWND(s) under our parent\n", countChildWindows());
         return true;
     }
@@ -310,8 +302,7 @@ private:
     bool inPluginResize_ = false;
 };
 
-Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView* view,
-                                                    Steinberg::ViewRect* newSize) {
+Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView* view, Steinberg::ViewRect* newSize) {
     if (view == nullptr || newSize == nullptr || view != owner_.view()) {
         return Steinberg::kInvalidArgument;
     }
@@ -321,8 +312,8 @@ Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView* view,
         return Steinberg::kResultFalse;
     }
     owner_.inPluginResize_ = true;
-    std::printf("  resizeView : plugin asked for %d x %d\n", newSize->right - newSize->left,
-                newSize->bottom - newSize->top);
+    std::printf(
+        "  resizeView : plugin asked for %d x %d\n", newSize->right - newSize->left, newSize->bottom - newSize->top);
     owner_.applyPluginSize(*newSize);
     owner_.inPluginResize_ = false;
     view->onSize(newSize);
@@ -363,8 +354,7 @@ bool capturePrintWindow(HWND hwnd, const QString& path) {
     if (bitmap != nullptr && bits != nullptr) {
         HGDIOBJ previous = ::SelectObject(memory, bitmap);
         if (::PrintWindow(hwnd, memory, PW_RENDERFULLCONTENT) != 0) {
-            const QImage image(static_cast<const uchar*>(bits), width, height, width * 4,
-                               QImage::Format_RGB32);
+            const QImage image(static_cast<const uchar*>(bits), width, height, width * 4, QImage::Format_RGB32);
             ok = image.copy().save(path);
         }
         ::SelectObject(memory, previous);
@@ -401,8 +391,8 @@ void captureBoth(QWidget& widget, const QString& prefix) {
 
     const QPixmap grabbed = widget.grab();
     if (grabbed.save(grabPath)) {
-        std::printf("  grab       : %s  (%d distinct colours)\n", qPrintable(grabPath),
-                    distinctColours(grabbed.toImage()));
+        std::printf(
+            "  grab       : %s  (%d distinct colours)\n", qPrintable(grabPath), distinctColours(grabbed.toImage()));
     } else {
         std::puts("  grab       : failed to save");
     }
@@ -410,8 +400,7 @@ void captureBoth(QWidget& widget, const QString& prefix) {
     HWND hwnd = reinterpret_cast<HWND>(widget.winId());
     if (capturePrintWindow(hwnd, printPath)) {
         QImage image(printPath);
-        std::printf("  PrintWindow: %s  (%d distinct colours)\n", qPrintable(printPath),
-                    distinctColours(image));
+        std::printf("  PrintWindow: %s  (%d distinct colours)\n", qPrintable(printPath), distinctColours(image));
     } else {
         std::puts("  PrintWindow: failed");
     }
@@ -473,24 +462,21 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
 
     std::printf("Plugin     : %s\n", options.plugin.c_str());
-    std::printf("Embedding  : %s\n", options.useContainer
-                                          ? "QWindow::fromWinId -> createWindowContainer"
-                                          : "QWidget WA_NativeWindow");
+    std::printf("Embedding  : %s\n",
+        options.useContainer ? "QWindow::fromWinId -> createWindowContainer" : "QWidget WA_NativeWindow");
 
-    Steinberg::IPtr<Vst::HostApplication> hostContext =
-        Steinberg::owned(new Vst::HostApplication());
+    Steinberg::IPtr<Vst::HostApplication> hostContext = Steinberg::owned(new Vst::HostApplication());
 
     std::string error;
-    aip::engine::PluginModule::Ptr module =
-        aip::engine::PluginModule::load(options.plugin, error);
+    aip::engine::PluginModule::Ptr module = aip::engine::PluginModule::load(options.plugin, error);
     if (!module) {
         std::printf("  FAILED     : %s\n", error.c_str());
         return 1;
     }
     module->setHostContext(hostContext);
 
-    std::unique_ptr<aip::engine::PluginInstance> instance = aip::engine::PluginInstance::create(
-        module, module->audioEffects().front().id, hostContext, error);
+    std::unique_ptr<aip::engine::PluginInstance> instance =
+        aip::engine::PluginInstance::create(module, module->audioEffects().front().id, hostContext, error);
     if (!instance) {
         std::printf("  FAILED     : %s\n", error.c_str());
         return 1;
@@ -502,8 +488,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    Steinberg::IPtr<Steinberg::IPlugView> view =
-        Steinberg::owned(controller->createView(Vst::ViewType::kEditor));
+    Steinberg::IPtr<Steinberg::IPlugView> view = Steinberg::owned(controller->createView(Vst::ViewType::kEditor));
     if (!view) {
         std::puts("  FAILED     : createView(kEditor) returned nothing");
         return 1;
@@ -522,8 +507,8 @@ int main(int argc, char** argv) {
             if (!options.capturePrefix.empty()) {
                 captureBoth(widget, QString::fromStdString(options.capturePrefix));
             }
-            std::printf("  final      : %d x %d, %d child HWND(s)\n", widget.width(),
-                        widget.height(), widget.countChildWindows());
+            std::printf("  final      : %d x %d, %d child HWND(s)\n", widget.width(), widget.height(),
+                widget.countChildWindows());
             std::puts("");
             std::puts("Editor hosted successfully.");
             app.quit();

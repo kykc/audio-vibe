@@ -57,8 +57,7 @@ std::vector<char> everyByte() {
 /// whether ctest was given -j.
 class TempDir {
 public:
-    explicit TempDir(const char* name)
-        : path_(std::filesystem::temp_directory_path() / "aip_config_test" / name) {
+    explicit TempDir(const char* name) : path_(std::filesystem::temp_directory_path() / "aip_config_test" / name) {
         std::error_code ec;
         std::filesystem::remove_all(path_, ec);
         std::filesystem::create_directories(path_, ec);
@@ -94,8 +93,7 @@ TEST_CASE("base64 round-trips every length and every byte value", "[config]") {
     // Every length past a multiple of three is a different amount of padding, so the loop covers
     // all three tails many times over rather than only at the end.
     for (std::size_t length = 0; length <= source.size(); ++length) {
-        const std::vector<char> data(source.begin(),
-                                     source.begin() + static_cast<std::ptrdiff_t>(length));
+        const std::vector<char> data(source.begin(), source.begin() + static_cast<std::ptrdiff_t>(length));
         const std::string encoded = config::base64Encode(data);
         std::vector<char> decoded;
         REQUIRE(config::base64Decode(encoded, decoded));
@@ -110,8 +108,7 @@ TEST_CASE("base64 wraps its output and reads the wrapping back", "[config]") {
     REQUIRE(wrapped.find('\n') != std::string::npos);
     for (std::size_t start = 0; start < wrapped.size();) {
         const std::size_t end = wrapped.find('\n', start);
-        const std::size_t length =
-            (end == std::string::npos ? wrapped.size() : end) - start;
+        const std::size_t length = (end == std::string::npos ? wrapped.size() : end) - start;
         REQUIRE(length <= config::kBase64LineLength);
         if (end == std::string::npos) {
             break;
@@ -222,8 +219,7 @@ TEST_CASE("the session file is text a person can read", "[config]") {
     REQUIRE(config::writeSession(dir.file(), session, error));
 
     std::ifstream file(dir.file(), std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
     // The point of YAML over a binary blob: the path and the name are legible, and the one part
     // that cannot be is wrapped instead of being a single enormous line.
@@ -254,7 +250,9 @@ TEST_CASE("a session that says nothing about attaching does not ask to attach", 
 
 TEST_CASE("an empty session file is portable mode, not a failure", "[config]") {
     const TempDir dir("empty");
-    { std::ofstream file(dir.file(), std::ios::binary); }
+    {
+        std::ofstream file(dir.file(), std::ios::binary);
+    }
 
     config::Session session;
     std::string error;
@@ -366,8 +364,7 @@ TEST_CASE("a preset holds the rack and nothing else", "[config]") {
     REQUIRE(config::writePreset(dir.preset(), session.rack, session.chainBypassed, error));
 
     std::ifstream file(dir.preset(), std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
     // The rack is there, legibly.
     REQUIRE(text.find("C:/plugins/Readable.vst3") != std::string::npos);
@@ -398,6 +395,7 @@ TEST_CASE("a preset that is not understood is refused whole", "[config]") {
         const char* text;
         const char* expect;
     };
+
     const Case cases[] = {
         {"empty", "", "empty"},
         {"not a mapping", "- one\n- two\n", "mapping"},
@@ -407,11 +405,10 @@ TEST_CASE("a preset that is not understood is refused whole", "[config]") {
         {"a rack that is not a list", "version: 1\nrack: nonsense\n", "rack"},
         {"an entry that is not a mapping", "version: 1\nrack:\n  - just a string\n", "plugin 1"},
         {"an entry with no path", "version: 1\nrack:\n  - name: Nameless\n", "plugin 1"},
-        {"a second entry with no path",
-         "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n  - name: Nameless\n", "plugin 2"},
+        {"a second entry with no path", "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n  - name: Nameless\n",
+            "plugin 2"},
         {"a state that will not decode",
-         "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n    name: A\n    state: not!base64\n",
-         "decode"},
+            "version: 1\nrack:\n  - path: C:/plugins/A.vst3\n    name: A\n    state: not!base64\n", "decode"},
     };
 
     for (const Case& item : cases) {
@@ -434,8 +431,7 @@ TEST_CASE("a preset that is not understood is refused whole", "[config]") {
     std::vector<config::RackEntry> rack{sentinel};
     bool chainBypassed = false;
     std::string error;
-    REQUIRE_FALSE(config::readPreset(dir.path() / "no_such_preset.yaml", rack, chainBypassed,
-                                     error));
+    REQUIRE_FALSE(config::readPreset(dir.path() / "no_such_preset.yaml", rack, chainBypassed, error));
     REQUIRE_FALSE(error.empty());
     REQUIRE(rack.size() == 1);
 }
@@ -602,11 +598,9 @@ TEST_CASE("a bundle stamps the same twice and differently after a change", "[con
     REQUIRE(config::stampFor(kTestPluginPath) == original);
 
     const TempDir dir("stamp");
-    const std::filesystem::path copy =
-        dir.file().parent_path() / "aip_test_plugin.vst3";
+    const std::filesystem::path copy = dir.file().parent_path() / "aip_test_plugin.vst3";
     std::error_code ec;
-    std::filesystem::copy(std::filesystem::path(kTestPluginPath), copy,
-                          std::filesystem::copy_options::recursive, ec);
+    std::filesystem::copy(std::filesystem::path(kTestPluginPath), copy, std::filesystem::copy_options::recursive, ec);
     REQUIRE_FALSE(ec);
 
     const config::FileStamp before = config::stampFor(copy.string());
@@ -787,8 +781,7 @@ TEST_CASE("the breadcrumb names what was being loaded, and only until it returns
         // Read from disk, not from the object: this is what the *next process* would see, and the
         // whole mechanism rests on the breadcrumb being on the file system before the load runs
         // rather than in a stream buffer belonging to a process that is about to stop existing.
-        REQUIRE(config::LoadGuard::takePreviousCasualty(dir.file()) ==
-                "C:/plugins/Dangerous.vst3");
+        REQUIRE(config::LoadGuard::takePreviousCasualty(dir.file()) == "C:/plugins/Dangerous.vst3");
         // And taking it consumed it. Otherwise the entry it names could never be tried again:
         // clearing `blocked` by hand would be undone by the same file at the next start.
         REQUIRE(config::LoadGuard::takePreviousCasualty(dir.file()).empty());
@@ -827,8 +820,7 @@ TEST_CASE("what killed the last start is blocked, and nothing else is", "[config
 
 TEST_CASE("a module the scan reports as broken is never loaded", "[config]") {
     config::Session session;
-    for (const char* path : {"C:/plugins/Crashes.vst3", "C:/plugins/Hangs.vst3",
-                             "C:/plugins/Works.vst3"}) {
+    for (const char* path : {"C:/plugins/Crashes.vst3", "C:/plugins/Hangs.vst3", "C:/plugins/Works.vst3"}) {
         config::RackEntry entry;
         entry.path = path;
         entry.name = path;
@@ -896,8 +888,7 @@ TEST_CASE("a blocked entry is skipped, reported, and kept in the file", "[config
     REQUIRE_FALSE(read.rack[1].blocked);
 
     std::ifstream file(dir.file(), std::ios::binary);
-    const std::string text((std::istreambuf_iterator<char>(file)),
-                           std::istreambuf_iterator<char>());
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     // Written once, for the entry that is blocked. A `blocked: false` on every other entry would
     // bury the one line a user is looking for.
     REQUIRE(text.find("blocked: true") != std::string::npos);

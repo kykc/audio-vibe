@@ -14,10 +14,8 @@ tresult PLUGIN_API ComponentHandler::beginEdit(Steinberg::Vst::ParamID id) {
     return submit(ParameterEdit{.kind = ParameterEdit::Kind::BeginEdit, .paramId = id});
 }
 
-tresult PLUGIN_API ComponentHandler::performEdit(Steinberg::Vst::ParamID id,
-                                                 Steinberg::Vst::ParamValue value) {
-    return submit(
-        ParameterEdit{.kind = ParameterEdit::Kind::PerformEdit, .paramId = id, .value = value});
+tresult PLUGIN_API ComponentHandler::performEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) {
+    return submit(ParameterEdit{.kind = ParameterEdit::Kind::PerformEdit, .paramId = id, .value = value});
 }
 
 tresult PLUGIN_API ComponentHandler::endEdit(Steinberg::Vst::ParamID id) {
@@ -25,8 +23,7 @@ tresult PLUGIN_API ComponentHandler::endEdit(Steinberg::Vst::ParamID id) {
 }
 
 tresult PLUGIN_API ComponentHandler::restartComponent(Steinberg::int32 flags) {
-    return submit(
-        ParameterEdit{.kind = ParameterEdit::Kind::RestartComponent, .flags = flags});
+    return submit(ParameterEdit{.kind = ParameterEdit::Kind::RestartComponent, .flags = flags});
 }
 
 tresult ComponentHandler::submit(ParameterEdit edit) noexcept {

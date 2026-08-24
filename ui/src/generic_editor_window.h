@@ -50,8 +50,7 @@ public:
     /// set when there is nothing to build it from: no controller at all, or no parameter that is
     /// meant to be seen. Both are legal, and both mean the honest answer is still "this plugin
     /// cannot be adjusted" rather than an empty window.
-    [[nodiscard]] static GenericEditorWindow* create(engine::PluginInstance& instance,
-                                                     QWidget* parent, QString& error);
+    [[nodiscard]] static GenericEditorWindow* create(engine::PluginInstance& instance, QWidget* parent, QString& error);
 
     ~GenericEditorWindow() override;
 
@@ -103,10 +102,8 @@ private:
 
     void updateValueLabel(const Row& row, Steinberg::Vst::ParamValue normalized);
 
-    [[nodiscard]] static int toSlider(Steinberg::Vst::ParamValue normalized,
-                                      Steinberg::int32 stepCount) noexcept;
-    [[nodiscard]] static Steinberg::Vst::ParamValue fromSlider(
-        int position, Steinberg::int32 stepCount) noexcept;
+    [[nodiscard]] static int toSlider(Steinberg::Vst::ParamValue normalized, Steinberg::int32 stepCount) noexcept;
+    [[nodiscard]] static Steinberg::Vst::ParamValue fromSlider(int position, Steinberg::int32 stepCount) noexcept;
 
     engine::PluginInstance* instance_ = nullptr;
     std::vector<Row> rows_;

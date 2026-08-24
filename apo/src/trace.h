@@ -43,15 +43,13 @@ namespace detail {
 /// cost the diagnostic that explains it, and this is not on a hot path -- a handful of lines per
 /// stream, all on the control thread.
 inline void writeTraceFile(const wchar_t* line) noexcept {
-    const HANDLE file =
-        ::CreateFileW(kTraceFilePath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                      nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const HANDLE file = ::CreateFileW(kTraceFilePath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         return;
     }
     char utf8[1024];
-    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8, sizeof(utf8), nullptr,
-                                            nullptr);
+    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8, sizeof(utf8), nullptr, nullptr);
     if (bytes > 1) {
         DWORD written = 0;
         // bytes - 1: drop the terminator, keep the newline the caller supplied.
@@ -77,9 +75,8 @@ void trace(const wchar_t* format, Args... args) {
 
     SYSTEMTIME now{};
     ::GetLocalTime(&now);
-    if (_snwprintf_s(line, _TRUNCATE, L"[%02u:%02u:%02u.%03u aip_apo %lu] %s\n", now.wHour,
-                     now.wMinute, now.wSecond, now.wMilliseconds, ::GetCurrentProcessId(),
-                     body) < 0) {
+    if (_snwprintf_s(line, _TRUNCATE, L"[%02u:%02u:%02u.%03u aip_apo %lu] %s\n", now.wHour, now.wMinute, now.wSecond,
+            now.wMilliseconds, ::GetCurrentProcessId(), body) < 0) {
         return;
     }
 

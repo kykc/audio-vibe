@@ -4,12 +4,10 @@
 
 namespace aip::ipc {
 
-ValetSupervisor::ValetSupervisor(std::wstring endpointGuid, BlockProcessor& processor,
-                                SupervisorPolicy policy)
+ValetSupervisor::ValetSupervisor(std::wstring endpointGuid, BlockProcessor& processor, SupervisorPolicy policy)
     : ValetSupervisor(ObjectBaseName{protocol::objectBaseName(endpointGuid)}, processor, policy) {}
 
-ValetSupervisor::ValetSupervisor(ObjectBaseName base, BlockProcessor& processor,
-                                SupervisorPolicy policy)
+ValetSupervisor::ValetSupervisor(ObjectBaseName base, BlockProcessor& processor, SupervisorPolicy policy)
     : base_(std::move(base.value)), processor_(processor), policy_(policy) {}
 
 ValetSupervisor::~ValetSupervisor() { stop(); }

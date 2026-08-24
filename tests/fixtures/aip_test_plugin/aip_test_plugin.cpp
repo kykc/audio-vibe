@@ -140,9 +140,7 @@ class TestPlugin : public SingleComponentEffect {
 public:
     static const FUID cid;
 
-    static FUnknown* createInstance(void*) {
-        return static_cast<IAudioProcessor*>(new TestPlugin());
-    }
+    static FUnknown* createInstance(void*) { return static_cast<IAudioProcessor*>(new TestPlugin()); }
 
     tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
         const tresult result = SingleComponentEffect::initialize(context);
@@ -159,37 +157,26 @@ public:
         addAudioInput(STR16("Sidechain"), SpeakerArr::kStereo, kAux);
         addAudioOutput(STR16("Output"), SpeakerArr::kMono);
 
-        parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5,
-                                ParameterInfo::kCanAutomate, kGainId);
-        parameters.addParameter(STR16("Edits"), nullptr, 0, 0.0,
-                                ParameterInfo::kCanAutomate, kEditsId);
-        parameters.addParameter(STR16("Meter"), nullptr, 0, 0.0,
-                                ParameterInfo::kIsReadOnly, kMeterId);
-        parameters.addParameter(STR16("Offset"), nullptr, 0, 0.0,
-                                ParameterInfo::kCanAutomate, kOffsetId);
-        parameters.addParameter(STR16("Latency"), nullptr, 0, 0.0,
-                                ParameterInfo::kCanAutomate, kLatencyId);
-        parameters.addParameter(STR16("Restart"), nullptr, 0, 0.0,
-                                ParameterInfo::kCanAutomate, kRestartId);
-        parameters.addParameter(STR16("Echo"), nullptr, 0, 0.0,
-                                ParameterInfo::kCanAutomate, kEchoId);
+        parameters.addParameter(STR16("Gain"), nullptr, 0, 0.5, ParameterInfo::kCanAutomate, kGainId);
+        parameters.addParameter(STR16("Edits"), nullptr, 0, 0.0, ParameterInfo::kCanAutomate, kEditsId);
+        parameters.addParameter(STR16("Meter"), nullptr, 0, 0.0, ParameterInfo::kIsReadOnly, kMeterId);
+        parameters.addParameter(STR16("Offset"), nullptr, 0, 0.0, ParameterInfo::kCanAutomate, kOffsetId);
+        parameters.addParameter(STR16("Latency"), nullptr, 0, 0.0, ParameterInfo::kCanAutomate, kLatencyId);
+        parameters.addParameter(STR16("Restart"), nullptr, 0, 0.0, ParameterInfo::kCanAutomate, kRestartId);
+        parameters.addParameter(STR16("Echo"), nullptr, 0, 0.0, ParameterInfo::kCanAutomate, kEchoId);
         return kResultOk;
     }
 
     // What the host is allowed to believe, and only after a reactivation. See the note about
     // Latency at the top of the file.
-    uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE {
-        return latencySamples.load(std::memory_order_relaxed);
-    }
+    uint32 PLUGIN_API getLatencySamples() SMTG_OVERRIDE { return latencySamples.load(std::memory_order_relaxed); }
 
     tresult PLUGIN_API setActive(TBool state) SMTG_OVERRIDE {
         const tresult result = SingleComponentEffect::setActive(state);
         if (result == kResultOk && state != 0) {
             // The moment the SDK names as the one after which the new figure is readable.
-            latencySamples.store(pendingLatencySamples.load(std::memory_order_relaxed),
-                                 std::memory_order_relaxed);
-            if (echoNormalized.load(std::memory_order_relaxed) > 0.5 &&
-                componentHandler != nullptr) {
+            latencySamples.store(pendingLatencySamples.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            if (echoNormalized.load(std::memory_order_relaxed) > 0.5 && componentHandler != nullptr) {
                 // The pathological plugin: it tells the host about its latency from inside the
                 // very reactivation the host performed to learn it. See the note at the top.
                 componentHandler->restartComponent(kLatencyChanged);
@@ -202,9 +189,8 @@ public:
         return symbolicSampleSize == kSample32 ? kResultTrue : kResultFalse;
     }
 
-    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
-                                          SpeakerArrangement* outputs,
-                                          int32 numOuts) SMTG_OVERRIDE {
+    tresult PLUGIN_API setBusArrangements(
+        SpeakerArrangement* inputs, int32 numIns, SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
         if (numOuts != 1 || numIns < 1 || numIns > 2 || inputs[0] != outputs[0]) {
             return kResultFalse;
         }
@@ -258,8 +244,7 @@ public:
 
         int32 magic = 0;
         int32 read = 0;
-        if (state->read(&magic, sizeof(magic), &read) != kResultOk || read != sizeof(magic) ||
-            magic != kStateMagic) {
+        if (state->read(&magic, sizeof(magic), &read) != kResultOk || read != sizeof(magic) || magic != kStateMagic) {
             return kResultFalse;
         }
 
@@ -280,16 +265,13 @@ public:
         }
 
         int32 magic = kStateMagic;
-        double values[kStateParameterCount] = {getParamNormalized(kGainId),
-                                               getParamNormalized(kEditsId),
-                                               getParamNormalized(kOffsetId)};
+        double values[kStateParameterCount] = {
+            getParamNormalized(kGainId), getParamNormalized(kEditsId), getParamNormalized(kOffsetId)};
         int32 written = 0;
-        if (state->write(&magic, sizeof(magic), &written) != kResultOk ||
-            written != sizeof(magic)) {
+        if (state->write(&magic, sizeof(magic), &written) != kResultOk || written != sizeof(magic)) {
             return kResultFalse;
         }
-        if (state->write(values, sizeof(values), &written) != kResultOk ||
-            written != sizeof(values)) {
+        if (state->write(values, sizeof(values), &written) != kResultOk || written != sizeof(values)) {
             return kResultFalse;
         }
         return kResultOk;
@@ -315,13 +297,10 @@ public:
             return kResultOk;
         }
 
-        const auto gain =
-            static_cast<float>(gainNormalized.load(std::memory_order_relaxed) * kMaxGain);
-        const auto offset =
-            static_cast<float>(offsetNormalized.load(std::memory_order_relaxed));
-        const int32 channels = data.inputs[0].numChannels < data.outputs[0].numChannels
-                                   ? data.inputs[0].numChannels
-                                   : data.outputs[0].numChannels;
+        const auto gain = static_cast<float>(gainNormalized.load(std::memory_order_relaxed) * kMaxGain);
+        const auto offset = static_cast<float>(offsetNormalized.load(std::memory_order_relaxed));
+        const int32 channels = data.inputs[0].numChannels < data.outputs[0].numChannels ? data.inputs[0].numChannels
+                                                                                        : data.outputs[0].numChannels;
 
         float first = 0.f;
         for (int32 c = 0; c < channels; ++c) {
@@ -350,8 +329,7 @@ private:
             const int32 auxChannels = aux.numChannels < channels ? aux.numChannels : channels;
             for (int32 c = 0; c < auxChannels; ++c) {
                 Sample32* out = data.outputs[0].channelBuffers32[c];
-                const Sample32* side =
-                    aux.channelBuffers32 != nullptr ? aux.channelBuffers32[c] : nullptr;
+                const Sample32* side = aux.channelBuffers32 != nullptr ? aux.channelBuffers32[c] : nullptr;
                 if (side == nullptr) {
                     for (int32 s = 0; s < data.numSamples; ++s) {
                         out[s] = kNullBusStamp;
@@ -411,8 +389,8 @@ private:
         if (componentHandler == nullptr) {
             return;
         }
-        const auto edits = static_cast<int32>(
-            std::lround(editsNormalized.load(std::memory_order_relaxed) * kMaxEditsPerBlock));
+        const auto edits =
+            static_cast<int32>(std::lround(editsNormalized.load(std::memory_order_relaxed) * kMaxEditsPerBlock));
         for (int32 i = 0; i < edits; ++i) {
             componentHandler->performEdit(kMeterId, static_cast<ParamValue>(reportedValue));
         }
@@ -428,8 +406,7 @@ private:
             return;
         }
         pendingLatencySamples.store(
-            static_cast<uint32>(std::lround(value * kMaxLatencySamples)),
-            std::memory_order_relaxed);
+            static_cast<uint32>(std::lround(value * kMaxLatencySamples)), std::memory_order_relaxed);
         if (componentHandler != nullptr) {
             componentHandler->restartComponent(kLatencyChanged);
         }
@@ -485,9 +462,7 @@ class WidePlugin : public SingleComponentEffect {
 public:
     static const FUID cid;
 
-    static FUnknown* createInstance(void*) {
-        return static_cast<IAudioProcessor*>(new WidePlugin());
-    }
+    static FUnknown* createInstance(void*) { return static_cast<IAudioProcessor*>(new WidePlugin()); }
 
     tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
         const tresult result = SingleComponentEffect::initialize(context);
@@ -506,9 +481,8 @@ public:
     // Eight channels or nothing. Which eight is not our business -- the host is free to name them
     // whatever the endpoint calls them -- but the count is not negotiable, and a refusal here
     // leaves the bus at the k71Cine it was created with, which is what the host reads back.
-    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
-                                          SpeakerArrangement* outputs,
-                                          int32 numOuts) SMTG_OVERRIDE {
+    tresult PLUGIN_API setBusArrangements(
+        SpeakerArrangement* inputs, int32 numIns, SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
         if (numIns != 1 || numOuts != 1 || inputs[0] != outputs[0] ||
             SpeakerArr::getChannelCount(inputs[0]) != kWideChannels) {
             return kResultFalse;
@@ -529,8 +503,7 @@ public:
                 busSum += data.inputs[0].channelBuffers32[c][s];
             }
             for (int32 c = 0; c < outChannels; ++c) {
-                const Sample32 own =
-                    c < inChannels ? data.inputs[0].channelBuffers32[c][s] : Sample32{0.f};
+                const Sample32 own = c < inChannels ? data.inputs[0].channelBuffers32[c][s] : Sample32{0.f};
                 data.outputs[0].channelBuffers32[c][s] = own + busSum;
             }
         }
@@ -542,17 +515,16 @@ const FUID WidePlugin::cid(0xA1B2C302, 0x4E5F6071, 0x82934455, 0x66778899);
 
 } // namespace aip::testplugin
 
-BEGIN_FACTORY_DEF(AIP_TEST_PLUGIN_VENDOR, "https://example.invalid",
-                  "mailto:nobody@example.invalid")
+BEGIN_FACTORY_DEF(AIP_TEST_PLUGIN_VENDOR, "https://example.invalid", "mailto:nobody@example.invalid")
 
-DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::TestPlugin::cid), PClassInfo::kManyInstances,
-           kVstAudioEffectClass, AIP_TEST_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0",
-           kVstVersionString, aip::testplugin::TestPlugin::createInstance)
+DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::TestPlugin::cid), PClassInfo::kManyInstances, kVstAudioEffectClass,
+    AIP_TEST_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0", kVstVersionString,
+    aip::testplugin::TestPlugin::createInstance)
 
 // Second, and second on purpose: `Engine::appendPlugin` takes a module's *first* audio-effect
 // class, so every existing test goes on getting TestPlugin without saying so.
-DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::WidePlugin::cid), PClassInfo::kManyInstances,
-           kVstAudioEffectClass, AIP_WIDE_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0",
-           kVstVersionString, aip::testplugin::WidePlugin::createInstance)
+DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::WidePlugin::cid), PClassInfo::kManyInstances, kVstAudioEffectClass,
+    AIP_WIDE_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0", kVstVersionString,
+    aip::testplugin::WidePlugin::createInstance)
 
 END_FACTORY

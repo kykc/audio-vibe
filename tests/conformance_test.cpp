@@ -29,8 +29,8 @@ namespace {
 /// A block of interleaved audio plus somewhere to collect the king's output.
 struct TestBlock {
     TestBlock(std::uint32_t channelCount, std::int32_t frames)
-        : size(frames * static_cast<std::int32_t>(channelCount)),
-          input(static_cast<std::size_t>(size)), output(static_cast<std::size_t>(size), 0.f) {
+        : size(frames * static_cast<std::int32_t>(channelCount)), input(static_cast<std::size_t>(size)),
+          output(static_cast<std::size_t>(size), 0.f) {
         // A ramp, so that a channel swap or an off-by-one cannot pass unnoticed.
         std::iota(input.begin(), input.end(), 1.f);
     }
@@ -68,8 +68,7 @@ TEST_CASE("valet attaches, claims the stream, and detaches cleanly", "[conforman
     REQUIRE_FALSE(valet.attached());
 
     TestBlock block(2, 16);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::NoValet);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::NoValet);
     REQUIRE(block.output == block.input);
 }
 
@@ -95,8 +94,7 @@ TEST_CASE("a block round-trips through the valet unchanged", "[conformance][roun
     thread.start();
 
     TestBlock block(channels, 480);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
 
     // Unity gain: the payload survives de-interleave, in-place processing and re-interleave
     // bit-exactly. Nothing here is lossy, so exact equality is the correct assertion.
@@ -125,8 +123,7 @@ TEST_CASE("planar addressing agrees end to end", "[conformance][roundtrip][plana
     thread.start();
 
     TestBlock block(channels, frames);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
 
     for (std::int32_t frame = 0; frame < frames; ++frame) {
         for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -154,8 +151,7 @@ TEST_CASE("gain is applied in place on the shared payload", "[conformance][round
     thread.start();
 
     TestBlock block(channels, 64);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
 
     for (std::size_t i = 0; i < block.input.size(); ++i) {
         REQUIRE(block.output[i] == block.input[i] * 0.5f);
@@ -166,8 +162,7 @@ TEST_CASE("gain is applied in place on the shared payload", "[conformance][round
     valet.detach();
 }
 
-TEST_CASE("a second valet takes the stream over and the incumbent detaches",
-          "[conformance][stolen]") {
+TEST_CASE("a second valet takes the stream over and the incumbent detaches", "[conformance][stolen]") {
     const std::wstring base = harness::uniqueTestObjectBase(L"stolen");
     harness::SyntheticKing king(base);
     REQUIRE(king.open(48000, 2));
@@ -182,8 +177,7 @@ TEST_CASE("a second valet takes the stream over and the incumbent detaches",
     thread.start();
 
     TestBlock block(2, 32);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
 
     // Another client arrives and publishes its own id. Displacement is intentional (sec. 4.1).
     const std::uint32_t thiefId = valet.valetId() ^ 0x5A5A5A5Au;
@@ -192,8 +186,8 @@ TEST_CASE("a second valet takes the stream over and the incumbent detaches",
     // The king publishes the next block; our valet must recognise the mismatch and detach
     // (sec. 4.4 step 2). With no real second client to answer, the king then times out -- which is
     // exactly what v1 does in this situation.
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::ValetTimedOut);
+    REQUIRE(
+        king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::ValetTimedOut);
 
     REQUIRE(waitFor([&] { return !thread.running(); }));
     REQUIRE(thread.exitReason() == ipc::ValetExitReason::Stolen);
@@ -205,8 +199,7 @@ TEST_CASE("a second valet takes the stream over and the incumbent detaches",
     REQUIRE(king.valetIdInHeader() == protocol::kNoValet);
 }
 
-TEST_CASE("king-side timeout evicts the valet, which reclaims the stream",
-          "[conformance][eviction]") {
+TEST_CASE("king-side timeout evicts the valet, which reclaims the stream", "[conformance][eviction]") {
     const std::wstring base = harness::uniqueTestObjectBase(L"eviction");
     harness::SyntheticKing king(base);
     REQUIRE(king.open(48000, 2));
@@ -217,8 +210,8 @@ TEST_CASE("king-side timeout evicts the valet, which reclaims the stream",
 
     // Claim published, but nothing is consuming blocks yet -- the valet thread is not started.
     TestBlock block(2, 32);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::ValetTimedOut);
+    REQUIRE(
+        king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::ValetTimedOut);
 
     // Sec. 4.4 king step 5: on timeout the king writes 0 to valetId and passes audio through.
     REQUIRE(king.valetIdInHeader() == protocol::kNoValet);
@@ -235,8 +228,7 @@ TEST_CASE("king-side timeout evicts the valet, which reclaims the stream",
     REQUIRE(king.valetIdInHeader() == valet.valetId());
     REQUIRE(thread.running());
 
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     for (std::size_t i = 0; i < block.input.size(); ++i) {
         REQUIRE(block.output[i] == block.input[i] * 2.0f);
     }
@@ -245,8 +237,7 @@ TEST_CASE("king-side timeout evicts the valet, which reclaims the stream",
     valet.detach();
 }
 
-TEST_CASE("a format change that reopens the stream is observed on the next block",
-          "[conformance][format]") {
+TEST_CASE("a format change that reopens the stream is observed on the next block", "[conformance][format]") {
     const std::wstring base = harness::uniqueTestObjectBase(L"format");
     harness::SyntheticKing king(base);
     REQUIRE(king.open(48000, 2));
@@ -261,8 +252,8 @@ TEST_CASE("a format change that reopens the stream is observed on the next block
 
     {
         TestBlock block(2, 480);
-        REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(
+            king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     }
     REQUIRE(recorder.last().sampleRate == 48000);
     REQUIRE(recorder.last().channelCount == 2);
@@ -277,8 +268,8 @@ TEST_CASE("a format change that reopens the stream is observed on the next block
 
     {
         TestBlock block(6, 256);
-        REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(
+            king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     }
 
     // The new geometry is picked up on the very next block, with no restart and no reattach,
@@ -292,8 +283,7 @@ TEST_CASE("a format change that reopens the stream is observed on the next block
     valet.detach();
 }
 
-TEST_CASE("a sample-rate-only change leaves a stale sampleRate, and the valet copes",
-          "[conformance][format][defect]") {
+TEST_CASE("a sample-rate-only change leaves a stale sampleRate, and the valet copes", "[conformance][format][defect]") {
     // This test documents an inherited defect rather than desired behaviour. `smartOpen` in the
     // deployed APO tests `sampleRate != _sampleRate && channelCount != _channelCount` where
     // `||` was meant (sec. 3.7.3), so a sample-rate-only format change does not reopen the stream
@@ -315,16 +305,14 @@ TEST_CASE("a sample-rate-only change leaves a stale sampleRate, and the valet co
     thread.start();
 
     TestBlock block(2, 480);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     REQUIRE(recorder.last().sampleRate == 48000);
 
-    king.smartOpen(44100, 2);                           // sample rate only: condition not met
-    REQUIRE(king.publishedSampleRate() == 48000);       // still the old value -- the defect
+    king.smartOpen(44100, 2); // sample rate only: condition not met
+    REQUIRE(king.publishedSampleRate() == 48000); // still the old value -- the defect
     REQUIRE(king.valetIdInHeader() == valet.valetId()); // no reopen happened
 
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
 
     // The valet observes the stale rate -- it has no way not to -- but the audio path is intact.
     REQUIRE(recorder.last().sampleRate == 48000);
@@ -337,8 +325,7 @@ TEST_CASE("a sample-rate-only change leaves a stale sampleRate, and the valet co
     valet.detach();
 }
 
-TEST_CASE("a malformed header is rejected but the rendezvous still completes",
-          "[conformance][malformed]") {
+TEST_CASE("a malformed header is rejected but the rendezvous still completes", "[conformance][malformed]") {
     // The shared objects carry a null DACL (sec. 3.7.2), so any process on the machine can write
     // nonsense into the header. The valet must not fault on it -- and must still signal KING,
     // because leaving the king to time out costs the audio engine's real-time thread up to
@@ -372,8 +359,7 @@ TEST_CASE("a malformed header is rejected but the rendezvous still completes",
     std::uint64_t expectedRejections = 0;
     for (const BadHeader& bad : cases) {
         INFO("malformed case: " << bad.what);
-        REQUIRE(king.dispatchRawHeader(48000, bad.channelCount, bad.size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(king.dispatchRawHeader(48000, bad.channelCount, bad.size) == harness::DispatchResult::Processed);
         ++expectedRejections;
         REQUIRE(waitFor([&] { return counters.malformedBlocks.load() == expectedRejections; }));
     }
@@ -384,8 +370,7 @@ TEST_CASE("a malformed header is rejected but the rendezvous still completes",
 
     // A well-formed block after the garbage is processed normally.
     TestBlock block(2, 32);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     REQUIRE(counters.blocks.load() == 1);
 
     thread.stop();
@@ -411,8 +396,8 @@ TEST_CASE("many consecutive blocks stay in lockstep", "[conformance][roundtrip]"
     constexpr int kBlocks = 2000;
     TestBlock block(channels, 128);
     for (int i = 0; i < kBlocks; ++i) {
-        REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(
+            king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
         REQUIRE(block.output[0] == block.input[0] * 2.0f);
         REQUIRE(block.output.back() == block.input.back() * 2.0f);
     }
@@ -425,8 +410,7 @@ TEST_CASE("many consecutive blocks stay in lockstep", "[conformance][roundtrip]"
     valet.detach();
 }
 
-TEST_CASE("the supervisor waits for the endpoint and attaches when it appears",
-          "[conformance][supervisor]") {
+TEST_CASE("the supervisor waits for the endpoint and attaches when it appears", "[conformance][supervisor]") {
     const std::wstring base = harness::uniqueTestObjectBase(L"supervisor");
 
     harness::GainProcessor processor(1.0f);
@@ -446,16 +430,14 @@ TEST_CASE("the supervisor waits for the endpoint and attaches when it appears",
     REQUIRE(supervisor.attachCount() == 1);
 
     TestBlock block(2, 64);
-    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) ==
-            harness::DispatchResult::Processed);
+    REQUIRE(king.dispatch(block.input.data(), block.output.data(), block.size) == harness::DispatchResult::Processed);
     REQUIRE(block.output == block.input);
 
     supervisor.stop();
     REQUIRE(king.valetIdInHeader() == protocol::kNoValet); // stopping detaches cleanly
 }
 
-TEST_CASE("the supervisor relinquishes the stream after a takeover",
-          "[conformance][supervisor][stolen]") {
+TEST_CASE("the supervisor relinquishes the stream after a takeover", "[conformance][supervisor][stolen]") {
     // Sec. 4.1 makes displacement intentional. Re-attaching by default would make two clients
     // ping-pong the endpoint forever, so the supervisor stops instead.
     const std::wstring base = harness::uniqueTestObjectBase(L"relinquish");

@@ -18,8 +18,7 @@ ValetCounters::Snapshot ValetCounters::snapshot() const noexcept {
     return s;
 }
 
-ValetThread::ValetThread(BufferValet& valet, BlockProcessor& processor,
-                         ValetCounters& counters) noexcept
+ValetThread::ValetThread(BufferValet& valet, BlockProcessor& processor, ValetCounters& counters) noexcept
     : valet_(valet), processor_(processor), counters_(counters) {}
 
 ValetThread::~ValetThread() { stop(); }
@@ -60,14 +59,11 @@ void ValetThread::run() noexcept {
 
         if (status == BlockStatus::Captured) {
             if (block.sampleRate != counters_.lastSampleRate.load(std::memory_order_relaxed) ||
-                block.channelCount !=
-                    counters_.lastChannelCount.load(std::memory_order_relaxed) ||
-                block.audio.frameCount() !=
-                    counters_.lastFrameCount.load(std::memory_order_relaxed)) {
+                block.channelCount != counters_.lastChannelCount.load(std::memory_order_relaxed) ||
+                block.audio.frameCount() != counters_.lastFrameCount.load(std::memory_order_relaxed)) {
                 counters_.lastSampleRate.store(block.sampleRate, std::memory_order_relaxed);
                 counters_.lastChannelCount.store(block.channelCount, std::memory_order_relaxed);
-                counters_.lastFrameCount.store(block.audio.frameCount(),
-                                               std::memory_order_relaxed);
+                counters_.lastFrameCount.store(block.audio.frameCount(), std::memory_order_relaxed);
                 counters_.formatChanges.fetch_add(1, std::memory_order_relaxed);
             }
 

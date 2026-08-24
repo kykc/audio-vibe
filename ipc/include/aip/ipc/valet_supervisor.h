@@ -49,12 +49,10 @@ class ValetSupervisor {
 public:
     /// `processor` must outlive the supervisor. `endpointGuid` is `PKEY_AudioEndpoint_GUID`
     /// verbatim, braces included (sec. 4.2) -- see `ipc/endpoints.h`.
-    ValetSupervisor(std::wstring endpointGuid, BlockProcessor& processor,
-                    SupervisorPolicy policy = {});
+    ValetSupervisor(std::wstring endpointGuid, BlockProcessor& processor, SupervisorPolicy policy = {});
 
     /// Attaches to an explicit object base name rather than deriving one from an endpoint GUID.
-    ValetSupervisor(ObjectBaseName base, BlockProcessor& processor,
-                    SupervisorPolicy policy = {});
+    ValetSupervisor(ObjectBaseName base, BlockProcessor& processor, SupervisorPolicy policy = {});
     ~ValetSupervisor();
 
     ValetSupervisor(const ValetSupervisor&) = delete;
@@ -69,18 +67,14 @@ public:
     void start();
     void stop();
 
-    [[nodiscard]] LinkState state() const noexcept {
-        return state_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] LinkState state() const noexcept { return state_.load(std::memory_order_acquire); }
 
     [[nodiscard]] const ValetCounters& counters() const noexcept { return counters_; }
 
     [[nodiscard]] const std::wstring& objectBaseName() const noexcept { return base_; }
 
     /// Number of completed attach cycles. Useful in tests to observe re-attach behaviour.
-    [[nodiscard]] std::uint32_t attachCount() const noexcept {
-        return attachCount_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint32_t attachCount() const noexcept { return attachCount_.load(std::memory_order_relaxed); }
 
 private:
     void run();

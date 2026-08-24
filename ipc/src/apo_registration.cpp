@@ -16,12 +16,11 @@ namespace {
 constexpr wchar_t kFxPrefix[] = L"{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},";
 constexpr std::size_t kFxPrefixLength = (sizeof(kFxPrefix) / sizeof(wchar_t)) - 1;
 
-constexpr wchar_t kRenderPath[] =
-    L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\";
+constexpr wchar_t kRenderPath[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\";
 
 std::wstring toUpper(std::wstring text) {
-    std::transform(text.begin(), text.end(), text.begin(),
-                   [](wchar_t c) { return static_cast<wchar_t>(::towupper(c)); });
+    std::transform(
+        text.begin(), text.end(), text.begin(), [](wchar_t c) { return static_cast<wchar_t>(::towupper(c)); });
     return text;
 }
 
@@ -55,17 +54,14 @@ const std::vector<std::wstring>& knownApoClsids() {
     return clsids;
 }
 
-bool attachable(ApoPresence presence) {
-    return presence == ApoPresence::Present;
-}
+bool attachable(ApoPresence presence) { return presence == ApoPresence::Present; }
 
 SlotMatch matchApoSlot(const std::wstring& valueName, const std::wstring& valueText) {
     SlotMatch match;
 
     // Must be an effect slot: the FX property GUID, a comma, and at least one digit after it.
     // `OriginalGfxApo` fails here, which is the point -- it names what the chain used to hold.
-    if (valueName.size() <= kFxPrefixLength ||
-        ::_wcsnicmp(valueName.c_str(), kFxPrefix, kFxPrefixLength) != 0) {
+    if (valueName.size() <= kFxPrefixLength || ::_wcsnicmp(valueName.c_str(), kFxPrefix, kFxPrefixLength) != 0) {
         return match;
     }
 
@@ -109,8 +105,7 @@ ApoRegistration readApoRegistration(const std::wstring& endpointGuid) {
         } else if (opened == ERROR_ACCESS_DENIED) {
             result.detail = L"this account is not allowed to read this endpoint's effect chain";
         } else {
-            result.detail = L"this endpoint's effect chain could not be read (error " +
-                            std::to_wstring(opened) + L")";
+            result.detail = L"this endpoint's effect chain could not be read (error " + std::to_wstring(opened) + L")";
         }
         return result;
     }
@@ -122,8 +117,8 @@ ApoRegistration readApoRegistration(const std::wstring& endpointGuid) {
     DWORD valueCount = 0;
     DWORD maxNameChars = 0;
     DWORD maxValueBytes = 0;
-    if (::RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &valueCount,
-                           &maxNameChars, &maxValueBytes, nullptr, nullptr) != ERROR_SUCCESS) {
+    if (::RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, &valueCount, &maxNameChars,
+            &maxValueBytes, nullptr, nullptr) != ERROR_SUCCESS) {
         ::RegCloseKey(key);
         result.presence = ApoPresence::Unknown;
         result.detail = L"this endpoint's effect chain could not be measured";
@@ -137,8 +132,8 @@ ApoRegistration readApoRegistration(const std::wstring& endpointGuid) {
         DWORD nameChars = static_cast<DWORD>(name.size());
         DWORD dataBytes = static_cast<DWORD>(data.size());
         DWORD type = 0;
-        const LSTATUS status = ::RegEnumValueW(key, index, name.data(), &nameChars, nullptr, &type,
-                                               data.data(), &dataBytes);
+        const LSTATUS status =
+            ::RegEnumValueW(key, index, name.data(), &nameChars, nullptr, &type, data.data(), &dataBytes);
         if (status != ERROR_SUCCESS) {
             continue;
         }
@@ -146,16 +141,15 @@ ApoRegistration readApoRegistration(const std::wstring& endpointGuid) {
             continue;
         }
 
-        const SlotMatch match =
-            matchApoSlot(std::wstring(name.data(), nameChars), flatten(data, dataBytes));
+        const SlotMatch match = matchApoSlot(std::wstring(name.data(), nameChars), flatten(data, dataBytes));
         if (!match.matched) {
             continue;
         }
 
         result.presence = ApoPresence::Present;
         result.slot = match.slot;
-        result.detail = L"this project's APO " + match.clsid +
-                        L" is in this endpoint's effect chain, in slot " + match.slot;
+        result.detail =
+            L"this project's APO " + match.clsid + L" is in this endpoint's effect chain, in slot " + match.slot;
         ::RegCloseKey(key);
         return result;
     }

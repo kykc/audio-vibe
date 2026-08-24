@@ -96,18 +96,17 @@ public:
 
     /// Inserts at `index` (clamped to the end). When a stream format is already known the new
     /// plugin is prepared for it here, so a failure is reported before anything is published.
-    [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path,
-                                    std::string& error);
+    [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path, std::string& error);
 
-    [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path,
-                                    const VST3::UID& classId, std::string& error);
+    [[nodiscard]] bool insertPlugin(
+        std::size_t index, const std::string& path, const VST3::UID& classId, std::string& error);
 
     /// Same, naming the class in its `VST3::UID::toString()` form -- which is what `scanner/`
     /// reports, and the only form a caller that is deliberately not an SDK host can hold. Keeping
     /// the parse here rather than at the call site is the point: `ui/` should not have to include
     /// a VST3 header to say which of a module's classes it means.
-    [[nodiscard]] bool insertPluginByClassId(std::size_t index, const std::string& path,
-                                             const std::string& classId, std::string& error);
+    [[nodiscard]] bool insertPluginByClassId(
+        std::size_t index, const std::string& path, const std::string& classId, std::string& error);
 
     /// Same again, handing the plugin back the state it was saved with. This exists as its own
     /// entry point rather than as something the caller does afterwards because of *when* the
@@ -119,9 +118,8 @@ public:
     /// that happens `error` is non-empty on success, which is the one place in this class where
     /// that is true, and it is how a shell reports "your plugin is here but it starts from
     /// defaults" without calling it a failure.
-    [[nodiscard]] bool insertPluginWithState(std::size_t index, const std::string& path,
-                                             const std::string& classId, const PluginState& state,
-                                             std::string& error);
+    [[nodiscard]] bool insertPluginWithState(std::size_t index, const std::string& path, const std::string& classId,
+        const PluginState& state, std::string& error);
 
     /// Removes the plugin at `index` and destroys it, once the audio thread has provably let go.
     [[nodiscard]] bool removePlugin(std::size_t index);
@@ -185,8 +183,7 @@ public:
     /// `error` set when the geometry is unusable or a plugin refused it, exactly as `rebuild`
     /// does -- and a refusal here is the point, because it is being reported hours earlier than
     /// it otherwise would be.
-    [[nodiscard]] bool prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount,
-                                            std::string& error);
+    [[nodiscard]] bool prepareSpeculatively(std::uint32_t sampleRate, std::uint32_t channelCount, std::string& error);
 
     /// True when the built format came from `prepareSpeculatively` and no block has confirmed it
     /// yet. Worth showing: "prepared" on a guess is a weaker claim than "prepared" on a block.
@@ -323,9 +320,8 @@ private:
 
     /// The one insertion path; everything public above narrows down to it. `state` is optional
     /// and applied before `prepare`.
-    [[nodiscard]] bool insertPluginImpl(std::size_t index, const std::string& path,
-                                        const VST3::UID& classId, const PluginState* state,
-                                        std::string& error);
+    [[nodiscard]] bool insertPluginImpl(std::size_t index, const std::string& path, const VST3::UID& classId,
+        const PluginState* state, std::string& error);
 
     /// Publishes a view over every prepared, non-bypassed rack entry. Publishes nothing when no
     /// format is known yet. Returns false only if the audio thread failed to release the chain

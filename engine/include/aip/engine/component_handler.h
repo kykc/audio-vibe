@@ -79,8 +79,7 @@ public:
     // --- IComponentHandler, callable from any thread ------------------------------------------
 
     Steinberg::tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID id) override;
-    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id,
-                                              Steinberg::Vst::ParamValue value) override;
+    Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) override;
     Steinberg::tresult PLUGIN_API endEdit(Steinberg::Vst::ParamID id) override;
     Steinberg::tresult PLUGIN_API restartComponent(Steinberg::int32 flags) override;
 
@@ -106,18 +105,14 @@ public:
 
     /// Edits dropped because the audio-thread ring was full. Nonzero means a plugin is calling
     /// back faster than the control thread drains, which is worth surfacing.
-    [[nodiscard]] std::uint64_t droppedEdits() const noexcept {
-        return dropped_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t droppedEdits() const noexcept { return dropped_.load(std::memory_order_relaxed); }
 
     /// Total accepted edits, both paths. Test and diagnostic aid.
-    [[nodiscard]] std::uint64_t acceptedEdits() const noexcept {
-        return accepted_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t acceptedEdits() const noexcept { return accepted_.load(std::memory_order_relaxed); }
 
     OBJ_METHODS(ComponentHandler, Steinberg::FObject)
     DEFINE_INTERFACES
-        DEF_INTERFACE(Steinberg::Vst::IComponentHandler)
+    DEF_INTERFACE(Steinberg::Vst::IComponentHandler)
     END_DEFINE_INTERFACES(Steinberg::FObject)
     REFCOUNT_METHODS(Steinberg::FObject)
 

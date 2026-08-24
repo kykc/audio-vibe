@@ -80,8 +80,7 @@ GenericEditorWindow::GenericEditorWindow(engine::PluginInstance& instance, QWidg
 
 GenericEditorWindow::~GenericEditorWindow() { release(); }
 
-GenericEditorWindow* GenericEditorWindow::create(engine::PluginInstance& instance,
-                                                 QWidget* parent, QString& error) {
+GenericEditorWindow* GenericEditorWindow::create(engine::PluginInstance& instance, QWidget* parent, QString& error) {
     error.clear();
     if (instance.controller() == nullptr) {
         error = QStringLiteral("the plugin exposes no edit controller, so it has no parameters "
@@ -179,16 +178,14 @@ bool GenericEditorWindow::build(QString& error) {
 
         const std::size_t rowIndex = rows_.size();
         connect(row.slider, &QSlider::valueChanged, this,
-                [this, rowIndex](int position) { onSliderMoved(rowIndex, position); });
+            [this, rowIndex](int position) { onSliderMoved(rowIndex, position); });
 
         rows_.push_back(row);
     }
 
     if (rows_.empty()) {
-        error = declared > 0
-                    ? QStringLiteral("the plugin marks all %1 of its parameters hidden")
-                          .arg(declared)
-                    : QStringLiteral("the plugin exposes no parameters");
+        error = declared > 0 ? QStringLiteral("the plugin marks all %1 of its parameters hidden").arg(declared)
+                             : QStringLiteral("the plugin exposes no parameters");
         return false;
     }
 

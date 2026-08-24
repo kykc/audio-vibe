@@ -145,8 +145,7 @@ TEST_CASE("a truncated record stream names the module that was in flight", "[sca
     REQUIRE(reader.inFlight());
     REQUIRE(reader.inFlightPath() == "C:/plugins/Doomed.vst3");
 
-    const scanner::ScannedModule abandoned =
-        reader.abandon(scanner::ScanStatus::Crashed, "it died");
+    const scanner::ScannedModule abandoned = reader.abandon(scanner::ScanStatus::Crashed, "it died");
 
     REQUIRE(abandoned.path == "C:/plugins/Doomed.vst3");
     REQUIRE(abandoned.status == scanner::ScanStatus::Crashed);
@@ -187,8 +186,7 @@ TEST_CASE("scanning a working plugin reports what the host would see", "[scanner
 TEST_CASE("a plugin that faults costs one entry, not the scan", "[scanner]") {
     // The claim the whole component exists to make. aip_crash_plugin dereferences null inside
     // GetPluginFactory, in the loader's own call.
-    const scanner::ScanReport report =
-        scanner::scanModules({AIP_CRASH_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH});
+    const scanner::ScanReport report = scanner::scanModules({AIP_CRASH_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH});
 
     REQUIRE(report.modules.size() == 2);
 
@@ -212,8 +210,7 @@ TEST_CASE("a plugin that hangs costs one entry, not the scan", "[scanner]") {
     scanner::ScanOptions options;
     options.moduleTimeoutMs = 1500;
 
-    const scanner::ScanReport report =
-        scanner::scanModules({AIP_HANG_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH}, options);
+    const scanner::ScanReport report = scanner::scanModules({AIP_HANG_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH}, options);
 
     REQUIRE(report.modules.size() == 2);
     REQUIRE(report.modules[0].status == scanner::ScanStatus::TimedOut);
@@ -226,8 +223,7 @@ TEST_CASE("a plugin that hangs costs one entry, not the scan", "[scanner]") {
 }
 
 TEST_CASE("a path that is not a plugin is a clean answer, not a crash", "[scanner]") {
-    const scanner::ScanReport report =
-        scanner::scanModules({"C:/nowhere/NotAPlugin.vst3", AIP_TEST_PLUGIN_PATH});
+    const scanner::ScanReport report = scanner::scanModules({"C:/nowhere/NotAPlugin.vst3", AIP_TEST_PLUGIN_PATH});
 
     REQUIRE(report.modules.size() == 2);
     REQUIRE(report.modules[0].status == scanner::ScanStatus::LoadFailed);
@@ -243,8 +239,7 @@ TEST_CASE("every requested path gets an entry", "[scanner]") {
     scanner::ScanOptions options;
     options.childExecutable = "C:/nowhere/aip_scan.exe";
 
-    const scanner::ScanReport report =
-        scanner::scanModules({AIP_TEST_PLUGIN_PATH, AIP_CRASH_PLUGIN_PATH}, options);
+    const scanner::ScanReport report = scanner::scanModules({AIP_TEST_PLUGIN_PATH, AIP_CRASH_PLUGIN_PATH}, options);
 
     REQUIRE(report.modules.size() == 2);
     for (const scanner::ScannedModule& module : report.modules) {
@@ -257,13 +252,13 @@ TEST_CASE("progress is reported as entries land", "[scanner]") {
     std::vector<std::string> seen;
     std::size_t lastTotal = 0;
 
-    const scanner::ScanReport report = scanner::scanModules(
-        {AIP_TEST_PLUGIN_PATH, AIP_CRASH_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH}, {},
-        [&](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
-            seen.push_back(module.path);
-            REQUIRE(done == seen.size());
-            lastTotal = total;
-        });
+    const scanner::ScanReport report =
+        scanner::scanModules({AIP_TEST_PLUGIN_PATH, AIP_CRASH_PLUGIN_PATH, AIP_TEST_PLUGIN_PATH}, {},
+            [&](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
+                seen.push_back(module.path);
+                REQUIRE(done == seen.size());
+                lastTotal = total;
+            });
 
     REQUIRE(seen.size() == 3);
     REQUIRE(lastTotal == 3);

@@ -11,8 +11,7 @@ namespace {
 // The width every scratch bank has to be: the stream's, unless a plugin insisted on a wider bus,
 // in which case the widest such bus. Control thread -- the numbers are fixed by prepare() and a
 // chain is immutable, so this is computed once and never revisited.
-std::uint32_t widestBus(std::uint32_t streamChannels,
-                        const std::vector<PluginInstance*>& plugins) noexcept {
+std::uint32_t widestBus(std::uint32_t streamChannels, const std::vector<PluginInstance*>& plugins) noexcept {
     std::uint32_t widest = streamChannels;
     for (const PluginInstance* plugin : plugins) {
         if (plugin == nullptr) {
@@ -28,8 +27,7 @@ std::uint32_t widestBus(std::uint32_t streamChannels,
 void PluginChain::Bank::allocate(std::uint32_t channelCount, std::int32_t maxFrames) {
     // assign(), not resize(): every element is written, which is what faults in every page
     // before the audio thread ever reaches it (sec. 7.4.2).
-    samples.assign(static_cast<std::size_t>(channelCount) * static_cast<std::size_t>(maxFrames),
-                   0.0f);
+    samples.assign(static_cast<std::size_t>(channelCount) * static_cast<std::size_t>(maxFrames), 0.0f);
     channels.resize(channelCount);
     for (std::uint32_t c = 0; c < channelCount; ++c) {
         channels[c] = samples.data() + static_cast<std::ptrdiff_t>(c) * maxFrames;
@@ -56,27 +54,23 @@ PluginChain::PluginChain(StreamFormat format, std::vector<PluginInstance*> plugi
 }
 
 bool PluginChain::runnable() const noexcept {
-    if (!format_.valid() || sharedChannels_.size() != bankChannels_ ||
-        bankChannels_ < format_.channelCount) {
+    if (!format_.valid() || sharedChannels_.size() != bankChannels_ || bankChannels_ < format_.channelCount) {
         return false;
     }
     return std::all_of(plugins_.begin(), plugins_.end(), [this](const PluginInstance* plugin) {
         return plugin != nullptr && plugin->prepared() && plugin->format() == format_ &&
-               plugin->inputChannelCount() <= bankChannels_ &&
-               plugin->outputChannelCount() <= bankChannels_;
+            plugin->inputChannelCount() <= bankChannels_ && plugin->outputChannelCount() <= bankChannels_;
     });
 }
 
-void PluginChain::silencePadding(float* const* channels, std::uint32_t upTo,
-                                 std::int32_t frames) const noexcept {
+void PluginChain::silencePadding(float* const* channels, std::uint32_t upTo, std::int32_t frames) const noexcept {
     const std::size_t bytes = static_cast<std::size_t>(frames) * sizeof(float);
     for (std::uint32_t c = format_.channelCount; c < upTo; ++c) {
         std::memset(channels[c], 0, bytes);
     }
 }
 
-void PluginChain::process(protocol::PlanarView& audio,
-                          Vst::ProcessContext& context) noexcept {
+void PluginChain::process(protocol::PlanarView& audio, Vst::ProcessContext& context) noexcept {
     const std::size_t count = plugins_.size();
     if (count == 0) {
         return;

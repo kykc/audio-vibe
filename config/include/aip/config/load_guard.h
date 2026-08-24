@@ -43,8 +43,7 @@ public:
 
     /// Where the breadcrumb lives. Named for what it is, because a user who finds it should be
     /// able to guess what it does and that deleting it is safe.
-    [[nodiscard]] static std::filesystem::path breadcrumbPath(
-        const std::filesystem::path& sessionPath);
+    [[nodiscard]] static std::filesystem::path breadcrumbPath(const std::filesystem::path& sessionPath);
 
     /// What the previous run was in the middle of loading when it stopped, or empty if it got
     /// through. Call this *before* anything is loaded -- `mark` overwrites it.
@@ -53,8 +52,7 @@ public:
     /// outlived being acted on would be permanent, and the entry it names could never be tried
     /// again -- clearing `blocked` by hand would be undone by the same stale file on the next
     /// start, with no way to tell that is what was happening.
-    [[nodiscard]] static std::string takePreviousCasualty(
-        const std::filesystem::path& sessionPath);
+    [[nodiscard]] static std::string takePreviousCasualty(const std::filesystem::path& sessionPath);
 
     /// Records that `path` is about to be loaded, and flushes. Call immediately before the load.
     void mark(const std::string& path);

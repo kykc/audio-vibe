@@ -62,6 +62,7 @@ public:
     static constexpr DWORD kValetTimeoutMs = 1000;
 
     BufferKing() = default;
+
     ~BufferKing() { close(); }
 
     BufferKing(const BufferKing&) = delete;
@@ -74,13 +75,11 @@ public:
     ///
     /// Control thread only. Returns false if any object could not be created, which in
     /// `audiodg.exe` means the APO runs as a pass-through rather than failing the stream.
-    [[nodiscard]] bool open(const std::wstring& objectBase, std::uint32_t sampleRate,
-                            std::uint32_t channelCount);
+    [[nodiscard]] bool open(const std::wstring& objectBase, std::uint32_t sampleRate, std::uint32_t channelCount);
 
     /// Opens on first call; on later calls reopens **if either** the sample rate or the channel
     /// count changed. The `||` is the point -- see the header comment.
-    [[nodiscard]] bool smartOpen(const std::wstring& objectBase, std::uint32_t sampleRate,
-                                 std::uint32_t channelCount);
+    [[nodiscard]] bool smartOpen(const std::wstring& objectBase, std::uint32_t sampleRate, std::uint32_t channelCount);
 
     /// Clears both events and releases every handle (sec. 4.5). A valet blocked in its wait then
     /// sees the handle go away and re-attaches when the stream comes back.
@@ -102,8 +101,8 @@ public:
     ///
     /// **Audio thread. Real-time safe.** No allocation, no lock, no I/O, no failure path that
     /// takes any. The one blocking call is the sec. 7.4.4 rendezvous.
-    [[nodiscard]] DispatchResult dispatch(const float* interleavedIn, float* interleavedOut,
-                                          std::int32_t size) noexcept;
+    [[nodiscard]] DispatchResult dispatch(
+        const float* interleavedIn, float* interleavedOut, std::int32_t size) noexcept;
 
     /// Blocks dispatched since `open`, and evictions among them. Plain counters on the audio
     /// thread, read from anywhere; they exist so that a live APO can be asked whether it is doing

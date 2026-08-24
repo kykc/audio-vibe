@@ -16,14 +16,11 @@ namespace {
 /// How an entry is named in a refusal. The index is one-based and always present, because the
 /// name and the path are both things a broken entry may be missing -- and "the third plugin" is
 /// what someone opening the file in an editor is looking for anyway.
-std::string describePosition(std::size_t index) {
-    return "plugin " + std::to_string(index + 1);
-}
+std::string describePosition(std::size_t index) { return "plugin " + std::to_string(index + 1); }
 
 } // namespace
 
-bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainBypassed,
-                std::string& error) {
+bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainBypassed, std::string& error) {
     error.clear();
 
     // Through the path overload rather than a narrow string: on Windows that is the wide native
@@ -55,7 +52,7 @@ bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainB
     readScalar(root, kKeyVersion, version);
     if (version != kPresetFormatVersion) {
         error = path.string() + ": format version " + std::to_string(version) +
-                ", which this build does not know how to read";
+            ", which this build does not know how to read";
         return false;
     }
 
@@ -87,14 +84,14 @@ bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainB
         readRackEntry(item, entry, undecodable);
 
         if (entry.path.empty()) {
-            error = path.string() + ": " + describePosition(index) + " has no `path`, so there is"
-                    " nothing to load for it";
+            error = path.string() + ": " + describePosition(index) +
+                " has no `path`, so there is"
+                " nothing to load for it";
             return false;
         }
         if (undecodable) {
             error = path.string() + ": " + describePosition(index) + " (" +
-                    (entry.name.empty() ? entry.path : entry.name) +
-                    ") has a saved state that will not decode";
+                (entry.name.empty() ? entry.path : entry.name) + ") has a saved state that will not decode";
             return false;
         }
         // A preset carries no verdict about what is safe to load -- that is a property of this
@@ -113,8 +110,7 @@ bool readPreset(const fs::path& path, std::vector<RackEntry>& rack, bool& chainB
     return true;
 }
 
-bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool chainBypassed,
-                 std::string& error) {
+bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool chainBypassed, std::string& error) {
     error.clear();
     if (path.empty()) {
         error = "no location to save to";

@@ -22,8 +22,7 @@ public:
 
     /// The plugin wants to be `size`. Return true when the host has applied it; the frame then
     /// confirms it back to the plugin.
-    virtual bool onPluginResizeRequest(Steinberg::IPlugView& view,
-                                       const Steinberg::ViewRect& size) = 0;
+    virtual bool onPluginResizeRequest(Steinberg::IPlugView& view, const Steinberg::ViewRect& size) = 0;
 };
 
 class PlugFrame final : public Steinberg::FObject, public Steinberg::IPlugFrame {
@@ -33,12 +32,11 @@ public:
     /// Call before the host goes away. The plugin may still be holding a reference.
     void detach() noexcept { host_ = nullptr; }
 
-    Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view,
-                                             Steinberg::ViewRect* newSize) override;
+    Steinberg::tresult PLUGIN_API resizeView(Steinberg::IPlugView* view, Steinberg::ViewRect* newSize) override;
 
     OBJ_METHODS(PlugFrame, Steinberg::FObject)
     DEFINE_INTERFACES
-        DEF_INTERFACE(Steinberg::IPlugFrame)
+    DEF_INTERFACE(Steinberg::IPlugFrame)
     END_DEFINE_INTERFACES(Steinberg::FObject)
     REFCOUNT_METHODS(Steinberg::FObject)
 

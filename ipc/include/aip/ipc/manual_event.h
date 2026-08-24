@@ -45,8 +45,7 @@ public:
 
     /// Creates (or attaches to) a named manual-reset event with a null DACL, as the king does
     /// (sec. 4.2). Only the synthetic king of the conformance harness and the future APO need this.
-    [[nodiscard]] static bool create(const std::wstring& name, bool initiallySignaled,
-                                     ManualEvent& out);
+    [[nodiscard]] static bool create(const std::wstring& name, bool initiallySignaled, ManualEvent& out);
 
     /// Creates an unnamed, process-local manual-reset event. Not part of protocol v1 -- used by
     /// the control plane (e.g. the supervisor's interruptible sleep) and never on the audio

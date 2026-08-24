@@ -13,8 +13,7 @@ namespace {
 bool readDword(HKEY key, const wchar_t* name, DWORD& out) noexcept {
     DWORD size = sizeof(out);
     DWORD type = 0;
-    const LSTATUS status =
-        ::RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(&out), &size);
+    const LSTATUS status = ::RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(&out), &size);
     return status == ERROR_SUCCESS && type == REG_DWORD && size == sizeof(out);
 }
 
@@ -27,8 +26,7 @@ Settings Settings::load() noexcept {
     // KEY_WOW64_64KEY: audiodg.exe is 64-bit and so is this DLL, but the flag makes the view
     // explicit rather than inherited, so a 32-bit tool writing these values by hand lands
     // somewhere the APO will actually look.
-    if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE, kSettingsKeyPath, 0, KEY_READ | KEY_WOW64_64KEY,
-                        &key) != ERROR_SUCCESS) {
+    if (::RegOpenKeyExW(HKEY_LOCAL_MACHINE, kSettingsKeyPath, 0, KEY_READ | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS) {
         return settings;
     }
 

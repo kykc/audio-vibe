@@ -43,12 +43,10 @@ void restrictToMainBusses(Vst::IComponent& component) {
 
 // Pushes `points` values into every one of `count` queues and then clears them, so the
 // underlying std::vectors carry capacity into the audio thread. Control thread only.
-void warmParameterChanges(Vst::ParameterChanges& changes, Steinberg::int32 count,
-                          Steinberg::int32 points) {
+void warmParameterChanges(Vst::ParameterChanges& changes, Steinberg::int32 count, Steinberg::int32 points) {
     for (Steinberg::int32 p = 0; p < count; ++p) {
         Steinberg::int32 index = 0;
-        Vst::IParamValueQueue* queue =
-            changes.addParameterData(static_cast<Vst::ParamID>(p), index);
+        Vst::IParamValueQueue* queue = changes.addParameterData(static_cast<Vst::ParamID>(p), index);
         if (queue == nullptr) {
             break;
         }
@@ -86,18 +84,14 @@ void transferComponentState(Vst::IComponent& component, Vst::IEditController& co
 //
 // `fullBusNegotiation` reports which of the two it was, because the difference is real: it is a
 // side-chain the plugin has disabled versus one it merely ignores.
-bool trySetArrangement(Vst::IAudioProcessor& processor, Steinberg::int32 inBusCount,
-                       Steinberg::int32 outBusCount, Vst::SpeakerArrangement input,
-                       Vst::SpeakerArrangement output, bool& fullBusNegotiation) {
-    std::vector<Vst::SpeakerArrangement> inputs(static_cast<std::size_t>(inBusCount),
-                                                Vst::SpeakerArr::kEmpty);
-    std::vector<Vst::SpeakerArrangement> outputs(static_cast<std::size_t>(outBusCount),
-                                                 Vst::SpeakerArr::kEmpty);
+bool trySetArrangement(Vst::IAudioProcessor& processor, Steinberg::int32 inBusCount, Steinberg::int32 outBusCount,
+    Vst::SpeakerArrangement input, Vst::SpeakerArrangement output, bool& fullBusNegotiation) {
+    std::vector<Vst::SpeakerArrangement> inputs(static_cast<std::size_t>(inBusCount), Vst::SpeakerArr::kEmpty);
+    std::vector<Vst::SpeakerArrangement> outputs(static_cast<std::size_t>(outBusCount), Vst::SpeakerArr::kEmpty);
     inputs[0] = input;
     outputs[0] = output;
 
-    if (processor.setBusArrangements(inputs.data(), inBusCount, outputs.data(), outBusCount) ==
-        kResultOk) {
+    if (processor.setBusArrangements(inputs.data(), inBusCount, outputs.data(), outBusCount) == kResultOk) {
         fullBusNegotiation = true;
         return true;
     }
@@ -109,18 +103,17 @@ bool trySetArrangement(Vst::IAudioProcessor& processor, Steinberg::int32 inBusCo
 // what it wants: there is no "describe your capabilities" call, only trial and inspection. After
 // a refused `setBusArrangements` this is the arrangement the plugin kept, i.e. the one it is
 // telling us it insists on.
-bool readMainArrangements(Vst::IAudioProcessor& processor, Vst::SpeakerArrangement& input,
-                          Vst::SpeakerArrangement& output) {
+bool readMainArrangements(
+    Vst::IAudioProcessor& processor, Vst::SpeakerArrangement& input, Vst::SpeakerArrangement& output) {
     input = 0;
     output = 0;
     return processor.getBusArrangement(Vst::kInput, 0, input) == kResultOk &&
-           processor.getBusArrangement(Vst::kOutput, 0, output) == kResultOk;
+        processor.getBusArrangement(Vst::kOutput, 0, output) == kResultOk;
 }
 
 } // namespace
 
-Vst::SpeakerArrangement speakerArrangementForMask(std::uint32_t channelMask,
-                                                  std::uint32_t channelCount) noexcept {
+Vst::SpeakerArrangement speakerArrangementForMask(std::uint32_t channelMask, std::uint32_t channelCount) noexcept {
     // Bits 0..17 are the eighteen speakers Windows names; VST3 numbers the same eighteen in the
     // same order, so below that line the mask *is* the arrangement. Anything above it is not a
     // speaker position we can translate, and `SPEAKER_ALL` (bit 31) is the common way to see one.
@@ -167,10 +160,8 @@ Vst::SpeakerArrangement speakerArrangementFor(std::uint32_t channelCount) noexce
     return (static_cast<Vst::SpeakerArrangement>(1) << channelCount) - 1;
 }
 
-std::unique_ptr<PluginInstance> PluginInstance::create(PluginModule::Ptr module,
-                                                       const VST3::UID& classId,
-                                                       Steinberg::FUnknown* hostContext,
-                                                       std::string& error) {
+std::unique_ptr<PluginInstance> PluginInstance::create(
+    PluginModule::Ptr module, const VST3::UID& classId, Steinberg::FUnknown* hostContext, std::string& error) {
     error.clear();
     if (!module) {
         error = "no module";
@@ -220,10 +211,8 @@ std::unique_ptr<PluginInstance> PluginInstance::create(PluginModule::Ptr module,
         Steinberg::TUID controllerId;
         if (instance->component_->getControllerClassId(controllerId) == kResultTrue) {
             instance->controller_ =
-                instance->module_->factory().createInstance<Vst::IEditController>(
-                    VST3::UID::fromTUID(controllerId));
-            if (instance->controller_ &&
-                instance->controller_->initialize(hostContext) != kResultOk) {
+                instance->module_->factory().createInstance<Vst::IEditController>(VST3::UID::fromTUID(controllerId));
+            if (instance->controller_ && instance->controller_->initialize(hostContext) != kResultOk) {
                 instance->controller_ = nullptr;
                 error = instance->name_ + ": IEditController::initialize failed";
                 return nullptr;
@@ -241,12 +230,10 @@ std::unique_ptr<PluginInstance> PluginInstance::create(PluginModule::Ptr module,
             transferComponentState(*instance->component_, *instance->controller_);
 
             auto componentPoint = Steinberg::U::cast<Vst::IConnectionPoint>(instance->component_);
-            auto controllerPoint =
-                Steinberg::U::cast<Vst::IConnectionPoint>(instance->controller_);
+            auto controllerPoint = Steinberg::U::cast<Vst::IConnectionPoint>(instance->controller_);
             if (componentPoint && controllerPoint) {
                 instance->componentConnection_ = owned(new Vst::ConnectionProxy(componentPoint));
-                instance->controllerConnection_ =
-                    owned(new Vst::ConnectionProxy(controllerPoint));
+                instance->controllerConnection_ = owned(new Vst::ConnectionProxy(controllerPoint));
                 if (instance->componentConnection_->connect(controllerPoint) != kResultTrue ||
                     instance->controllerConnection_->connect(componentPoint) != kResultTrue) {
                     error = instance->name_ + ": failed to connect component and controller";
@@ -325,8 +312,8 @@ bool PluginInstance::loadState(const PluginState& state) {
     if (component_ && !state.component.empty()) {
         // MemoryStream's read constructor borrows the memory rather than owning it, which is
         // why this const_cast is safe as well as necessary: nothing writes through it.
-        Steinberg::MemoryStream stream(const_cast<char*>(state.component.data()),
-                                       static_cast<Steinberg::TSize>(state.component.size()));
+        Steinberg::MemoryStream stream(
+            const_cast<char*>(state.component.data()), static_cast<Steinberg::TSize>(state.component.size()));
         if (component_->setState(&stream) != kResultOk) {
             ok = false;
         }
@@ -340,8 +327,8 @@ bool PluginInstance::loadState(const PluginState& state) {
     }
 
     if (controller_ && !singleComponent_ && !state.controller.empty()) {
-        Steinberg::MemoryStream stream(const_cast<char*>(state.controller.data()),
-                                       static_cast<Steinberg::TSize>(state.controller.size()));
+        Steinberg::MemoryStream stream(
+            const_cast<char*>(state.controller.data()), static_cast<Steinberg::TSize>(state.controller.size()));
         if (controller_->setState(&stream) != kResultOk) {
             ok = false;
         }
@@ -349,8 +336,7 @@ bool PluginInstance::loadState(const PluginState& state) {
     return ok;
 }
 
-bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMask,
-                             std::string& error) {
+bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMask, std::string& error) {
     error.clear();
     unprepare();
 
@@ -377,8 +363,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
     // Tiers 1 and 2: ask for exactly the stream width, preferring the arrangement the device
     // mask names over a guess of the same cardinality. The two are attempts at the same thing
     // and differ only in whether the channel *roles* are right, so they share one verification.
-    const Vst::SpeakerArrangement fromMask =
-        speakerArrangementForMask(channelMask, format.channelCount);
+    const Vst::SpeakerArrangement fromMask = speakerArrangementForMask(channelMask, format.channelCount);
     const Vst::SpeakerArrangement fromCount = speakerArrangementFor(format.channelCount);
 
     // In tier order, `kEmpty` dropped and the two deduplicated -- for a stereo endpoint the mask
@@ -396,8 +381,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
     bool exact = false;
     for (std::size_t i = 0; i < candidateCount; ++i) {
         const Vst::SpeakerArrangement candidate = candidates[i];
-        if (!trySetArrangement(*processor_, inBusCount, outBusCount, candidate, candidate,
-                               fullBusNegotiation_)) {
+        if (!trySetArrangement(*processor_, inBusCount, outBusCount, candidate, candidate, fullBusNegotiation_)) {
             continue;
         }
         // Asking is not the same as getting: a plugin may return kResultOk and then report a
@@ -406,8 +390,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
         // planar payload is addressed by channel index (sec. 4.3).
         Vst::SpeakerArrangement in = 0;
         Vst::SpeakerArrangement out = 0;
-        if (readMainArrangements(*processor_, in, out) &&
-            Vst::SpeakerArr::getChannelCount(in) == wanted &&
+        if (readMainArrangements(*processor_, in, out) && Vst::SpeakerArr::getChannelCount(in) == wanted &&
             Vst::SpeakerArr::getChannelCount(out) == wanted) {
             exact = true;
             break;
@@ -429,19 +412,18 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
             error = name_ + ": would not say which bus arrangement it wants";
             return false;
         }
-        const Steinberg::int32 narrowest = std::min(Vst::SpeakerArr::getChannelCount(in),
-                                                    Vst::SpeakerArr::getChannelCount(out));
+        const Steinberg::int32 narrowest =
+            std::min(Vst::SpeakerArr::getChannelCount(in), Vst::SpeakerArr::getChannelCount(out));
         if (narrowest < wanted) {
-            error = name_ + ": accepts at most " + std::to_string(narrowest) +
-                    " channels and the stream carries " + std::to_string(format.channelCount);
+            error = name_ + ": accepts at most " + std::to_string(narrowest) + " channels and the stream carries " +
+                std::to_string(format.channelCount);
             return false;
         }
         // Ask for what it already reports, so negotiation ends on a kResultOk rather than on the
         // refusal above. A plugin is entitled to treat a refused setBusArrangements as leaving it
         // in whatever state it pleases, and carrying on from there is how a host discovers which
         // ones meant it.
-        if (!trySetArrangement(*processor_, inBusCount, outBusCount, in, out,
-                               fullBusNegotiation_)) {
+        if (!trySetArrangement(*processor_, inBusCount, outBusCount, in, out, fullBusNegotiation_)) {
             error = name_ + ": rejected the bus arrangement it reports as its own";
             return false;
         }
@@ -482,15 +464,14 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
         // A wider bus is padded, and padding is paid for in scratch banks the chain must keep
         // resident (PluginChain). Past the ceiling the plugin is asking for more memory than the
         // stream could ever justify, so it is refused rather than accommodated.
-        error = name_ + ": insists on " +
-                std::to_string(std::max(inputChannels_, outputChannels_)) +
-                " channels, past the " + std::to_string(kMaxChannels) + "-channel ceiling";
+        error = name_ + ": insists on " + std::to_string(std::max(inputChannels_, outputChannels_)) +
+            " channels, past the " + std::to_string(kMaxChannels) + "-channel ceiling";
         processData_.unprepare();
         return false;
     }
     if (inputChannels_ < format.channelCount || outputChannels_ < format.channelCount) {
-        error = name_ + ": prepared main busses narrower than the " +
-                std::to_string(format.channelCount) + "-channel stream";
+        error = name_ + ": prepared main busses narrower than the " + std::to_string(format.channelCount) +
+            "-channel stream";
         processData_.unprepare();
         return false;
     }
@@ -527,10 +508,8 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
         }
     }
 
-    const Steinberg::int32 declared =
-        controller_ ? controller_->getParameterCount() : Steinberg::int32{0};
-    const Steinberg::int32 queueCount =
-        std::clamp(declared, kMinQueuedParameters, kMaxQueuedParameters);
+    const Steinberg::int32 declared = controller_ ? controller_->getParameterCount() : Steinberg::int32{0};
+    const Steinberg::int32 queueCount = std::clamp(declared, kMinQueuedParameters, kMaxQueuedParameters);
     inputParameterChanges_.setMaxParameters(queueCount);
     outputParameterChanges_.setMaxParameters(queueCount);
     warmParameterChanges(inputParameterChanges_, queueCount, kMaxPointsPerParameter);
@@ -601,8 +580,8 @@ PluginInstance::WarmUpResult PluginInstance::warmUp(std::size_t blocks) {
     // transport should see a coherent one rather than an absent one.
     Vst::ProcessContext context{};
     context.state = Vst::ProcessContext::kPlaying | Vst::ProcessContext::kContTimeValid |
-                    Vst::ProcessContext::kProjectTimeMusicValid |
-                    Vst::ProcessContext::kTempoValid | Vst::ProcessContext::kTimeSigValid;
+        Vst::ProcessContext::kProjectTimeMusicValid | Vst::ProcessContext::kTempoValid |
+        Vst::ProcessContext::kTimeSigValid;
     context.sampleRate = static_cast<double>(format_.sampleRate);
     context.tempo = 120.0;
     context.timeSigNumerator = 4;
@@ -622,8 +601,7 @@ PluginInstance::WarmUpResult PluginInstance::warmUp(std::size_t blocks) {
     }
 
     result.blocksRun = blocks;
-    result.blocksFailed = static_cast<std::size_t>(
-        processFailures_.load(std::memory_order_relaxed) - failuresBefore);
+    result.blocksFailed = static_cast<std::size_t>(processFailures_.load(std::memory_order_relaxed) - failuresBefore);
     return result;
 }
 
@@ -688,8 +666,8 @@ void PluginInstance::deliverQueuedParameters() noexcept {
     }
 }
 
-void PluginInstance::process(float** inputs, float** outputs, std::int32_t frames,
-                             Vst::ProcessContext& context) noexcept {
+void PluginInstance::process(
+    float** inputs, float** outputs, std::int32_t frames, Vst::ProcessContext& context) noexcept {
     // The plugin's widths, not the stream's. They differ when the plugin insisted on a wider bus
     // than the stream carries, and the tail of each array is the padding the caller supplies
     // (PluginChain) -- writing only `format_.channelCount` pointers would leave the rest of the

@@ -24,8 +24,7 @@ namespace {
 // third-party headers), and build output.
 const std::set<std::string> kSkippedDirectories = {".git", ".pixi", "build", "out"};
 
-const std::set<std::string> kCheckedExtensions = {".h",   ".hpp",  ".cpp", ".md",
-                                                  ".txt", ".json", ".toml", ".rc"};
+const std::set<std::string> kCheckedExtensions = {".h", ".hpp", ".cpp", ".md", ".txt", ".json", ".toml", ".rc"};
 
 // Dotfiles have no extension but are still ours.
 const std::set<std::string> kCheckedNames = {".clang-format", ".gitignore", ".gitattributes"};
@@ -81,8 +80,7 @@ TEST_CASE("every tracked text file is ASCII-only", "[hygiene][ascii]") {
     std::vector<Offence> offences;
     std::size_t checked = 0;
 
-    for (auto it = fs::recursive_directory_iterator(root); it != fs::recursive_directory_iterator();
-         ++it) {
+    for (auto it = fs::recursive_directory_iterator(root); it != fs::recursive_directory_iterator(); ++it) {
         if (it->is_directory()) {
             if (kSkippedDirectories.count(it->path().filename().string()) != 0) {
                 it.disable_recursion_pending();
@@ -107,10 +105,9 @@ TEST_CASE("every tracked text file is ASCII-only", "[hygiene][ascii]") {
     for (const Offence& offence : offences) {
         char message[512];
         std::snprintf(message, sizeof(message),
-                      "%s:%zu:%zu has byte 0x%02X -- see design_doc.md sec. 6.6 for the ASCII "
-                      "substitution table",
-                      offence.file.c_str(), offence.line, offence.column,
-                      static_cast<unsigned>(offence.byte));
+            "%s:%zu:%zu has byte 0x%02X -- see design_doc.md sec. 6.6 for the ASCII "
+            "substitution table",
+            offence.file.c_str(), offence.line, offence.column, static_cast<unsigned>(offence.byte));
         FAIL_CHECK(message);
     }
 

@@ -53,8 +53,7 @@ fs::path executableDirectory() {
     // rather than a limit. GetModuleFileNameW reports truncation by filling the buffer exactly.
     std::wstring buffer(MAX_PATH, L'\0');
     for (;;) {
-        const DWORD written =
-            GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        const DWORD written = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         if (written == 0) {
             return {};
         }
@@ -72,8 +71,7 @@ fs::path executableDirectory() {
 
 fs::path roamingAppDataDirectory() {
     PWSTR raw = nullptr;
-    const HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr,
-                                            &raw);
+    const HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr, &raw);
     if (FAILED(hr) || raw == nullptr) {
         CoTaskMemFree(raw);
         return {};
@@ -196,7 +194,7 @@ bool readSession(const fs::path& path, Session& session, std::string& error) {
     readScalar(root, kKeyVersion, version);
     if (version != kSessionFormatVersion) {
         error = path.string() + ": format version " + std::to_string(version) +
-                ", which this build does not know how to read";
+            ", which this build does not know how to read";
         return false;
     }
 

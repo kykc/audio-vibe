@@ -53,13 +53,11 @@ struct SessionPaths {
 /// malformed YAML, or a format version this build does not know. A file that parses but holds
 /// nothing recognisable is *not* an error -- it yields an empty session, which is exactly what
 /// an empty file placed next to the exe to ask for portable mode should mean.
-[[nodiscard]] bool readSession(const std::filesystem::path& path, Session& session,
-                               std::string& error);
+[[nodiscard]] bool readSession(const std::filesystem::path& path, Session& session, std::string& error);
 
 /// Creates the parent directory if it is missing. Writes through a temporary file and renames it
 /// over the target, so an interrupted save cannot leave a half-written config where a working
 /// one used to be -- the rack is the user's own work and this is the only copy of it.
-[[nodiscard]] bool writeSession(const std::filesystem::path& path, const Session& session,
-                                std::string& error);
+[[nodiscard]] bool writeSession(const std::filesystem::path& path, const Session& session, std::string& error);
 
 } // namespace aip::config

@@ -35,9 +35,8 @@ struct Row {
 
 [[nodiscard]] QString describe(const scanner::ScannedClass& info) {
     QString detail = QStringLiteral("%1\n%2 %3")
-                         .arg(QString::fromStdString(info.name),
-                              QString::fromStdString(info.vendor),
-                              QString::fromStdString(info.version));
+                         .arg(QString::fromStdString(info.name), QString::fromStdString(info.vendor),
+                             QString::fromStdString(info.version));
     if (!info.subCategories.empty()) {
         detail += QStringLiteral("\n%1").arg(QString::fromStdString(info.subCategories));
     }
@@ -50,8 +49,7 @@ struct Row {
     if (!info.prepared) {
         // Worth saying plainly. A plugin that instantiates but will not take the stream's channel
         // count is not broken, it is simply not for this endpoint -- and adding it will fail.
-        detail += QStringLiteral("\n\nRefused the probe format: %1")
-                      .arg(QString::fromStdString(info.error));
+        detail += QStringLiteral("\n\nRefused the probe format: %1").arg(QString::fromStdString(info.error));
     }
     return detail;
 }
@@ -75,8 +73,7 @@ struct Row {
         break;
     }
     return QStringLiteral("%1\n\n%2\n\n%3")
-        .arg(QString::fromStdString(module.path), reason,
-             QString::fromStdString(module.error));
+        .arg(QString::fromStdString(module.path), reason, QString::fromStdString(module.error));
 }
 
 [[nodiscard]] const char* statusWord(scanner::ScanStatus status) {
@@ -98,10 +95,9 @@ struct Row {
 
     for (const scanner::ScannedModule& module : modules) {
         if (!module.usable()) {
-            broken.push_back(Row{
-                QStringLiteral("%1  --  %2")
-                    .arg(QFileInfo(QString::fromStdString(module.path)).completeBaseName(),
-                         QString::fromUtf8(statusWord(module.status))),
+            broken.push_back(Row{QStringLiteral("%1  --  %2")
+                                     .arg(QFileInfo(QString::fromStdString(module.path)).completeBaseName(),
+                                         QString::fromUtf8(statusWord(module.status))),
                 describe(module), QString::fromStdString(module.path), QString(), false});
             continue;
         }
@@ -113,14 +109,12 @@ struct Row {
             if (!info.prepared) {
                 label += QStringLiteral("  (wrong channel count)");
             }
-            usable.push_back(Row{label, describe(info), QString::fromStdString(module.path),
-                                 QString::fromStdString(info.id), true});
+            usable.push_back(
+                Row{label, describe(info), QString::fromStdString(module.path), QString::fromStdString(info.id), true});
         }
     }
 
-    const auto byLabel = [](const Row& a, const Row& b) {
-        return a.label.compare(b.label, Qt::CaseInsensitive) < 0;
-    };
+    const auto byLabel = [](const Row& a, const Row& b) { return a.label.compare(b.label, Qt::CaseInsensitive) < 0; };
     std::sort(usable.begin(), usable.end(), byLabel);
     std::sort(broken.begin(), broken.end(), byLabel);
 
@@ -194,8 +188,7 @@ private:
             }
         }
         if (list_->count() == 0) {
-            auto* item = new QListWidgetItem(
-                QStringLiteral("(nothing found -- use Browse)"), list_);
+            auto* item = new QListWidgetItem(QStringLiteral("(nothing found -- use Browse)"), list_);
             item->setFlags(Qt::NoItemFlags);
         }
         status_->setText(catalog_.summary());

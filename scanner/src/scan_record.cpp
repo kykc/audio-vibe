@@ -8,9 +8,7 @@ namespace {
 
 constexpr char kHexDigits[] = "0123456789abcdef";
 
-[[nodiscard]] bool isPlainByte(unsigned char c) noexcept {
-    return c >= 0x20 && c <= 0x7E && c != '\\';
-}
+[[nodiscard]] bool isPlainByte(unsigned char c) noexcept { return c >= 0x20 && c <= 0x7E && c != '\\'; }
 
 [[nodiscard]] int hexValue(char c) noexcept {
     if (c >= '0' && c <= '9') {

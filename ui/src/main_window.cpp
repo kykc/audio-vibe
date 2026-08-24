@@ -67,9 +67,7 @@ const char* linkStateName(ipc::LinkState state) {
 /// User input stays excluded deliberately. Paints, timers and native session messages are all
 /// wanted here; a click on Add or Remove is not, because the rack is half-built and the sequence
 /// building it has no way of being told that it changed underneath.
-void pumpOnce() {
-    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-}
+void pumpOnce() { QApplication::processEvents(QEventLoop::ExcludeUserInputEvents); }
 
 /// Bytes as a number a person reads at a glance. MiB throughout and never scaled up to GiB: the
 /// shell sits in the low hundreds, and staying in one unit is what makes two readings an hour
@@ -135,18 +133,17 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     connect(&host_, &EngineHost::serviced, this, &MainWindow::updateStatus);
     connect(&host_, &EngineHost::linkStateChanged, this, &MainWindow::onLinkStateChanged);
     connect(&host_, &EngineHost::chainBuilt, this,
-            [this](unsigned sampleRate, unsigned channelCount, int maxFrames, bool speculative) {
-                log(QStringLiteral("chain built for %1 Hz x%2 ch, up to %3 frames%4")
-                        .arg(sampleRate)
-                        .arg(channelCount)
-                        .arg(maxFrames)
-                        .arg(speculative
-                                 ? QStringLiteral(" (from the endpoint's configured format; no "
-                                                  "block seen yet)")
-                                 : QString()));
-                logWarmUp();
-                rack_->refresh();
-            });
+        [this](unsigned sampleRate, unsigned channelCount, int maxFrames, bool speculative) {
+            log(QStringLiteral("chain built for %1 Hz x%2 ch, up to %3 frames%4")
+                    .arg(sampleRate)
+                    .arg(channelCount)
+                    .arg(maxFrames)
+                    .arg(speculative ? QStringLiteral(" (from the endpoint's configured format; no "
+                                                      "block seen yet)")
+                                     : QString()));
+            logWarmUp();
+            rack_->refresh();
+        });
     connect(&host_, &EngineHost::chainFailed, this, [this](const QString& error) {
         log(QStringLiteral("chain not built: %1").arg(error));
         rack_->refresh();
@@ -154,31 +151,28 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     // A plugin that moved its own values -- a preset loaded inside it, usually. Only the editors
     // the shell drew itself can be showing something stale; a plugin's own view heard about it
     // before we did.
-    connect(&host_, &EngineHost::pluginParametersChanged, this, [this] {
-        editors_.refreshValues();
-    });
+    connect(&host_, &EngineHost::pluginParametersChanged, this, [this] { editors_.refreshValues(); });
     // Said out loud, all of it. A restart that rebuilt the rack is a real interruption to the
     // audio and belongs in the log next to whatever the user did to cause it; a restart that
     // asked for something this host does not do is worth more than silence, because silence is
     // indistinguishable from the request never arriving.
     connect(&host_, &EngineHost::pluginRestarted, this,
-            [this](bool reconfigured, const QString& unhandled, const QString& error) {
-                if (reconfigured) {
-                    log(QStringLiteral("a plugin asked to be restarted: rack re-prepared at "
-                                       "the same format"));
-                    logWarmUp();
-                    rack_->refresh();
-                }
-                if (!error.isEmpty()) {
-                    log(QStringLiteral("a plugin asked to be restarted, and it failed: %1")
-                            .arg(error));
-                }
-                if (!unhandled.isEmpty()) {
-                    log(QStringLiteral("a plugin reported a change this shell does not act on "
-                                       "(%1)")
-                            .arg(unhandled));
-                }
-            });
+        [this](bool reconfigured, const QString& unhandled, const QString& error) {
+            if (reconfigured) {
+                log(QStringLiteral("a plugin asked to be restarted: rack re-prepared at "
+                                   "the same format"));
+                logWarmUp();
+                rack_->refresh();
+            }
+            if (!error.isEmpty()) {
+                log(QStringLiteral("a plugin asked to be restarted, and it failed: %1").arg(error));
+            }
+            if (!unhandled.isEmpty()) {
+                log(QStringLiteral("a plugin reported a change this shell does not act on "
+                                   "(%1)")
+                        .arg(unhandled));
+            }
+        });
     // Directly connected, because it has to have happened by the time the message returns: a
     // process that is about to be taken away has no later.
     sessionEnd_ = new SessionEndFilter(this);
@@ -233,8 +227,7 @@ MainWindow::~MainWindow() {
     host_.detach();
 }
 
-void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEditors,
-                                     bool attach, bool scan) {
+void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEditors, bool attach, bool scan) {
     // First, and before anything can attach: the one thing here the user has to be told rather
     // than left to find in the log.
     if (uncleanAttach_.present) {
@@ -313,10 +306,9 @@ QWidget* MainWindow::buildLinkGroup() {
     linkLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(linkLabel_);
 
-    auto* note = new QLabel(
-        QStringLiteral("Attaching processes every sound on the endpoint, system-wide. Blocks only "
-                       "arrive while something is playing. Endpoints without this project's APO "
-                       "installed are greyed out and listed last."),
+    auto* note = new QLabel(QStringLiteral("Attaching processes every sound on the endpoint, system-wide. Blocks only "
+                                           "arrive while something is playing. Endpoints without this project's APO "
+                                           "installed are greyed out and listed last."),
         group);
     note->setWordWrap(true);
     note->setEnabled(false);
@@ -343,9 +335,7 @@ void MainWindow::refreshEndpoints() {
     // one endpoint carries the APO, this is the difference between the one usable device being
     // at the top and it being third behind two that are greyed out.
     std::stable_partition(endpoints_.begin(), endpoints_.end(),
-                          [](const ipc::RenderEndpoint& endpoint) {
-                              return ipc::attachable(endpoint.apo.presence);
-                          });
+        [](const ipc::RenderEndpoint& endpoint) { return ipc::attachable(endpoint.apo.presence); });
 
     endpointBox_->clear();
     // The combo box's own model, which is what carries per-item enabled state. Disabling an item
@@ -368,13 +358,11 @@ void MainWindow::refreshEndpoints() {
         if (!canAttach) {
             // On the row itself, not only in the tooltip. A greyed-out row with no reason on it
             // reads as a bug in the shell rather than as a fact about the machine.
-            label += endpoint.apo.presence == ipc::ApoPresence::Absent
-                         ? QStringLiteral("  --  no APO")
-                         : QStringLiteral("  --  APO state unknown");
+            label += endpoint.apo.presence == ipc::ApoPresence::Absent ? QStringLiteral("  --  no APO")
+                                                                       : QStringLiteral("  --  APO state unknown");
         }
         endpointBox_->addItem(label);
-        endpointBox_->setItemData(static_cast<int>(i),
-                                  QString::fromStdWString(endpoint.apo.detail), Qt::ToolTipRole);
+        endpointBox_->setItemData(static_cast<int>(i), QString::fromStdWString(endpoint.apo.detail), Qt::ToolTipRole);
 
         if (endpoint.apo.presence == ipc::ApoPresence::Unknown) {
             ++unreadable;
@@ -398,9 +386,7 @@ void MainWindow::refreshEndpoints() {
     // greyed-out device as though it were selected.
     endpointBox_->setCurrentIndex(selectIndex);
 
-    log(QStringLiteral("%1 active render endpoint(s), %2 with this project's APO")
-            .arg(endpoints_.size())
-            .arg(usable));
+    log(QStringLiteral("%1 active render endpoint(s), %2 with this project's APO").arg(endpoints_.size()).arg(usable));
     if (unreadable != 0) {
         log(QStringLiteral("%1 endpoint(s) would not say whether the APO is installed; they "
                            "cannot be selected -- hover for the reason")
@@ -442,8 +428,7 @@ void MainWindow::toggleAttach() {
     // silence that looks exactly like a device nobody is playing to.
     if (!ipc::attachable(endpoints_[static_cast<std::size_t>(index)].apo.presence)) {
         log(QStringLiteral("not attaching: %1")
-                .arg(QString::fromStdWString(
-                    endpoints_[static_cast<std::size_t>(index)].apo.detail)));
+                .arg(QString::fromStdWString(endpoints_[static_cast<std::size_t>(index)].apo.detail)));
         return;
     }
 
@@ -471,8 +456,7 @@ void MainWindow::loadSession() {
     // Both marks live next to the session file, and both are wanted even when there is no file
     // there yet: a clean install that attaches and then dies has the same problem as any other
     // run, and the file it *would* be saved to is where the next start will come looking.
-    const std::filesystem::path markRoot =
-        sessionPath_.empty() ? config::resolveSavePath(sessionPath_) : sessionPath_;
+    const std::filesystem::path markRoot = sessionPath_.empty() ? config::resolveSavePath(sessionPath_) : sessionPath_;
     // Taken before the guard below can write over it, and taken rather than read: a mark that
     // outlived being acted on would suppress every reattach this shell ever made again.
     uncleanAttach_ = config::AttachGuard::takePrevious(markRoot);
@@ -543,8 +527,7 @@ void MainWindow::loadSession() {
     // The policy is in `config/`, not here: what makes an automatic attach a bad idea is a
     // property of the session, the device list and how the last run ended, and none of the three
     // needs a window to be decided or tested.
-    const config::ReattachDecision decision =
-        config::shouldReattach(session, endpointStillHere, uncleanAttach_);
+    const config::ReattachDecision decision = config::shouldReattach(session, endpointStillHere, uncleanAttach_);
     sessionWantsAttach_ = decision.attach;
     if (!decision.reason.empty()) {
         log(QString::fromStdString(decision.reason));
@@ -565,29 +548,24 @@ void MainWindow::syncAttachMark() {
     std::string name;
     const int index = endpointBox_->currentIndex();
     if (index >= 0 && static_cast<std::size_t>(index) < endpoints_.size()) {
-        name = QString::fromStdWString(endpoints_[static_cast<std::size_t>(index)].friendlyName)
-                   .toStdString();
+        name = QString::fromStdWString(endpoints_[static_cast<std::size_t>(index)].friendlyName).toStdString();
     }
     attachGuard_->mark(name);
 }
 
 void MainWindow::reportUncleanAttach() {
-    const QString endpoint = uncleanAttach_.endpointName.empty()
-                                 ? QStringLiteral("an endpoint")
-                                 : QString::fromStdString(uncleanAttach_.endpointName);
-    log(QStringLiteral("the previous run was attached to %1 and did not shut down cleanly")
-            .arg(endpoint));
-    QMessageBox::warning(
-        this, QStringLiteral("The last run did not shut down cleanly"),
-        QStringLiteral(
-            "This shell was attached to %1 when it last stopped, and it did not close normally."
-            "\n\n"
-            "A plugin that faults while it is processing takes the machine's audio with it, and "
-            "attaching again on its own would do that every time the shell started -- so this "
-            "start is detached. Press Attach when you are ready to try again."
-            "\n\n"
-            "If the machine lost power, or the shell was ended from Task Manager, nothing is "
-            "wrong and there is nothing to do.")
+    const QString endpoint = uncleanAttach_.endpointName.empty() ? QStringLiteral("an endpoint")
+                                                                 : QString::fromStdString(uncleanAttach_.endpointName);
+    log(QStringLiteral("the previous run was attached to %1 and did not shut down cleanly").arg(endpoint));
+    QMessageBox::warning(this, QStringLiteral("The last run did not shut down cleanly"),
+        QStringLiteral("This shell was attached to %1 when it last stopped, and it did not close normally."
+                       "\n\n"
+                       "A plugin that faults while it is processing takes the machine's audio with it, and "
+                       "attaching again on its own would do that every time the shell started -- so this "
+                       "start is detached. Press Attach when you are ready to try again."
+                       "\n\n"
+                       "If the machine lost power, or the shell was ended from Task Manager, nothing is "
+                       "wrong and there is nothing to do.")
             .arg(endpoint));
 }
 
@@ -598,8 +576,7 @@ std::size_t MainWindow::blockDangerousEntries(config::Session& session) {
     const std::string casualty = config::LoadGuard::takePreviousCasualty(sessionPath_);
 
     std::vector<std::string> notes;
-    const std::size_t blocked = config::blockUnsafeEntries(session, casualty,
-                                                           rack_->catalog().modules(), notes);
+    const std::size_t blocked = config::blockUnsafeEntries(session, casualty, rack_->catalog().modules(), notes);
     for (const std::string& note : notes) {
         log(QStringLiteral("session: %1").arg(QString::fromStdString(note)));
     }
@@ -681,8 +658,7 @@ void MainWindow::applySavedGeometry(const config::WindowGeometry& geometry) {
     }
 }
 
-bool MainWindow::selectSavedEndpoint(const std::string& endpointId,
-                                     const std::string& endpointName) {
+bool MainWindow::selectSavedEndpoint(const std::string& endpointId, const std::string& endpointName) {
     if (endpointId.empty()) {
         return false;
     }
@@ -701,7 +677,7 @@ bool MainWindow::selectSavedEndpoint(const std::string& endpointId,
         if (!ipc::attachable(endpoints_[i].apo.presence)) {
             log(QStringLiteral("the endpoint this session used (%1) can no longer be selected: %2")
                     .arg(endpointName.empty() ? wanted : QString::fromStdString(endpointName),
-                         QString::fromStdWString(endpoints_[i].apo.detail)));
+                        QString::fromStdWString(endpoints_[i].apo.detail)));
             return false;
         }
         endpointBox_->setCurrentIndex(static_cast<int>(i));
@@ -730,8 +706,7 @@ void MainWindow::onLinkStateChanged(int state, int reason) {
     const auto linkState = static_cast<ipc::LinkState>(state);
     const auto exitReason = static_cast<ipc::ValetExitReason>(reason);
     log(QStringLiteral("link: %1 (%2)")
-            .arg(QLatin1String(linkStateName(linkState)),
-                 QLatin1String(exitReasonName(exitReason))));
+            .arg(QLatin1String(linkStateName(linkState)), QLatin1String(exitReasonName(exitReason))));
     if (linkState == ipc::LinkState::Relinquished) {
         // Displacement is by design (sec. 4.1) and the supervisor does not fight for the stream.
         // Say so, because otherwise the client just looks broken.
@@ -775,9 +750,7 @@ void MainWindow::logWarmUp() {
         return;
     }
 
-    QString text = QStringLiteral("warm-up: %1 block(s) through %2 plugin(s)")
-                       .arg(report.blocks)
-                       .arg(report.plugins);
+    QString text = QStringLiteral("warm-up: %1 block(s) through %2 plugin(s)").arg(report.blocks).arg(report.plugins);
     if (report.blocksFailed != 0) {
         text += QStringLiteral(", %1 refused").arg(report.blocksFailed);
     }
@@ -809,8 +782,7 @@ void MainWindow::updateStatus() {
         rack_->refresh();
     }
 
-    attachButton_->setText(status.attached ? QStringLiteral("Detach")
-                                           : QStringLiteral("Attach"));
+    attachButton_->setText(status.attached ? QStringLiteral("Detach") : QStringLiteral("Attach"));
     // Attach is only offered where attaching can work. Detach must always stay live, or an
     // endpoint that somehow became unattachable while in use would trap the user in it.
     attachButton_->setEnabled(status.attached || currentEndpointAttachable());
@@ -896,17 +868,15 @@ void MainWindow::updateStatus() {
     // lagged the log lines beside it would be read against the wrong event.
     const ProcessFootprint footprint = processFootprint();
     text += QStringLiteral("process: resident %1   peak %2   up %3")
-                .arg(formatMebibytes(footprint.residentBytes),
-                     formatMebibytes(footprint.peakResidentBytes),
-                     formatUptime(uptime_.elapsed()));
+                .arg(formatMebibytes(footprint.residentBytes), formatMebibytes(footprint.peakResidentBytes),
+                    formatUptime(uptime_.elapsed()));
 
     countersLabel_->setText(text);
 }
 
 void MainWindow::log(const QString& text) {
     logView_->appendPlainText(
-        QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
-                                     text));
+        QStringLiteral("%1  %2").arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")), text));
 }
 
 } // namespace aip::ui

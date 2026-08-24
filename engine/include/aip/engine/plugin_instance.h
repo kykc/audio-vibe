@@ -47,8 +47,7 @@ namespace aip::engine {
 ///
 /// This is tier 2 of the negotiation: a guess with the right cardinality, used when the device
 /// declines to say what its channels mean.
-[[nodiscard]] Steinberg::Vst::SpeakerArrangement speakerArrangementFor(
-    std::uint32_t channelCount) noexcept;
+[[nodiscard]] Steinberg::Vst::SpeakerArrangement speakerArrangementFor(std::uint32_t channelCount) noexcept;
 
 /// Maps a Windows `dwChannelMask` onto the VST3 speaker arrangement that means the same thing,
 /// and is tier 1 of the negotiation: the only path that gets channel *roles* right rather than
@@ -85,9 +84,7 @@ struct PluginState {
     std::vector<char> component;
     std::vector<char> controller;
 
-    [[nodiscard]] bool empty() const noexcept {
-        return component.empty() && controller.empty();
-    }
+    [[nodiscard]] bool empty() const noexcept { return component.empty() && controller.empty(); }
 };
 
 class PluginInstance {
@@ -98,10 +95,8 @@ public:
     ///
     /// `module` is held for the lifetime of the instance: unloading the DLL while a component
     /// from it is alive is a use-after-free.
-    [[nodiscard]] static std::unique_ptr<PluginInstance> create(PluginModule::Ptr module,
-                                                                const VST3::UID& classId,
-                                                                Steinberg::FUnknown* hostContext,
-                                                                std::string& error);
+    [[nodiscard]] static std::unique_ptr<PluginInstance> create(
+        PluginModule::Ptr module, const VST3::UID& classId, Steinberg::FUnknown* hostContext, std::string& error);
 
     ~PluginInstance();
 
@@ -132,8 +127,7 @@ public:
     /// Fails if the plugin will not accept at least `format.channelCount` channels on its main
     /// busses. That is a refusal, not a fallback: a plugin narrower than the stream would have to
     /// drop channels, and silently dropping channels corrupts the planar payload.
-    [[nodiscard]] bool prepare(const StreamFormat& format, std::uint32_t channelMask,
-                               std::string& error);
+    [[nodiscard]] bool prepare(const StreamFormat& format, std::uint32_t channelMask, std::string& error);
 
     /// What one warm-up did. See `warmUp`.
     struct WarmUpResult {
@@ -224,8 +218,7 @@ public:
     /// links its detector across channels sees a quieter signal than the stream actually
     /// carries, and the only visible symptom is that it acts too gently.
     [[nodiscard]] bool padded() const noexcept {
-        return prepared_ && (inputChannels_ > format_.channelCount ||
-                             outputChannels_ > format_.channelCount);
+        return prepared_ && (inputChannels_ > format_.channelCount || outputChannels_ > format_.channelCount);
     }
 
     [[nodiscard]] const std::string& name() const noexcept { return name_; }
@@ -264,9 +257,7 @@ public:
     /// parameters. There is nothing to drain in that case.
     [[nodiscard]] ComponentHandler* handler() noexcept { return handler_; }
 
-    [[nodiscard]] Steinberg::Vst::IEditController* controller() const noexcept {
-        return controller_;
-    }
+    [[nodiscard]] Steinberg::Vst::IEditController* controller() const noexcept { return controller_; }
 
     [[nodiscard]] Steinberg::Vst::IComponent* component() const noexcept { return component_; }
 
@@ -295,8 +286,7 @@ public:
     /// block. False means the ring was full and the value was dropped: for a UI gesture that is
     /// benign, because the next mouse move supersedes it, and the alternative is blocking a
     /// thread that must never block.
-    [[nodiscard]] bool queueParameter(Steinberg::Vst::ParamID id,
-                                      Steinberg::Vst::ParamValue value) noexcept;
+    [[nodiscard]] bool queueParameter(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue value) noexcept;
 
     /// Control thread. Applies a value the *host* originated -- a control in a window of ours,
     /// rather than one in the plugin's own editor -- to both halves of the plugin.
@@ -342,12 +332,10 @@ public:
     /// Allocation-free and lock-free on our side of the call. Not `noexcept` by accident: it is
     /// noexcept because unwinding through the audio thread is forbidden (sec. 7.4.1), and a
     /// plugin that throws across the ABI boundary is already beyond saving.
-    void process(float** inputs, float** outputs, std::int32_t frames,
-                 Steinberg::Vst::ProcessContext& context) noexcept;
+    void process(
+        float** inputs, float** outputs, std::int32_t frames, Steinberg::Vst::ProcessContext& context) noexcept;
 
-    [[nodiscard]] std::uint64_t processCalls() const noexcept {
-        return processCalls_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t processCalls() const noexcept { return processCalls_.load(std::memory_order_relaxed); }
 
     /// Blocks the plugin returned something other than `kResultOk` for. Non-fatal by design --
     /// we keep the audio flowing and let the control plane notice.

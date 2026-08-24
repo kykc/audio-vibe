@@ -27,8 +27,7 @@ namespace {
 /// deliberately present: a preset is plain YAML and someone who saved one under another name
 /// should not have to rename it to get it back.
 QString presetFilter() {
-    return QStringLiteral("Chain preset (*%1);;All files (*)")
-        .arg(QString::fromLatin1(config::kPresetFileExtension));
+    return QStringLiteral("Chain preset (*%1);;All files (*)").arg(QString::fromLatin1(config::kPresetFileExtension));
 }
 
 } // namespace
@@ -70,10 +69,9 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     // it, and there is nowhere else on this panel the fact could live without becoming a second
     // copy of something the engine already knows.
     bypassButton_->setCheckable(true);
-    bypassButton_->setToolTip(
-        QStringLiteral("Take the whole chain out of the signal path: the endpoint's audio is "
-                       "handed straight back, unprocessed. The rack stays loaded and every "
-                       "plugin keeps its settings, so switching back is immediate."));
+    bypassButton_->setToolTip(QStringLiteral("Take the whole chain out of the signal path: the endpoint's audio is "
+                                             "handed straight back, unprocessed. The rack stays loaded and every "
+                                             "plugin keeps its settings, so switching back is immediate."));
     savePresetButton_ = button(QStringLiteral("Save Preset"));
     loadPresetButton_ = button(QStringLiteral("Load Preset"));
 
@@ -111,14 +109,10 @@ void RackPanel::refresh() {
         // in the published chain, and what geometry it was prepared for. A plugin that is loaded
         // but not prepared is the normal state before the first block arrives, so it has to be
         // distinguishable from one that failed.
-        QString line = QStringLiteral("%1. %2")
-                           .arg(i + 1)
-                           .arg(QString::fromStdString(plugin->name()));
+        QString line = QStringLiteral("%1. %2").arg(i + 1).arg(QString::fromStdString(plugin->name()));
         if (plugin->prepared()) {
             const engine::StreamFormat& format = plugin->format();
-            line += QStringLiteral("  %1 Hz x%2 ch")
-                        .arg(format.sampleRate)
-                        .arg(format.channelCount);
+            line += QStringLiteral("  %1 Hz x%2 ch").arg(format.sampleRate).arg(format.channelCount);
             // A guessed geometry is still a real preparation -- the plugin is negotiated, warmed
             // and ready -- but it has not been confirmed by a block, and saying so is cheaper
             // than letting someone wonder why the numbers changed when playback started.
@@ -182,17 +176,15 @@ void RackPanel::addPlugin() {
     const int index = selectedIndex();
     // Inserted after the selection, which is what "add" means when something is highlighted, and
     // appended when nothing is.
-    const std::size_t position =
-        index < 0 ? host_.engine().pluginCount() : static_cast<std::size_t>(index) + 1;
+    const std::size_t position = index < 0 ? host_.engine().pluginCount() : static_cast<std::size_t>(index) + 1;
 
     // The plugin has already been loaded once, in a scanner child, and survived it. That is not a
     // guarantee -- it is loading again, here, in the process that matters -- but it is the whole
     // difference between adding a plugin and gambling the session on one.
     std::string error;
-    if (!host_.engine().insertPluginByClassId(position, choice.path.toStdString(),
-                                              choice.classId.toStdString(), error)) {
-        Q_EMIT message(QStringLiteral("could not add %1: %2")
-                           .arg(choice.path, QString::fromStdString(error)));
+    if (!host_.engine().insertPluginByClassId(
+            position, choice.path.toStdString(), choice.classId.toStdString(), error)) {
+        Q_EMIT message(QStringLiteral("could not add %1: %2").arg(choice.path, QString::fromStdString(error)));
         refresh();
         return;
     }
@@ -226,7 +218,7 @@ void RackPanel::removeSelected() {
         // audio thread had not let go of the chain naming it (status.md sec. 7 item 25).
         Q_EMIT message(QStringLiteral("note: %1 plugin(s) stranded -- the audio thread did not "
                                       "release a chain in time")
-                           .arg(host_.engine().strandedPlugins()));
+                .arg(host_.engine().strandedPlugins()));
     }
     refresh();
 }
@@ -237,8 +229,7 @@ void RackPanel::reorder(int from, int to) {
     }
     // Reordering only changes which instances the published view names, so no editor has to be
     // disturbed: the instances themselves are neither destroyed nor re-prepared.
-    const bool moved = host_.engine().movePlugin(static_cast<std::size_t>(from),
-                                                 static_cast<std::size_t>(to));
+    const bool moved = host_.engine().movePlugin(static_cast<std::size_t>(from), static_cast<std::size_t>(to));
     if (!moved) {
         Q_EMIT message(QStringLiteral("could not move that plugin"));
     }
@@ -287,8 +278,8 @@ void RackPanel::setBypassFromCheck(QListWidgetItem* item) {
 }
 
 void RackPanel::savePreset() {
-    QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save chain preset"),
-                                                presetDirectory_, presetFilter());
+    QString path =
+        QFileDialog::getSaveFileName(this, QStringLiteral("Save chain preset"), presetDirectory_, presetFilter());
     if (path.isEmpty()) {
         return;
     }
@@ -316,8 +307,8 @@ void RackPanel::savePreset() {
 }
 
 void RackPanel::loadPreset() {
-    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("Load chain preset"),
-                                                      presetDirectory_, presetFilter());
+    const QString path =
+        QFileDialog::getOpenFileName(this, QStringLiteral("Load chain preset"), presetDirectory_, presetFilter());
     if (path.isEmpty()) {
         return;
     }
@@ -333,22 +324,20 @@ void RackPanel::loadPreset() {
         const QString text = QString::fromStdString(error);
         Q_EMIT message(QStringLiteral("preset not loaded: %1").arg(text));
         QMessageBox::warning(this, QStringLiteral("That is not a preset this build can read"),
-                             text + QStringLiteral("\n\nThe rack has not been changed."));
+            text + QStringLiteral("\n\nThe rack has not been changed."));
         return;
     }
 
     // Asked once, and only when there is something to lose. What is about to go is not just an
     // order of plugins: it is every parameter in them, and there is no undo for it.
     if (host_.engine().pluginCount() != 0 &&
-        QMessageBox::question(
-            this, QStringLiteral("Replace the current chain?"),
+        QMessageBox::question(this, QStringLiteral("Replace the current chain?"),
             QStringLiteral("Loading this preset removes the %1 plugin(s) in the rack, and their "
                            "settings, and replaces them with the %2 in the preset.\n\n"
                            "This cannot be undone.")
                 .arg(host_.engine().pluginCount())
                 .arg(entries.size()),
-            QMessageBox::Yes | QMessageBox::Cancel,
-            QMessageBox::Cancel) != QMessageBox::Yes) {
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
         return;
     }
 
@@ -374,10 +363,7 @@ void RackPanel::loadPreset() {
     for (const std::string& problem : problems) {
         Q_EMIT message(QStringLiteral("preset: %1").arg(QString::fromStdString(problem)));
     }
-    Q_EMIT message(QStringLiteral("loaded %1 of %2 plugin(s) from %3")
-                       .arg(loaded)
-                       .arg(preset.rack.size())
-                       .arg(path));
+    Q_EMIT message(QStringLiteral("loaded %1 of %2 plugin(s) from %3").arg(loaded).arg(preset.rack.size()).arg(path));
     // Said after the rack is built, so that anything the window drops in response is reported
     // below the load rather than above it.
     Q_EMIT rackReplaced();

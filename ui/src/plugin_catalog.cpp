@@ -36,15 +36,14 @@ struct ScanProgressSlot {
 
 } // namespace
 
-bool PluginCatalog::run(QWidget* parent, const std::vector<std::string>& paths,
-                        const QString& title, std::vector<scanner::ScannedModule>& out) {
+bool PluginCatalog::run(QWidget* parent, const std::vector<std::string>& paths, const QString& title,
+    std::vector<scanner::ScannedModule>& out) {
     out.clear();
     if (paths.empty()) {
         return true;
     }
 
-    QProgressDialog dialog(title, QStringLiteral("Cancel"), 0, static_cast<int>(paths.size()),
-                           parent);
+    QProgressDialog dialog(title, QStringLiteral("Cancel"), 0, static_cast<int>(paths.size()), parent);
     dialog.setWindowTitle(QStringLiteral("Scanning plugins"));
     dialog.setWindowModality(Qt::WindowModal);
     dialog.setMinimumDuration(0);
@@ -59,8 +58,7 @@ bool PluginCatalog::run(QWidget* parent, const std::vector<std::string>& paths,
         scanner::ScanOptions options;
         options.cancelled = &cancelled;
         return scanner::scanModules(
-            paths, options,
-            [&slot](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
+            paths, options, [&slot](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
                 const std::lock_guard<std::mutex> lock(slot.mutex);
                 slot.done = done;
                 slot.total = total;
@@ -87,10 +85,7 @@ bool PluginCatalog::run(QWidget* parent, const std::vector<std::string>& paths,
         }
         if (!label.isEmpty()) {
             dialog.setValue(static_cast<int>(done));
-            dialog.setLabelText(QStringLiteral("%1\n\n%2 of %3")
-                                    .arg(label)
-                                    .arg(done)
-                                    .arg(paths.size()));
+            dialog.setLabelText(QStringLiteral("%1\n\n%2 of %3").arg(label).arg(done).arg(paths.size()));
         }
         QApplication::processEvents(QEventLoop::AllEvents, 40);
     }
@@ -149,8 +144,7 @@ bool PluginCatalog::ensureScanned(QWidget* parent) {
         const auto cached = stamps_.find(path);
         const bool unchanged = cached != stamps_.end() && cached->second == stamp;
 
-        const auto known = std::find_if(
-            modules_.begin(), modules_.end(),
+        const auto known = std::find_if(modules_.begin(), modules_.end(),
             [&path](const scanner::ScannedModule& module) { return module.path == path; });
 
         if (unchanged && known != modules_.end()) {
@@ -168,8 +162,7 @@ bool PluginCatalog::ensureScanned(QWidget* parent) {
         if (keptStamps.count(path) != 0) {
             continue;
         }
-        const auto known = std::find_if(
-            modules_.begin(), modules_.end(),
+        const auto known = std::find_if(modules_.begin(), modules_.end(),
             [&path](const scanner::ScannedModule& module) { return module.path == path; });
         if (known == modules_.end() || !(config::stampFor(path) == cached)) {
             continue;
@@ -179,8 +172,7 @@ bool PluginCatalog::ensureScanned(QWidget* parent) {
     }
 
     std::vector<scanner::ScannedModule> probed;
-    const bool completed =
-        run(parent, stale, QStringLiteral("Probing installed plugins..."), probed);
+    const bool completed = run(parent, stale, QStringLiteral("Probing installed plugins..."), probed);
 
     for (scanner::ScannedModule& module : probed) {
         // Stamped *after* the probe, not before. A plugin that was mid-install when the walk
@@ -205,8 +197,7 @@ bool PluginCatalog::rescan(QWidget* parent) {
     validated_ = false;
 
     const std::vector<std::string> paths = engine::PluginModule::installedModulePaths();
-    const bool completed =
-        run(parent, paths, QStringLiteral("Probing installed plugins..."), modules_);
+    const bool completed = run(parent, paths, QStringLiteral("Probing installed plugins..."), modules_);
     for (const scanner::ScannedModule& module : modules_) {
         stamps_[module.path] = config::stampFor(module.path);
     }
@@ -217,8 +208,7 @@ bool PluginCatalog::rescan(QWidget* parent) {
 scanner::ScannedModule PluginCatalog::probeOne(QWidget* parent, const QString& path) {
     std::vector<scanner::ScannedModule> probed;
     const std::string narrowed = path.toStdString();
-    run(parent, {narrowed}, QStringLiteral("Probing %1...").arg(QFileInfo(path).fileName()),
-        probed);
+    run(parent, {narrowed}, QStringLiteral("Probing %1...").arg(QFileInfo(path).fileName()), probed);
 
     if (probed.empty()) {
         scanner::ScannedModule failed;

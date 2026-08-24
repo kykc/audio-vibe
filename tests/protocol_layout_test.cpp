@@ -80,12 +80,10 @@ TEST_CASE("block validation rejects what section 4.3 makes impossible", "[protoc
     // quotes -- 262,136 samples -- and the four trailing floats are simply unusable.
     REQUIRE(protocol::validateBlock(2, protocol::kMaxPayloadSamples) == HeaderStatus::Ok);
     REQUIRE(protocol::validateBlock(8, 32767 * 8) == HeaderStatus::Ok);
-    REQUIRE(protocol::validateBlock(8, protocol::kMaxPayloadSamples) ==
-            HeaderStatus::SizeNotDivisibleByChannelCount);
+    REQUIRE(protocol::validateBlock(8, protocol::kMaxPayloadSamples) == HeaderStatus::SizeNotDivisibleByChannelCount);
 
     REQUIRE(protocol::validateBlock(0, 480) == HeaderStatus::ZeroChannelCount);
     REQUIRE(protocol::validateBlock(2, -1) == HeaderStatus::NegativeSize);
-    REQUIRE(protocol::validateBlock(2, protocol::kMaxPayloadSamples + 2) ==
-            HeaderStatus::SizeExceedsCapacity);
+    REQUIRE(protocol::validateBlock(2, protocol::kMaxPayloadSamples + 2) == HeaderStatus::SizeExceedsCapacity);
     REQUIRE(protocol::validateBlock(2, 481) == HeaderStatus::SizeNotDivisibleByChannelCount);
 }

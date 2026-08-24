@@ -41,9 +41,9 @@ bool BufferValet::attach(const std::wstring& base) {
     mapping_.prefault();
 
     header_ = protocol::HeaderAccess(mapping_.data());
-    valetId_ = generateValetId();       // sec. 4.4 step 3
-    valetEvent_.reset();                // sec. 4.4 step 4
-    header_.setValetId(valetId_);       // sec. 4.4 step 5 -- attached from here on
+    valetId_ = generateValetId(); // sec. 4.4 step 3
+    valetEvent_.reset(); // sec. 4.4 step 4
+    header_.setValetId(valetId_); // sec. 4.4 step 5 -- attached from here on
     attached_ = true;
     return true;
 }

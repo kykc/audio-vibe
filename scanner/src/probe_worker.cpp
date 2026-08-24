@@ -25,8 +25,7 @@ namespace {
 
 /// Channels on the first bus reported as `kMain` in `direction`. A plugin whose main output is
 /// not bus 0 is rare but legal, and taking bus 0 blindly would mislabel it.
-[[nodiscard]] std::int32_t mainBusChannels(Vst::IComponent& component,
-                                           Vst::BusDirection direction) noexcept {
+[[nodiscard]] std::int32_t mainBusChannels(Vst::IComponent& component, Vst::BusDirection direction) noexcept {
     const Steinberg::int32 count = component.getBusCount(Vst::kAudio, direction);
     for (Steinberg::int32 index = 0; index < count; ++index) {
         Vst::BusInfo bus{};
@@ -45,10 +44,8 @@ namespace {
 /// Everything is read *before* `prepare`, because negotiating the bus arrangement changes the
 /// answers -- and, when it fails, has already destroyed the state that would explain why
 /// (status.md sec. 8 item 14).
-[[nodiscard]] ScannedClass probeClass(const engine::PluginModule::Ptr& module,
-                                      const engine::PluginClass& classInfo,
-                                      Steinberg::FUnknown* hostContext,
-                                      const ProbeOptions& options) {
+[[nodiscard]] ScannedClass probeClass(const engine::PluginModule::Ptr& module, const engine::PluginClass& classInfo,
+    Steinberg::FUnknown* hostContext, const ProbeOptions& options) {
     ScannedClass out;
     out.id = classInfo.id.toString();
     out.name = classInfo.name;
@@ -87,8 +84,7 @@ namespace {
     }
 
     if (options.prepare) {
-        const engine::StreamFormat format{options.sampleRate, options.channelCount,
-                                          engine::kDefaultMaxFrames};
+        const engine::StreamFormat format{options.sampleRate, options.channelCount, engine::kDefaultMaxFrames};
         out.prepared = instance->prepare(format, options.channelMask, error);
         if (out.prepared) {
             out.fullBusNegotiation = instance->fullBusNegotiation();
@@ -115,8 +111,7 @@ ScannedModule probeModule(const std::string& path, const ProbeOptions& options) 
     // One host context per module rather than one per scan. A plugin that stashes the pointer
     // cannot then be handed one whose owner has moved on, and it costs nothing next to a
     // LoadLibrary. It must outlive every instance made against it, hence the scope.
-    const Steinberg::IPtr<Vst::HostApplication> hostContext =
-        Steinberg::owned(new Vst::HostApplication());
+    const Steinberg::IPtr<Vst::HostApplication> hostContext = Steinberg::owned(new Vst::HostApplication());
 
     std::string error;
     const engine::PluginModule::Ptr module = engine::PluginModule::load(path, error);
@@ -152,10 +147,9 @@ void suppressCrashDialogs() noexcept {
     // abort() from a plugin's assert, and the CRT's invalid-parameter handler, are two more paths
     // to a modal box. `_set_abort_behavior` is a no-op in a release CRT but harmless there.
     (void)_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
-    (void)_set_invalid_parameter_handler(
-        [](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
-            ::TerminateProcess(::GetCurrentProcess(), 0xC000000Du);
-        });
+    (void)_set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
+        ::TerminateProcess(::GetCurrentProcess(), 0xC000000Du);
+    });
 #ifdef _DEBUG
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);

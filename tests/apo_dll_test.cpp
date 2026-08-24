@@ -65,16 +65,14 @@ private:
     const HMODULE module = ::LoadLibraryA(AIP_APO_DLL_PATH);
     REQUIRE(module != nullptr);
 
-    auto getClassObject =
-        reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
+    auto getClassObject = reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
     REQUIRE(getClassObject != nullptr);
 
     CLSID clsid{};
     REQUIRE(SUCCEEDED(::CLSIDFromString(AIP_APO_CLSID, &clsid)));
 
     IClassFactory* factory = nullptr;
-    REQUIRE(getClassObject(clsid, __uuidof(IClassFactory),
-                           reinterpret_cast<void**>(&factory)) == S_OK);
+    REQUIRE(getClassObject(clsid, __uuidof(IClassFactory), reinterpret_cast<void**>(&factory)) == S_OK);
     REQUIRE(factory != nullptr);
     return factory;
 }
@@ -84,8 +82,7 @@ private:
 TEST_CASE("the DLL exports the four COM entry points", "[apo][dll]") {
     const HMODULE module = ::LoadLibraryA(AIP_APO_DLL_PATH);
     REQUIRE(module != nullptr);
-    for (const char* name :
-         {"DllGetClassObject", "DllCanUnloadNow", "DllRegisterServer", "DllUnregisterServer"}) {
+    for (const char* name : {"DllGetClassObject", "DllCanUnloadNow", "DllRegisterServer", "DllUnregisterServer"}) {
         INFO("missing export: " << name);
         REQUIRE(::GetProcAddress(module, name) != nullptr);
     }
@@ -94,24 +91,20 @@ TEST_CASE("the DLL exports the four COM entry points", "[apo][dll]") {
 TEST_CASE("an unknown CLSID is refused", "[apo][dll]") {
     const HMODULE module = ::LoadLibraryA(AIP_APO_DLL_PATH);
     REQUIRE(module != nullptr);
-    auto getClassObject =
-        reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
+    auto getClassObject = reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
     REQUIRE(getClassObject != nullptr);
 
     CLSID stranger{};
-    REQUIRE(SUCCEEDED(
-        ::CLSIDFromString(L"{11111111-2222-3333-4444-555555555555}", &stranger)));
+    REQUIRE(SUCCEEDED(::CLSIDFromString(L"{11111111-2222-3333-4444-555555555555}", &stranger)));
     void* unused = nullptr;
-    REQUIRE(getClassObject(stranger, __uuidof(IClassFactory), &unused) ==
-            CLASS_E_CLASSNOTAVAILABLE);
+    REQUIRE(getClassObject(stranger, __uuidof(IClassFactory), &unused) == CLASS_E_CLASSNOTAVAILABLE);
 }
 
 TEST_CASE("the APO can be created without an aggregator", "[apo][dll]") {
     IClassFactory* factory = loadFactory();
 
     IAudioProcessingObject* apo = nullptr;
-    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject),
-                                    reinterpret_cast<void**>(&apo)) == S_OK);
+    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject), reinterpret_cast<void**>(&apo)) == S_OK);
     REQUIRE(apo != nullptr);
 
     apo->Release();
@@ -125,8 +118,7 @@ TEST_CASE("the APO accepts aggregation, which is how the audio engine creates it
     TestOuter outer;
 
     IUnknown* inner = nullptr;
-    const HRESULT hr =
-        factory->CreateInstance(&outer, __uuidof(IUnknown), reinterpret_cast<void**>(&inner));
+    const HRESULT hr = factory->CreateInstance(&outer, __uuidof(IUnknown), reinterpret_cast<void**>(&inner));
     INFO("CreateInstance with a controlling unknown returned 0x" << std::hex << hr);
     REQUIRE(hr == S_OK);
     REQUIRE(inner != nullptr);
@@ -146,8 +138,7 @@ TEST_CASE("an aggregated create may only ask for IUnknown", "[apo][dll]") {
     TestOuter outer;
 
     void* unused = nullptr;
-    REQUIRE(factory->CreateInstance(&outer, __uuidof(IAudioProcessingObject), &unused) ==
-            E_NOINTERFACE);
+    REQUIRE(factory->CreateInstance(&outer, __uuidof(IAudioProcessingObject), &unused) == E_NOINTERFACE);
     REQUIRE(unused == nullptr);
 
     factory->Release();
@@ -160,22 +151,18 @@ TEST_CASE("the aggregated inner object exposes every APO interface", "[apo][dll]
     TestOuter outer;
 
     IUnknown* inner = nullptr;
-    REQUIRE(factory->CreateInstance(&outer, __uuidof(IUnknown),
-                                    reinterpret_cast<void**>(&inner)) == S_OK);
+    REQUIRE(factory->CreateInstance(&outer, __uuidof(IUnknown), reinterpret_cast<void**>(&inner)) == S_OK);
 
     IAudioProcessingObject* object = nullptr;
     IAudioProcessingObjectRT* rt = nullptr;
     IAudioProcessingObjectConfiguration* configuration = nullptr;
     IAudioSystemEffects* effects = nullptr;
 
-    REQUIRE(inner->QueryInterface(__uuidof(IAudioProcessingObject),
-                                  reinterpret_cast<void**>(&object)) == S_OK);
-    REQUIRE(inner->QueryInterface(__uuidof(IAudioProcessingObjectRT),
-                                  reinterpret_cast<void**>(&rt)) == S_OK);
-    REQUIRE(inner->QueryInterface(__uuidof(IAudioProcessingObjectConfiguration),
-                                  reinterpret_cast<void**>(&configuration)) == S_OK);
-    REQUIRE(inner->QueryInterface(__uuidof(IAudioSystemEffects),
-                                  reinterpret_cast<void**>(&effects)) == S_OK);
+    REQUIRE(inner->QueryInterface(__uuidof(IAudioProcessingObject), reinterpret_cast<void**>(&object)) == S_OK);
+    REQUIRE(inner->QueryInterface(__uuidof(IAudioProcessingObjectRT), reinterpret_cast<void**>(&rt)) == S_OK);
+    REQUIRE(inner->QueryInterface(
+                __uuidof(IAudioProcessingObjectConfiguration), reinterpret_cast<void**>(&configuration)) == S_OK);
+    REQUIRE(inner->QueryInterface(__uuidof(IAudioSystemEffects), reinterpret_cast<void**>(&effects)) == S_OK);
 
     object->Release();
     rt->Release();
@@ -189,8 +176,7 @@ TEST_CASE("an interface nobody implements is refused", "[apo][dll]") {
     IClassFactory* factory = loadFactory();
 
     IAudioProcessingObject* apo = nullptr;
-    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject),
-                                    reinterpret_cast<void**>(&apo)) == S_OK);
+    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject), reinterpret_cast<void**>(&apo)) == S_OK);
 
     // IPersist is a plausible thing for a host to probe and nothing here implements it.
     void* unused = nullptr;
@@ -208,8 +194,7 @@ TEST_CASE("GetLatency refuses before the APO is locked", "[apo][dll]") {
     IClassFactory* factory = loadFactory();
 
     IAudioProcessingObject* apo = nullptr;
-    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject),
-                                    reinterpret_cast<void**>(&apo)) == S_OK);
+    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject), reinterpret_cast<void**>(&apo)) == S_OK);
 
     HNSTIME latency = 12345;
     REQUIRE(apo->GetLatency(&latency) == APOERR_ALREADY_UNLOCKED);
@@ -223,8 +208,7 @@ TEST_CASE("Initialize rejects malformed parameters", "[apo][dll]") {
     IClassFactory* factory = loadFactory();
 
     IAudioProcessingObject* apo = nullptr;
-    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject),
-                                    reinterpret_cast<void**>(&apo)) == S_OK);
+    REQUIRE(factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject), reinterpret_cast<void**>(&apo)) == S_OK);
 
     BYTE dummy = 0;
     REQUIRE(apo->Initialize(4, nullptr) == E_INVALIDARG);

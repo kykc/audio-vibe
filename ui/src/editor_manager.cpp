@@ -50,8 +50,7 @@ void EditorManager::open(engine::PluginInstance& instance, QWidget* parent) {
     if (nativeError.isEmpty()) {
         Q_EMIT message(QStringLiteral("editor open: %1 (%2)").arg(name, window->describe()));
     } else {
-        Q_EMIT message(QStringLiteral("editor open: %1 (%2) -- %3")
-                           .arg(name, window->describe(), nativeError));
+        Q_EMIT message(QStringLiteral("editor open: %1 (%2) -- %3").arg(name, window->describe(), nativeError));
     }
 }
 

@@ -68,12 +68,8 @@ inline std::wstring objectBaseName(std::wstring_view endpointGuid) {
     return name;
 }
 
-inline std::wstring kingEventName(std::wstring_view base) {
-    return std::wstring(base).append(kKingEventSuffix);
-}
+inline std::wstring kingEventName(std::wstring_view base) { return std::wstring(base).append(kKingEventSuffix); }
 
-inline std::wstring valetEventName(std::wstring_view base) {
-    return std::wstring(base).append(kValetEventSuffix);
-}
+inline std::wstring valetEventName(std::wstring_view base) { return std::wstring(base).append(kValetEventSuffix); }
 
 } // namespace aip::protocol

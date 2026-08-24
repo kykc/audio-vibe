@@ -18,8 +18,6 @@ inline std::filesystem::path toPath(const QString& text) {
     return text.isEmpty() ? std::filesystem::path{} : std::filesystem::path(text.toStdWString());
 }
 
-inline QString fromPath(const std::filesystem::path& path) {
-    return QString::fromStdWString(path.wstring());
-}
+inline QString fromPath(const std::filesystem::path& path) { return QString::fromStdWString(path.wstring()); }
 
 } // namespace aip::ui

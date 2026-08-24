@@ -16,8 +16,7 @@ namespace aip::apo::registry {
 /// Creates `path` under HKLM if absent and sets one string value. An empty `valueName` sets the
 /// key's default value, which is what a CLSID key's description and `InprocServer32` path both
 /// are. Returns a Win32 status, not an HRESULT.
-[[nodiscard]] LSTATUS writeString(const std::wstring& path, const wchar_t* valueName,
-                                  const std::wstring& value);
+[[nodiscard]] LSTATUS writeString(const std::wstring& path, const wchar_t* valueName, const std::wstring& value);
 
 /// Deletes `path` and everything under it. `ERROR_FILE_NOT_FOUND` counts as success -- an
 /// unregister that runs twice, or after a partly failed register, must not report failure for

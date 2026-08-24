@@ -129,8 +129,8 @@ void capture(const engine::Engine& engine, Session& session);
 /// is bracketed by it, so a shell that never comes back from `initialize` leaves behind the name
 /// of what it was loading. Null skips that protection, which is right for a caller with nothing
 /// to write a breadcrumb next to -- the tests, and a session that was never read from a file.
-std::size_t apply(const Session& session, engine::Engine& engine,
-                  std::vector<std::string>& problems, LoadGuard* guard = nullptr);
+std::size_t apply(
+    const Session& session, engine::Engine& engine, std::vector<std::string>& problems, LoadGuard* guard = nullptr);
 
 /// Marks the entries that must not be loaded, and appends a line per entry to `notes` saying why.
 /// Returns how many are blocked, including any that already were.
@@ -145,8 +145,7 @@ std::size_t apply(const Session& session, engine::Engine& engine,
 /// Policy, deliberately not in `ui/`: what is dangerous is a property of a session and a scan
 /// report, and neither needs a window to be reasoned about or tested.
 std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
-                               const std::vector<scanner::ScannedModule>& catalog,
-                               std::vector<std::string>& notes);
+    const std::vector<scanner::ScannedModule>& catalog, std::vector<std::string>& notes);
 
 /// Whether a restored session should take over the machine's audio on its own, and what to say
 /// when it should not.
@@ -168,7 +167,7 @@ struct ReattachDecision {
 /// a run that vanished while attached is the signature of a plugin faulting in `process`, and
 /// attaching again is how that becomes a boot loop that takes the machine's audio with it every
 /// time (attach_guard.h).
-[[nodiscard]] ReattachDecision shouldReattach(const Session& session, bool endpointPresent,
-                                              const UncleanAttach& lastRun);
+[[nodiscard]] ReattachDecision shouldReattach(
+    const Session& session, bool endpointPresent, const UncleanAttach& lastRun);
 
 } // namespace aip::config

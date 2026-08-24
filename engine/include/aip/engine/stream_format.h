@@ -20,9 +20,7 @@ struct StreamFormat {
     /// the king agreed to -- a block past it is passed through, never truncated.
     std::int32_t maxFrames = 0;
 
-    [[nodiscard]] bool valid() const noexcept {
-        return sampleRate != 0 && channelCount != 0 && maxFrames > 0;
-    }
+    [[nodiscard]] bool valid() const noexcept { return sampleRate != 0 && channelCount != 0 && maxFrames > 0; }
 
     [[nodiscard]] friend bool operator==(const StreamFormat&, const StreamFormat&) = default;
 };

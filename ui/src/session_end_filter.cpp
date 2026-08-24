@@ -18,8 +18,7 @@ SessionEndFilter::~SessionEndFilter() {
     }
 }
 
-bool SessionEndFilter::nativeEventFilter(const QByteArray& eventType, void* message,
-                                         qintptr* result) {
+bool SessionEndFilter::nativeEventFilter(const QByteArray& eventType, void* message, qintptr* result) {
     Q_UNUSED(result);
     // Both of Qt's Windows event types carry an `MSG`: one for messages delivered to a window,
     // one for those the dispatcher picks up itself. Session-end messages arrive as the first,

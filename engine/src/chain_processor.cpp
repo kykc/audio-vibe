@@ -18,15 +18,12 @@ constexpr std::uint64_t kRateShift = 32;
 constexpr std::uint64_t kFrameMask = 0xffffffu;
 constexpr std::uint64_t kChannelMask = 0xffu;
 
-std::uint64_t packFormat(std::uint32_t sampleRate, std::uint32_t channelCount,
-                         std::int32_t frames) noexcept {
-    if (channelCount > kChannelMask || frames < 0 ||
-        static_cast<std::uint64_t>(frames) > kFrameMask) {
+std::uint64_t packFormat(std::uint32_t sampleRate, std::uint32_t channelCount, std::int32_t frames) noexcept {
+    if (channelCount > kChannelMask || frames < 0 || static_cast<std::uint64_t>(frames) > kFrameMask) {
         return 0;
     }
     return (static_cast<std::uint64_t>(sampleRate) << kRateShift) |
-           (static_cast<std::uint64_t>(channelCount) << kChannelShift) |
-           static_cast<std::uint64_t>(frames);
+        (static_cast<std::uint64_t>(channelCount) << kChannelShift) | static_cast<std::uint64_t>(frames);
 }
 
 // Raised for the duration of one processBlock, so the control thread can tell whether the audio
@@ -53,8 +50,8 @@ ChainProcessor::ChainProcessor() {
     // system-wide processor -- Windows is always "playing" -- so the tempo and time signature are
     // declared valid and conventional rather than left absent, which some plugins handle badly.
     context_.state = Vst::ProcessContext::kPlaying | Vst::ProcessContext::kContTimeValid |
-                     Vst::ProcessContext::kProjectTimeMusicValid |
-                     Vst::ProcessContext::kTempoValid | Vst::ProcessContext::kTimeSigValid;
+        Vst::ProcessContext::kProjectTimeMusicValid | Vst::ProcessContext::kTempoValid |
+        Vst::ProcessContext::kTimeSigValid;
     context_.tempo = 120.0;
     context_.timeSigNumerator = 4;
     context_.timeSigDenominator = 4;
@@ -98,8 +95,7 @@ void ChainProcessor::processBlock(ipc::BlockInfo& block) noexcept {
     }
 
     const StreamFormat& built = chain->format();
-    if (block.sampleRate != built.sampleRate || block.channelCount != built.channelCount ||
-        frames > built.maxFrames) {
+    if (block.sampleRate != built.sampleRate || block.channelCount != built.channelCount || frames > built.maxFrames) {
         // Every plugin in the chain was set up for a different geometry. Running it anyway would
         // read past a scratch bank or address the wrong channels, so the block goes back to the
         // king exactly as it arrived and the control thread is left to rebuild.

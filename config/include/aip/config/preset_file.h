@@ -44,13 +44,12 @@ inline constexpr const char* kPresetFileExtension = ".yaml";
 ///
 /// An explicitly empty `rack` is not an error -- it is a preset for the empty chain, which is a
 /// thing a user can mean. An empty *file* is, because it more likely means the save went wrong.
-[[nodiscard]] bool readPreset(const std::filesystem::path& path, std::vector<RackEntry>& rack,
-                              bool& chainBypassed, std::string& error);
+[[nodiscard]] bool readPreset(
+    const std::filesystem::path& path, std::vector<RackEntry>& rack, bool& chainBypassed, std::string& error);
 
 /// Writes through a temporary file and renames it over the target, so an interrupted save cannot
 /// leave a half-written preset where a working one used to be.
-[[nodiscard]] bool writePreset(const std::filesystem::path& path,
-                               const std::vector<RackEntry>& rack, bool chainBypassed,
-                               std::string& error);
+[[nodiscard]] bool writePreset(
+    const std::filesystem::path& path, const std::vector<RackEntry>& rack, bool chainBypassed, std::string& error);
 
 } // namespace aip::config

@@ -9,9 +9,7 @@ namespace aip::config {
 
 LoadGuard::LoadGuard(const fs::path& sessionPath) : path_(breadcrumbPath(sessionPath)) {}
 
-LoadGuard::~LoadGuard() {
-    clear();
-}
+LoadGuard::~LoadGuard() { clear(); }
 
 fs::path LoadGuard::breadcrumbPath(const fs::path& sessionPath) {
     if (sessionPath.empty()) {

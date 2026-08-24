@@ -97,16 +97,12 @@ public:
 
     [[nodiscard]] bool running() const noexcept { return running_.load(std::memory_order_acquire); }
 
-    [[nodiscard]] ValetExitReason exitReason() const noexcept {
-        return exitReason_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] ValetExitReason exitReason() const noexcept { return exitReason_.load(std::memory_order_acquire); }
 
     [[nodiscard]] const ValetCounters& counters() const noexcept { return counters_; }
 
     /// True once the promoted thread has taken MMCSS "Pro Audio" characteristics (sec. 4.6).
-    [[nodiscard]] bool mmcssActive() const noexcept {
-        return mmcssActive_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool mmcssActive() const noexcept { return mmcssActive_.load(std::memory_order_acquire); }
 
 private:
     void run() noexcept;

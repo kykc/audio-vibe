@@ -5,9 +5,7 @@ namespace {
 
 /// What to call an entry in a problem report. The name is informational and may be absent in a
 /// hand-edited file, so fall back to the path -- never to nothing.
-std::string describe(const RackEntry& entry) {
-    return entry.name.empty() ? entry.path : entry.name;
-}
+std::string describe(const RackEntry& entry) { return entry.name.empty() ? entry.path : entry.name; }
 
 } // namespace
 
@@ -35,8 +33,7 @@ void capture(const engine::Engine& engine, Session& session) {
 }
 
 std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
-                               const std::vector<scanner::ScannedModule>& catalog,
-                               std::vector<std::string>& notes) {
+    const std::vector<scanner::ScannedModule>& catalog, std::vector<std::string>& notes) {
     std::size_t blocked = 0;
 
     for (RackEntry& entry : session.rack) {
@@ -49,8 +46,8 @@ std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
             entry.blocked = true;
             entry.blockedReason = "it stopped the previous start from finishing";
             notes.push_back(describe(entry) +
-                            ": not loaded -- the last start did not survive it. Clear `blocked` in"
-                            " the session file to try it again.");
+                ": not loaded -- the last start did not survive it. Clear `blocked` in"
+                " the session file to try it again.");
             ++blocked;
             continue;
         }
@@ -60,10 +57,9 @@ std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
                 continue;
             }
             entry.blocked = true;
-            entry.blockedReason =
-                std::string("the plugin scan reports it as ") + scanner::toString(module.status);
-            notes.push_back(describe(entry) + ": not loaded -- the scan reports it as " +
-                            scanner::toString(module.status));
+            entry.blockedReason = std::string("the plugin scan reports it as ") + scanner::toString(module.status);
+            notes.push_back(
+                describe(entry) + ": not loaded -- the scan reports it as " + scanner::toString(module.status));
             ++blocked;
             break;
         }
@@ -72,8 +68,7 @@ std::size_t blockUnsafeEntries(Session& session, const std::string& casualty,
     return blocked;
 }
 
-ReattachDecision shouldReattach(const Session& session, bool endpointPresent,
-                                const UncleanAttach& lastRun) {
+ReattachDecision shouldReattach(const Session& session, bool endpointPresent, const UncleanAttach& lastRun) {
     ReattachDecision decision;
     if (!session.attached) {
         // Nothing to act on and nothing to explain: the user closed the shell detached, so it
@@ -105,15 +100,14 @@ ReattachDecision shouldReattach(const Session& session, bool endpointPresent,
     return decision;
 }
 
-std::size_t apply(const Session& session, engine::Engine& engine,
-                  std::vector<std::string>& problems, LoadGuard* guard) {
+std::size_t apply(
+    const Session& session, engine::Engine& engine, std::vector<std::string>& problems, LoadGuard* guard) {
     std::size_t restored = 0;
 
     for (const RackEntry& entry : session.rack) {
         if (entry.blocked) {
             problems.push_back(describe(entry) + ": not loaded -- " +
-                               (entry.blockedReason.empty() ? std::string("blocked")
-                                                            : entry.blockedReason));
+                (entry.blockedReason.empty() ? std::string("blocked") : entry.blockedReason));
             continue;
         }
 
@@ -128,8 +122,7 @@ std::size_t apply(const Session& session, engine::Engine& engine,
             guard->mark(entry.path);
         }
         std::string error;
-        const bool inserted =
-            engine.insertPluginWithState(index, entry.path, entry.classId, entry.state, error);
+        const bool inserted = engine.insertPluginWithState(index, entry.path, entry.classId, entry.state, error);
         if (guard != nullptr) {
             guard->clear();
         }

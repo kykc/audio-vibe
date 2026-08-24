@@ -65,8 +65,7 @@ public:
     /// Puts the window into the state the command line asked for. Called after `show()`, because
     /// opening an editor needs a shown window to parent it to. Every step reports through the log
     /// view rather than the console -- this is a WIN32 executable and has no console to report to.
-    void applyStartupOptions(const QStringList& pluginPaths, bool openEditors, bool attach,
-                             bool scan);
+    void applyStartupOptions(const QStringList& pluginPaths, bool openEditors, bool attach, bool scan);
 
 protected:
     /// Where the session is written. Not the destructor: by then the window has no geometry left
@@ -134,8 +133,7 @@ private:
 
     /// Selects the endpoint the session named. Returns false when it is no longer there, which
     /// is also what suppresses the reattach -- see the note at the top of this file.
-    [[nodiscard]] bool selectSavedEndpoint(const std::string& endpointId,
-                                           const std::string& endpointName);
+    [[nodiscard]] bool selectSavedEndpoint(const std::string& endpointId, const std::string& endpointName);
 
     QWidget* buildLinkGroup();
     QWidget* buildRackGroup();

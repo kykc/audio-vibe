@@ -34,8 +34,7 @@ std::wstring readStringProperty(IPropertyStore& store, const PROPERTYKEY& key) {
     PROPVARIANT value{};
     ::PropVariantInit(&value);
     std::wstring result;
-    if (SUCCEEDED(store.GetValue(key, &value)) && value.vt == VT_LPWSTR &&
-        value.pwszVal != nullptr) {
+    if (SUCCEEDED(store.GetValue(key, &value)) && value.vt == VT_LPWSTR && value.pwszVal != nullptr) {
         result.assign(value.pwszVal);
     }
     ::PropVariantClear(&value);
@@ -58,8 +57,7 @@ void readDeviceFormat(IPropertyStore& store, RenderEndpoint& out) {
         const auto* format = reinterpret_cast<const WAVEFORMATEX*>(value.blob.pBlobData);
         out.deviceChannelCount = format->nChannels;
         out.deviceSampleRate = format->nSamplesPerSec;
-        if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-            value.blob.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) &&
+        if (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE && value.blob.cbSize >= sizeof(WAVEFORMATEXTENSIBLE) &&
             format->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)) {
             const auto* extensible = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format);
             out.channelMask = extensible->dwChannelMask;
@@ -111,8 +109,7 @@ std::vector<RenderEndpoint> enumerateRenderEndpoints() {
     std::vector<RenderEndpoint> endpoints;
 
     ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                  IID_PPV_ARGS(&enumerator)))) {
+    if (FAILED(::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
         return endpoints;
     }
 
@@ -147,8 +144,7 @@ std::vector<RenderEndpoint> enumerateRenderEndpoints() {
 
 std::optional<RenderEndpoint> defaultRenderEndpoint() {
     ComPtr<IMMDeviceEnumerator> enumerator;
-    if (FAILED(::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                  IID_PPV_ARGS(&enumerator)))) {
+    if (FAILED(::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
         return std::nullopt;
     }
 

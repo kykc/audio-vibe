@@ -24,14 +24,12 @@ namespace {
     if (utf8.empty()) {
         return {};
     }
-    const int needed = MultiByteToWideChar(CP_UTF8, 0, utf8.data(),
-                                           static_cast<int>(utf8.size()), nullptr, 0);
+    const int needed = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
     if (needed <= 0) {
         return {};
     }
     std::wstring wide(static_cast<std::size_t>(needed), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(),
-                        needed);
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(), needed);
     return wide;
 }
 
@@ -39,21 +37,19 @@ namespace {
     if (wide.empty()) {
         return {};
     }
-    const int needed = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
-                                           nullptr, 0, nullptr, nullptr);
+    const int needed =
+        WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
     if (needed <= 0) {
         return {};
     }
     std::string utf8(static_cast<std::size_t>(needed), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(),
-                        needed, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(), needed, nullptr, nullptr);
     return utf8;
 }
 
 [[nodiscard]] bool fileExists(const std::wstring& path) noexcept {
     const DWORD attributes = GetFileAttributesW(path.c_str());
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
 /// `GetModuleFileNameW` truncates rather than failing on a small buffer, and MAX_PATH is not a
@@ -61,8 +57,7 @@ namespace {
 [[nodiscard]] std::wstring ownExecutablePath() {
     std::wstring path(MAX_PATH, L'\0');
     for (;;) {
-        const DWORD written = GetModuleFileNameW(nullptr, path.data(),
-                                                 static_cast<DWORD>(path.size()));
+        const DWORD written = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
         if (written == 0) {
             return {};
         }
@@ -84,7 +79,9 @@ namespace {
 class Handle {
 public:
     Handle() = default;
+
     explicit Handle(HANDLE handle) noexcept : handle_(handle) {}
+
     ~Handle() { reset(); }
 
     Handle(const Handle&) = delete;
@@ -98,9 +95,9 @@ public:
     }
 
     [[nodiscard]] HANDLE get() const noexcept { return handle_; }
-    [[nodiscard]] bool valid() const noexcept {
-        return handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE;
-    }
+
+    [[nodiscard]] bool valid() const noexcept { return handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE; }
+
     [[nodiscard]] HANDLE* address() noexcept { return &handle_; }
 
 private:
@@ -108,9 +105,9 @@ private:
 };
 
 enum class Wait {
-    Line,    ///< a record line is available
+    Line, ///< a record line is available
     Timeout, ///< nothing arrived within the deadline; the child is presumed stuck
-    Ended,   ///< the pipe closed, which means the child is gone one way or another
+    Ended, ///< the pipe closed, which means the child is gone one way or another
 };
 
 /// One `aip_scan` process, its private record pipe, and the thread that drains it.
@@ -123,8 +120,7 @@ class ChildProcess {
 public:
     ~ChildProcess() { stop(); }
 
-    [[nodiscard]] bool start(const std::wstring& executable, const ScanOptions& options,
-                             std::string& error) {
+    [[nodiscard]] bool start(const std::wstring& executable, const ScanOptions& options, std::string& error) {
         SECURITY_ATTRIBUTES inheritable{};
         inheritable.nLength = sizeof inheritable;
         inheritable.bInheritHandle = TRUE;
@@ -150,8 +146,8 @@ public:
         // Plugins print. Handing the child a null device for stdout and stderr keeps a plugin's
         // banner out of the parent's console, and -- because records travel on their own pipe --
         // out of the record stream that a banner would otherwise corrupt.
-        Handle nul(CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               &inheritable, OPEN_EXISTING, 0, nullptr));
+        Handle nul(CreateFileW(
+            L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable, OPEN_EXISTING, 0, nullptr));
 
         HANDLE inherited[3] = {workListRead.get(), reportWrite.get(), nul.get()};
         const DWORD inheritedCount = nul.valid() ? 3u : 2u;
@@ -169,14 +165,14 @@ public:
             return false;
         }
         if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited,
-                                       inheritedCount * sizeof(HANDLE), nullptr, nullptr)) {
+                inheritedCount * sizeof(HANDLE), nullptr, nullptr)) {
             DeleteProcThreadAttributeList(attributes);
             error = "failed to build the child's handle list";
             return false;
         }
 
         std::wstring command = L"\"" + executable + L"\" --report-handle " +
-                               std::to_wstring(reinterpret_cast<std::uintptr_t>(reportWrite.get()));
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(reportWrite.get()));
         command += L" --rate " + std::to_wstring(options.probe.sampleRate);
         command += L" --channels " + std::to_wstring(options.probe.channelCount);
         if (!options.probe.prepare) {
@@ -207,20 +203,16 @@ public:
         // which the SDK's loader supplies -- so pointing it at temp costs nothing and contains it.
         wchar_t tempDirectory[MAX_PATH + 1] = {};
         const DWORD tempLength = GetTempPathW(MAX_PATH + 1, tempDirectory);
-        const wchar_t* workingDirectory =
-            (tempLength > 0 && tempLength <= MAX_PATH) ? tempDirectory : nullptr;
+        const wchar_t* workingDirectory = (tempLength > 0 && tempLength <= MAX_PATH) ? tempDirectory : nullptr;
 
         PROCESS_INFORMATION info{};
-        const BOOL started =
-            CreateProcessW(executable.c_str(), commandBuffer.data(), nullptr, nullptr, TRUE,
-                           EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr,
-                           workingDirectory, &startup.StartupInfo, &info);
+        const BOOL started = CreateProcessW(executable.c_str(), commandBuffer.data(), nullptr, nullptr, TRUE,
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW, nullptr, workingDirectory, &startup.StartupInfo, &info);
         const DWORD launchError = GetLastError();
         DeleteProcThreadAttributeList(attributes);
 
         if (!started) {
-            error = "failed to start " + narrow(executable) + " (error " +
-                    std::to_string(launchError) + ")";
+            error = "failed to start " + narrow(executable) + " (error " + std::to_string(launchError) + ")";
             return false;
         }
         process_.reset(info.hProcess);
@@ -259,8 +251,8 @@ public:
 
     [[nodiscard]] Wait nextLine(std::string& line, unsigned timeoutMs) {
         std::unique_lock<std::mutex> lock(mutex_);
-        const bool arrived = ready_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
-                                             [this] { return !lines_.empty() || ended_; });
+        const bool arrived =
+            ready_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return !lines_.empty() || ended_; });
         if (!arrived) {
             return Wait::Timeout;
         }
@@ -276,8 +268,7 @@ public:
     /// distinguishes an access violation from a plugin calling `exit`.
     [[nodiscard]] std::string exitDescription() {
         DWORD code = 0;
-        if (process_.valid() && GetExitCodeProcess(process_.get(), &code) &&
-            code != STILL_ACTIVE) {
+        if (process_.valid() && GetExitCodeProcess(process_.get(), &code) && code != STILL_ACTIVE) {
             char text[32];
             std::snprintf(text, sizeof text, "0x%08lX", static_cast<unsigned long>(code));
             return text;
@@ -356,8 +347,7 @@ private:
     bool ended_ = false;
 };
 
-[[nodiscard]] ScannedModule stubFor(const std::string& path, ScanStatus status,
-                                    const std::string& error) {
+[[nodiscard]] ScannedModule stubFor(const std::string& path, ScanStatus status, const std::string& error) {
     ScannedModule module;
     module.path = path;
     module.status = status;
@@ -365,8 +355,7 @@ private:
     return module;
 }
 
-void report(const ScanProgress& progress, const ScannedModule& module, std::size_t done,
-            std::size_t total) {
+void report(const ScanProgress& progress, const ScannedModule& module, std::size_t done, std::size_t total) {
     if (progress) {
         progress(module, done, total);
     }
@@ -392,13 +381,12 @@ std::string locateChildExecutable(std::string& error) {
     }
 #endif
 
-    error = "aip_scan.exe was not found next to " + narrow(own) +
-            " -- plugins cannot be probed without it";
+    error = "aip_scan.exe was not found next to " + narrow(own) + " -- plugins cannot be probed without it";
     return {};
 }
 
-ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions& options,
-                       const ScanProgress& progress) {
+ScanReport scanModules(
+    const std::vector<std::string>& paths, const ScanOptions& options, const ScanProgress& progress) {
     ScanReport result;
     if (paths.empty()) {
         return result;
@@ -406,9 +394,8 @@ ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions&
     result.modules.reserve(paths.size());
 
     std::string error;
-    const std::string executable = options.childExecutable.empty()
-                                       ? locateChildExecutable(error)
-                                       : options.childExecutable;
+    const std::string executable =
+        options.childExecutable.empty() ? locateChildExecutable(error) : options.childExecutable;
     if (executable.empty()) {
         for (const std::string& path : paths) {
             result.modules.push_back(stubFor(path, ScanStatus::LoadFailed, error));
@@ -430,15 +417,13 @@ ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions&
         ChildProcess child;
         if (!child.start(executableW, options, error)) {
             while (result.modules.size() < paths.size()) {
-                result.modules.push_back(
-                    stubFor(paths[result.modules.size()], ScanStatus::LoadFailed, error));
+                result.modules.push_back(stubFor(paths[result.modules.size()], ScanStatus::LoadFailed, error));
                 report(progress, result.modules.back(), result.modules.size(), paths.size());
             }
             break;
         }
         ++result.childProcesses;
-        child.sendWorkList({paths.begin() + static_cast<std::ptrdiff_t>(result.modules.size()),
-                            paths.end()});
+        child.sendWorkList({paths.begin() + static_cast<std::ptrdiff_t>(result.modules.size()), paths.end()});
 
         RecordReader reader;
         bool childEnded = false;
@@ -450,11 +435,9 @@ ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions&
 
             if (wait == Wait::Timeout) {
                 child.kill();
-                const std::string reason = "no progress for " +
-                                           std::to_string(options.moduleTimeoutMs) +
-                                           " ms; the child was terminated";
-                result.modules.push_back(
-                    reader.inFlight()
+                const std::string reason =
+                    "no progress for " + std::to_string(options.moduleTimeoutMs) + " ms; the child was terminated";
+                result.modules.push_back(reader.inFlight()
                         ? reader.abandon(ScanStatus::TimedOut, reason)
                         : stubFor(paths[result.modules.size()], ScanStatus::TimedOut, reason));
                 report(progress, result.modules.back(), result.modules.size(), paths.size());
@@ -474,8 +457,8 @@ ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions&
         }
 
         if (childEnded && result.modules.size() < paths.size()) {
-            const std::string reason = "the scanner process exited (code " +
-                                       child.exitDescription() + ") while probing this plugin";
+            const std::string reason =
+                "the scanner process exited (code " + child.exitDescription() + ") while probing this plugin";
             if (reader.inFlight()) {
                 // The child announced this bundle and never came back from it. This is the
                 // precise case the whole design exists for.
@@ -488,8 +471,7 @@ ScanReport scanModules(const std::vector<std::string>& paths, const ScanOptions&
                 // a policy blocking the executable) is relaunched against an unchanged work list
                 // for ever. Charging an innocent plugin is visible and recoverable; a scan that
                 // never ends is neither.
-                result.modules.push_back(
-                    stubFor(paths[result.modules.size()], ScanStatus::Crashed, reason));
+                result.modules.push_back(stubFor(paths[result.modules.size()], ScanStatus::Crashed, reason));
                 report(progress, result.modules.back(), result.modules.size(), paths.size());
             }
             // Otherwise it exited between entries having made progress: nothing to charge, and

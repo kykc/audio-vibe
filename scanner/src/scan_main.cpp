@@ -36,9 +36,8 @@ using namespace aip;
 
 namespace {
 
-const char* kUsage =
-    "Usage: aip_scan [--report-handle N] [--no-prepare] [--no-editor] [--rate N]"
-    " [--channels N] [<path>...]";
+const char* kUsage = "Usage: aip_scan [--report-handle N] [--no-prepare] [--no-editor] [--rate N]"
+                     " [--channels N] [<path>...]";
 
 struct Options {
     scanner::ProbeOptions probe;

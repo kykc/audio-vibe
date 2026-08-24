@@ -87,13 +87,11 @@ void SyntheticKing::close() {
     opened_ = false;
 }
 
-DispatchResult SyntheticKing::dispatch(const float* interleavedIn, float* interleavedOut,
-                                       std::int32_t size) {
+DispatchResult SyntheticKing::dispatch(const float* interleavedIn, float* interleavedOut, std::int32_t size) {
     // Sec. 4.4 king steps 1-2.
     if (header_.valetId() == protocol::kNoValet) {
         if (interleavedOut != interleavedIn) {
-            std::memcpy(interleavedOut, interleavedIn,
-                        static_cast<std::size_t>(size) * sizeof(float));
+            std::memcpy(interleavedOut, interleavedIn, static_cast<std::size_t>(size) * sizeof(float));
         }
         return DispatchResult::NoValet;
     }
@@ -116,14 +114,13 @@ DispatchResult SyntheticKing::dispatch(const float* interleavedIn, float* interl
 
     header_.setValetId(protocol::kNoValet); // evict
     if (interleavedOut != interleavedIn) {
-        std::memcpy(interleavedOut, interleavedIn,
-                    static_cast<std::size_t>(size) * sizeof(float));
+        std::memcpy(interleavedOut, interleavedIn, static_cast<std::size_t>(size) * sizeof(float));
     }
     return DispatchResult::ValetTimedOut;
 }
 
-DispatchResult SyntheticKing::dispatchRawHeader(std::uint32_t sampleRate,
-                                                std::uint32_t channelCount, std::int32_t size) {
+DispatchResult SyntheticKing::dispatchRawHeader(
+    std::uint32_t sampleRate, std::uint32_t channelCount, std::int32_t size) {
     if (header_.valetId() == protocol::kNoValet) {
         return DispatchResult::NoValet;
     }

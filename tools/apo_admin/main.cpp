@@ -44,8 +44,7 @@ using namespace aip;
 
 namespace {
 
-constexpr wchar_t kRenderPath[] =
-    L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
+constexpr wchar_t kRenderPath[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
 
 /// The GFX (post-mix) slot: `PKEY_FX_PostMixEffectClsid`, i.e. `{d04e05a6-...},2`. Slot policy is
 /// GFX-only for now (sec. 8.2), on the sec. 3.4 evidence that the modern SFX/MFX/EFX slots are
@@ -70,8 +69,8 @@ constexpr wchar_t kOriginalValue[] = L"OriginalGfxApo";
 /// So installing under the GFX policy (sec. 8.2) means clearing these, and uninstalling means
 /// putting them back. Each is saved beside itself under the `OriginalGfxApo` naming convention.
 struct ModernSlot {
-    const wchar_t* value;   ///< the `{d04e05a6-...},N` value name
-    const wchar_t* saveTo;  ///< where its previous contents are kept
+    const wchar_t* value; ///< the `{d04e05a6-...},N` value name
+    const wchar_t* saveTo; ///< where its previous contents are kept
     const wchar_t* label;
 };
 
@@ -92,8 +91,7 @@ struct Endpoint {
     bool hasFxProperties = false;
 };
 
-[[nodiscard]] bool readString(HKEY root, const std::wstring& path, const wchar_t* value,
-                              std::wstring& out) {
+[[nodiscard]] bool readString(HKEY root, const std::wstring& path, const wchar_t* value, std::wstring& out) {
     HKEY key = nullptr;
     if (::RegOpenKeyExW(root, path.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) {
         return false;
@@ -101,8 +99,7 @@ struct Endpoint {
     wchar_t buffer[512];
     DWORD bytes = sizeof(buffer);
     DWORD type = 0;
-    const LSTATUS status =
-        ::RegQueryValueExW(key, value, nullptr, &type, reinterpret_cast<BYTE*>(buffer), &bytes);
+    const LSTATUS status = ::RegQueryValueExW(key, value, nullptr, &type, reinterpret_cast<BYTE*>(buffer), &bytes);
     ::RegCloseKey(key);
     if (status != ERROR_SUCCESS || (type != REG_SZ && type != REG_MULTI_SZ)) {
         return false;
@@ -130,16 +127,14 @@ struct Endpoint {
 /// `RegistryRights.FullControl`, is denied, and seizes the key to get it. Asking for the one
 /// right the job needs makes the whole manoeuvre unnecessary -- no chown, no DACL rewrite, and
 /// nothing to restore afterwards, which retires sec. 9.4 rather than implementing it.
-[[nodiscard]] LSTATUS writeString(const std::wstring& path, const wchar_t* value,
-                                  const std::wstring& text) {
+[[nodiscard]] LSTATUS writeString(const std::wstring& path, const wchar_t* value, const std::wstring& text) {
     HKEY key = nullptr;
     LSTATUS status = ::RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.c_str(), 0, KEY_SET_VALUE, &key);
     if (status != ERROR_SUCCESS) {
         return status;
     }
     const auto bytes = static_cast<DWORD>((text.size() + 1) * sizeof(wchar_t));
-    status = ::RegSetValueExW(key, value, 0, REG_SZ, reinterpret_cast<const BYTE*>(text.c_str()),
-                              bytes);
+    status = ::RegSetValueExW(key, value, 0, REG_SZ, reinterpret_cast<const BYTE*>(text.c_str()), bytes);
     ::RegCloseKey(key);
     return status;
 }
@@ -176,8 +171,7 @@ struct Endpoint {
     for (DWORD index = 0;; ++index) {
         wchar_t name[256];
         DWORD nameChars = ARRAYSIZE(name);
-        if (::RegEnumKeyExW(render, index, name, &nameChars, nullptr, nullptr, nullptr,
-                            nullptr) != ERROR_SUCCESS) {
+        if (::RegEnumKeyExW(render, index, name, &nameChars, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) {
             break;
         }
 
@@ -187,8 +181,8 @@ struct Endpoint {
         const std::wstring base = std::wstring(kRenderPath) + L"\\" + endpoint.guid;
         // PKEY_Device_FriendlyName is `{a45c254e-...},14`; the endpoint's own name is `,2` under
         // Properties. Best effort -- a nameless endpoint is still an endpoint.
-        (void)readString(HKEY_LOCAL_MACHINE, base + L"\\Properties",
-                         L"{a45c254e-df1c-4efd-8020-67d146a850e0},2", endpoint.friendlyName);
+        (void)readString(HKEY_LOCAL_MACHINE, base + L"\\Properties", L"{a45c254e-df1c-4efd-8020-67d146a850e0},2",
+            endpoint.friendlyName);
 
         const std::wstring fx = base + L"\\FxProperties";
         HKEY fxKey = nullptr;
@@ -251,8 +245,8 @@ struct Endpoint {
     std::vector<wchar_t> mutableCommand(command.begin(), command.end());
     mutableCommand.push_back(L'\0');
 
-    if (!::CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-                          nullptr, nullptr, &startup, &process)) {
+    if (!::CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+            &startup, &process)) {
         return false;
     }
     ::WaitForSingleObject(process.hProcess, INFINITE);
@@ -267,8 +261,7 @@ void printEndpoints(const std::vector<Endpoint>& endpoints) {
     std::wprintf(L"Render endpoints (%zu):\n\n", endpoints.size());
     for (std::size_t i = 0; i < endpoints.size(); ++i) {
         const Endpoint& endpoint = endpoints[i];
-        std::wprintf(L"  [%zu] %s\n", i,
-                     endpoint.friendlyName.empty() ? L"(unnamed)" : endpoint.friendlyName.c_str());
+        std::wprintf(L"  [%zu] %s\n", i, endpoint.friendlyName.empty() ? L"(unnamed)" : endpoint.friendlyName.c_str());
         std::wprintf(L"      guid : %s\n", endpoint.guid.c_str());
         if (!endpoint.hasFxProperties) {
             std::wprintf(L"      gfx  : (no FxProperties key)\n\n");
@@ -296,24 +289,23 @@ void printEndpoints(const std::vector<Endpoint>& endpoints) {
 }
 
 void printUsage() {
-    std::wprintf(
-        L"apo_admin -- put this project's APO into a render endpoint's effect chain\n"
-        L"\n"
-        L"  --list                    show every endpoint and what is in its GFX slot\n"
-        L"  --install [--legacy]      write our CLSID into the GFX slot, saving what was there\n"
-        L"  --uninstall               restore whatever the slot held before --install\n"
-        L"  --endpoint <guid|index>   act on one endpoint (default: all of them)\n"
-        L"  --backup-dir <path>       where the .reg backup goes (default C:\\aip-backup)\n"
-        L"  --restart-audio           restart the audio service afterwards, so the change takes\n"
-        L"                            effect. Without it nothing happens until the endpoint is\n"
-        L"                            next initialised\n"
-        L"  --yes                     do not ask for confirmation\n"
-        L"\n"
-        L"--install writes the rewrite's CLSID; --install --legacy writes the deployed 2013 one,\n"
-        L"which is how you switch a machine back and forth to compare them.\n"
-        L"\n"
-        L"Every mutation takes a .reg backup of the whole render tree first. To undo by hand:\n"
-        L"  reg import <that file>    then restart the audio service.\n");
+    std::wprintf(L"apo_admin -- put this project's APO into a render endpoint's effect chain\n"
+                 L"\n"
+                 L"  --list                    show every endpoint and what is in its GFX slot\n"
+                 L"  --install [--legacy]      write our CLSID into the GFX slot, saving what was there\n"
+                 L"  --uninstall               restore whatever the slot held before --install\n"
+                 L"  --endpoint <guid|index>   act on one endpoint (default: all of them)\n"
+                 L"  --backup-dir <path>       where the .reg backup goes (default C:\\aip-backup)\n"
+                 L"  --restart-audio           restart the audio service afterwards, so the change takes\n"
+                 L"                            effect. Without it nothing happens until the endpoint is\n"
+                 L"                            next initialised\n"
+                 L"  --yes                     do not ask for confirmation\n"
+                 L"\n"
+                 L"--install writes the rewrite's CLSID; --install --legacy writes the deployed 2013 one,\n"
+                 L"which is how you switch a machine back and forth to compare them.\n"
+                 L"\n"
+                 L"Every mutation takes a .reg backup of the whole render tree first. To undo by hand:\n"
+                 L"  reg import <that file>    then restart the audio service.\n");
 }
 
 /// Restarts **Audiosrv only**, deliberately leaving AudioEndpointBuilder alone.
@@ -343,8 +335,8 @@ void printUsage() {
         STARTUPINFOW startup{};
         startup.cb = sizeof(startup);
         PROCESS_INFORMATION process{};
-        if (!::CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE,
-                              CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+        if (!::CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                nullptr, &startup, &process)) {
             return false;
         }
         ::WaitForSingleObject(process.hProcess, 60000);
@@ -373,8 +365,7 @@ struct Options {
     }
     TOKEN_ELEVATION elevation{};
     DWORD size = sizeof(elevation);
-    const bool ok = ::GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation),
-                                          &size) != FALSE;
+    const bool ok = ::GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != FALSE;
     ::CloseHandle(token);
     return ok && elevation.TokenIsElevated != 0;
 }
@@ -462,12 +453,11 @@ int wmain(int argc, wchar_t** argv) {
 
     const std::wstring ours(options.legacy ? protocol::kLegacyApoClsid : protocol::kApoClsid);
 
-    std::wprintf(L"About to %s on %zu endpoint(s):\n\n",
-                 options.install ? L"install" : L"uninstall", targets.size());
+    std::wprintf(L"About to %s on %zu endpoint(s):\n\n", options.install ? L"install" : L"uninstall", targets.size());
     for (const Endpoint* endpoint : targets) {
         std::wprintf(L"  %s\n      %s\n      gfx now: %s\n",
-                     endpoint->friendlyName.empty() ? L"(unnamed)" : endpoint->friendlyName.c_str(),
-                     endpoint->guid.c_str(), describeClsid(endpoint->currentGfx).c_str());
+            endpoint->friendlyName.empty() ? L"(unnamed)" : endpoint->friendlyName.c_str(), endpoint->guid.c_str(),
+            describeClsid(endpoint->currentGfx).c_str());
     }
     if (options.install) {
         std::wprintf(L"\n  writing: %s\n", ours.c_str());
@@ -486,16 +476,14 @@ int wmain(int argc, wchar_t** argv) {
     if (!backup(options.backupDir, backupFile)) {
         // Hard failure, not a warning. The backup is the whole reason this is safe to run, and
         // proceeding without one to save a few seconds is how a machine ends up unrecoverable.
-        std::fwprintf(stderr, L"could not write a backup to %s -- refusing to continue\n",
-                      options.backupDir.c_str());
+        std::fwprintf(stderr, L"could not write a backup to %s -- refusing to continue\n", options.backupDir.c_str());
         return 1;
     }
     std::wprintf(L"\nbackup: %s\n", backupFile.c_str());
 
     int failures = 0;
     for (Endpoint* endpoint : targets) {
-        const std::wstring fx =
-            std::wstring(kRenderPath) + L"\\" + endpoint->guid + L"\\FxProperties";
+        const std::wstring fx = std::wstring(kRenderPath) + L"\\" + endpoint->guid + L"\\FxProperties";
 
         if (options.install) {
             if (::_wcsicmp(endpoint->currentGfx.c_str(), ours.c_str()) == 0) {
@@ -507,23 +495,21 @@ int wmain(int argc, wchar_t** argv) {
             // the record of the OEM's APO with a record of our own, and the uninstall would
             // restore the wrong thing.
             const bool displacingSomebodyElse =
-                ::_wcsicmp(endpoint->currentGfx.c_str(),
-                           std::wstring(protocol::kApoClsid).c_str()) != 0 &&
-                ::_wcsicmp(endpoint->currentGfx.c_str(),
-                           std::wstring(protocol::kLegacyApoClsid).c_str()) != 0;
+                ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kApoClsid).c_str()) != 0 &&
+                ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kLegacyApoClsid).c_str()) != 0;
             if (displacingSomebodyElse) {
                 const LSTATUS saved = writeString(fx, kOriginalValue, endpoint->currentGfx);
                 if (saved != ERROR_SUCCESS) {
-                    std::fwprintf(stderr, L"  %s: could not save the previous value (%lu)\n",
-                                  endpoint->guid.c_str(), static_cast<unsigned long>(saved));
+                    std::fwprintf(stderr, L"  %s: could not save the previous value (%lu)\n", endpoint->guid.c_str(),
+                        static_cast<unsigned long>(saved));
                     ++failures;
                     continue;
                 }
             }
             const LSTATUS status = writeString(fx, kGfxValue, ours);
             if (status != ERROR_SUCCESS) {
-                std::fwprintf(stderr, L"  %s: write failed (%lu)\n", endpoint->guid.c_str(),
-                              static_cast<unsigned long>(status));
+                std::fwprintf(
+                    stderr, L"  %s: write failed (%lu)\n", endpoint->guid.c_str(), static_cast<unsigned long>(status));
                 ++failures;
                 continue;
             }
@@ -535,27 +521,22 @@ int wmain(int argc, wchar_t** argv) {
                 if (endpoint->modern[s].empty()) {
                     continue;
                 }
-                const LSTATUS saved =
-                    writeString(fx, kModernSlots[s].saveTo, endpoint->modern[s]);
+                const LSTATUS saved = writeString(fx, kModernSlots[s].saveTo, endpoint->modern[s]);
                 const LSTATUS cleared = deleteValue(fx, kModernSlots[s].value);
                 if (saved != ERROR_SUCCESS || cleared != ERROR_SUCCESS) {
-                    std::fwprintf(stderr, L"  %s: could not clear %s (save %lu, clear %lu)\n",
-                                  endpoint->guid.c_str(), kModernSlots[s].label,
-                                  static_cast<unsigned long>(saved),
-                                  static_cast<unsigned long>(cleared));
+                    std::fwprintf(stderr, L"  %s: could not clear %s (save %lu, clear %lu)\n", endpoint->guid.c_str(),
+                        kModernSlots[s].label, static_cast<unsigned long>(saved), static_cast<unsigned long>(cleared));
                     ++failures;
                     continue;
                 }
-                std::wprintf(L"  %s: cleared %s (was %s)\n", endpoint->guid.c_str(),
-                             kModernSlots[s].label, endpoint->modern[s].c_str());
+                std::wprintf(L"  %s: cleared %s (was %s)\n", endpoint->guid.c_str(), kModernSlots[s].label,
+                    endpoint->modern[s].c_str());
             }
             std::wprintf(L"  %s: installed\n", endpoint->guid.c_str());
         } else {
             const bool isOurs =
-                ::_wcsicmp(endpoint->currentGfx.c_str(),
-                           std::wstring(protocol::kApoClsid).c_str()) == 0 ||
-                ::_wcsicmp(endpoint->currentGfx.c_str(),
-                           std::wstring(protocol::kLegacyApoClsid).c_str()) == 0;
+                ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kApoClsid).c_str()) == 0 ||
+                ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kLegacyApoClsid).c_str()) == 0;
             if (!isOurs) {
                 std::wprintf(L"  %s: not ours, left alone\n", endpoint->guid.c_str());
                 continue;
@@ -564,7 +545,7 @@ int wmain(int argc, wchar_t** argv) {
             const LSTATUS status = writeString(fx, kGfxValue, endpoint->originalGfx);
             if (status != ERROR_SUCCESS) {
                 std::fwprintf(stderr, L"  %s: restore failed (%lu)\n", endpoint->guid.c_str(),
-                              static_cast<unsigned long>(status));
+                    static_cast<unsigned long>(status));
                 ++failures;
                 continue;
             }
@@ -575,19 +556,18 @@ int wmain(int argc, wchar_t** argv) {
             // its own audio enhancements and no sign of why.
             for (std::size_t s = 0; s < 3; ++s) {
                 std::wstring saved;
-                if (!readString(HKEY_LOCAL_MACHINE, fx, kModernSlots[s].saveTo, saved) ||
-                    saved.empty()) {
+                if (!readString(HKEY_LOCAL_MACHINE, fx, kModernSlots[s].saveTo, saved) || saved.empty()) {
                     continue;
                 }
                 if (writeString(fx, kModernSlots[s].value, saved) == ERROR_SUCCESS) {
                     (void)deleteValue(fx, kModernSlots[s].saveTo);
-                    std::wprintf(L"  %s: restored %s to %s\n", endpoint->guid.c_str(),
-                                 kModernSlots[s].label, saved.c_str());
+                    std::wprintf(
+                        L"  %s: restored %s to %s\n", endpoint->guid.c_str(), kModernSlots[s].label, saved.c_str());
                 }
             }
 
             std::wprintf(L"  %s: restored to %s\n", endpoint->guid.c_str(),
-                         endpoint->originalGfx.empty() ? L"(none)" : endpoint->originalGfx.c_str());
+                endpoint->originalGfx.empty() ? L"(none)" : endpoint->originalGfx.c_str());
         }
     }
 

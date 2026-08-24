@@ -69,13 +69,11 @@ public:
 
     /// One block. `size` is the **total** sample count, `frames * channelCount` (sec. 4.3).
     /// `interleavedIn` and `interleavedOut` may alias -- the APO declares `APO_FLAG_INPLACE`.
-    DispatchResult dispatch(const float* interleavedIn, float* interleavedOut,
-                            std::int32_t size);
+    DispatchResult dispatch(const float* interleavedIn, float* interleavedOut, std::int32_t size);
 
     /// Publishes a block whose header deliberately violates sec. 4.3, to exercise the valet's
     /// tolerance of a hostile or broken writer (any process can write here -- sec. 3.7.2).
-    DispatchResult dispatchRawHeader(std::uint32_t sampleRate, std::uint32_t channelCount,
-                                     std::int32_t size);
+    DispatchResult dispatchRawHeader(std::uint32_t sampleRate, std::uint32_t channelCount, std::int32_t size);
 
     void setValetTimeoutMs(DWORD ms) noexcept { valetTimeoutMs_ = ms; }
 

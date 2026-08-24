@@ -26,8 +26,7 @@ QIcon loadApplicationIcon() {
         // Not LR_SHARED: a shared handle must not be destroyed, and an unshared one must, so
         // mixing them is how an icon handle leaks per call. This one is ours and goes below.
         const auto handle = static_cast<HICON>(
-            ::LoadImageW(self, MAKEINTRESOURCEW(kApplicationIconId), IMAGE_ICON, size, size,
-                         LR_DEFAULTCOLOR));
+            ::LoadImageW(self, MAKEINTRESOURCEW(kApplicationIconId), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
         if (handle == nullptr) {
             continue;
         }
@@ -80,8 +79,7 @@ void hideTitleBarIcon(QWidget& window) {
     // What the taskbar and Alt-Tab then show for an editor is the executable's own icon, one
     // fallback further along, which is the right answer anyway -- an editor is not a separate
     // application.
-    ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE,
-                        ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_DLGMODALFRAME);
+    ::SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ::GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_DLGMODALFRAME);
     ::SetClassLongPtrW(hwnd, GCLP_HICON, 0);
     ::SetClassLongPtrW(hwnd, GCLP_HICONSM, 0);
     ::SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0);
@@ -90,8 +88,7 @@ void hideTitleBarIcon(QWidget& window) {
     // A style change does not reach the frame until the frame is told to recalculate. Without this
     // the icon stays until something else happens to invalidate the frame, which makes the whole
     // thing look intermittent.
-    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
-                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 }
 
 void clearTitleText(QWidget& window) {

@@ -48,8 +48,7 @@ std::vector<float> rampBlock(std::int32_t frames, std::uint32_t channels) {
     std::vector<float> block(static_cast<std::size_t>(frames) * channels);
     for (std::int32_t f = 0; f < frames; ++f) {
         for (std::uint32_t c = 0; c < channels; ++c) {
-            block[static_cast<std::size_t>(f) * channels + c] =
-                static_cast<float>(c) * 1000.0f + static_cast<float>(f);
+            block[static_cast<std::size_t>(f) * channels + c] = static_cast<float>(c) * 1000.0f + static_cast<float>(f);
         }
     }
     return block;
@@ -66,7 +65,7 @@ TEST_CASE("the king passes audio through untouched when no valet is attached", "
     std::vector<float> output(input.size(), -1.0f);
 
     REQUIRE(king.dispatch(input.data(), output.data(), static_cast<std::int32_t>(input.size())) ==
-            apo::DispatchResult::NoValet);
+        apo::DispatchResult::NoValet);
 
     // `NoValet` leaves the copy to the caller -- the APO does it, because with APO_FLAG_INPLACE
     // there is usually nothing to copy. So the output is untouched here, and that is correct.
@@ -160,16 +159,14 @@ TEST_CASE("a valet that misses the deadline is evicted and can reclaim", "[apo][
     // itself stays at the shipping value, which is the number worth not diverging from.
     valet.stallNextBlocks(1, apo::BufferKing::kValetTimeoutMs + 400);
 
-    REQUIRE(king.dispatch(input.data(), output.data(), size) ==
-            apo::DispatchResult::ValetTimedOut);
+    REQUIRE(king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::ValetTimedOut);
     REQUIRE(king.evictionCount() == 1);
 
     // Eviction is recoverable and must be: nothing else claimed the stream, so the valet
     // re-claims and audio resumes. A king that treated this as terminal would drop a client for
     // one late block (status.md sec. 7 item 2).
-    REQUIRE(harness::waitFor([&] {
-        return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed;
-    }));
+    REQUIRE(harness::waitFor(
+        [&] { return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed; }));
 
     valet.stop();
 }
@@ -202,9 +199,8 @@ TEST_CASE("a second valet takes the stream and the first stands down", "[apo][ki
     }));
 
     // And the king keeps working, now serving the newcomer.
-    REQUIRE(harness::waitFor([&] {
-        return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed;
-    }));
+    REQUIRE(harness::waitFor(
+        [&] { return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed; }));
 
     first.stop();
     second.stop();
@@ -233,9 +229,8 @@ TEST_CASE("the rewritten king does not have the smartOpen bug", "[apo][king]") {
     std::vector<float> output(input.size(), 0.0f);
     const auto size = static_cast<std::int32_t>(input.size());
 
-    REQUIRE(harness::waitFor([&] {
-        return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed;
-    }));
+    REQUIRE(harness::waitFor(
+        [&] { return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed; }));
 
     // What the valet actually saw on the wire, which is the only claim that matters.
     REQUIRE(valet.lastSampleRate() == 48000);
@@ -257,9 +252,8 @@ TEST_CASE("an unchanged format does not reopen the stream", "[apo][king]") {
     std::vector<float> output(input.size(), 0.0f);
     const auto size = static_cast<std::int32_t>(input.size());
 
-    REQUIRE(harness::waitFor([&] {
-        return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed;
-    }));
+    REQUIRE(harness::waitFor(
+        [&] { return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed; }));
 
     REQUIRE(king.smartOpen(base, 48000, 2));
 
@@ -284,9 +278,8 @@ TEST_CASE("reopening an existing section does not evict an attached valet", "[ap
     std::vector<float> output(input.size(), 0.0f);
     const auto size = static_cast<std::int32_t>(input.size());
 
-    REQUIRE(harness::waitFor([&] {
-        return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed;
-    }));
+    REQUIRE(harness::waitFor(
+        [&] { return king.dispatch(input.data(), output.data(), size) == apo::DispatchResult::Processed; }));
 
     // A second king on the same name, as a format change effectively is. The valet holds the
     // section open, so this attaches rather than creates.
@@ -296,7 +289,7 @@ TEST_CASE("reopening an existing section does not evict an attached valet", "[ap
     auto wide = rampBlock(64, 2);
     std::vector<float> wideOut(wide.size(), 0.0f);
     REQUIRE(other.dispatch(wide.data(), wideOut.data(), static_cast<std::int32_t>(wide.size())) ==
-            apo::DispatchResult::Processed);
+        apo::DispatchResult::Processed);
 
     valet.stop();
 }
@@ -310,8 +303,8 @@ TEST_CASE("a block geometry protocol v1 cannot carry is refused, not truncated",
 
     // Larger than the 1 MiB mapping can hold (sec. 4.3). Publishing it would write past the
     // view, inside audiodg.exe.
-    REQUIRE(king.dispatch(buffer.data(), buffer.data(), protocol::kMaxPayloadSamples + 2) ==
-            apo::DispatchResult::Unusable);
+    REQUIRE(
+        king.dispatch(buffer.data(), buffer.data(), protocol::kMaxPayloadSamples + 2) == apo::DispatchResult::Unusable);
 
     // Not a whole number of frames.
     REQUIRE(king.dispatch(buffer.data(), buffer.data(), 101) == apo::DispatchResult::Unusable);

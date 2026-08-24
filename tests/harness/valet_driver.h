@@ -35,6 +35,7 @@ public:
     using Transform = std::function<void(protocol::PlanarView&)>;
 
     ValetDriver() = default;
+
     ~ValetDriver() { stop(); }
 
     ValetDriver(const ValetDriver&) = delete;
@@ -58,21 +59,13 @@ public:
 
     [[nodiscard]] bool running() const noexcept { return running_.load(std::memory_order_relaxed); }
 
-    [[nodiscard]] std::uint64_t captured() const noexcept {
-        return captured_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t captured() const noexcept { return captured_.load(std::memory_order_relaxed); }
 
-    [[nodiscard]] std::uint64_t timeouts() const noexcept {
-        return timeouts_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t timeouts() const noexcept { return timeouts_.load(std::memory_order_relaxed); }
 
-    [[nodiscard]] std::uint64_t reclaims() const noexcept {
-        return reclaims_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t reclaims() const noexcept { return reclaims_.load(std::memory_order_relaxed); }
 
-    [[nodiscard]] std::uint64_t stolen() const noexcept {
-        return stolen_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] std::uint64_t stolen() const noexcept { return stolen_.load(std::memory_order_relaxed); }
 
     /// Geometry of the most recently captured block, straight from the header. This is what
     /// proves a king published the format it claimed to -- including, for the deployed king's

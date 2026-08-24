@@ -57,13 +57,9 @@ void* operator new[](std::size_t bytes) {
     throw std::bad_alloc();
 }
 
-void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
-    return allocate(bytes);
-}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept { return allocate(bytes); }
 
-void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept {
-    return allocate(bytes);
-}
+void* operator new[](std::size_t bytes, const std::nothrow_t&) noexcept { return allocate(bytes); }
 
 void* operator new(std::size_t bytes, std::align_val_t alignment) {
     if (void* p = allocateAligned(bytes, static_cast<std::size_t>(alignment))) {
@@ -79,13 +75,11 @@ void* operator new[](std::size_t bytes, std::align_val_t alignment) {
     throw std::bad_alloc();
 }
 
-void* operator new(std::size_t bytes, std::align_val_t alignment,
-                   const std::nothrow_t&) noexcept {
+void* operator new(std::size_t bytes, std::align_val_t alignment, const std::nothrow_t&) noexcept {
     return allocateAligned(bytes, static_cast<std::size_t>(alignment));
 }
 
-void* operator new[](std::size_t bytes, std::align_val_t alignment,
-                     const std::nothrow_t&) noexcept {
+void* operator new[](std::size_t bytes, std::align_val_t alignment, const std::nothrow_t&) noexcept {
     return allocateAligned(bytes, static_cast<std::size_t>(alignment));
 }
 
@@ -105,13 +99,9 @@ void operator delete(void* p, std::align_val_t) noexcept { releaseAligned(p); }
 
 void operator delete[](void* p, std::align_val_t) noexcept { releaseAligned(p); }
 
-void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept {
-    releaseAligned(p);
-}
+void operator delete(void* p, std::align_val_t, const std::nothrow_t&) noexcept { releaseAligned(p); }
 
-void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept {
-    releaseAligned(p);
-}
+void operator delete[](void* p, std::align_val_t, const std::nothrow_t&) noexcept { releaseAligned(p); }
 
 void operator delete(void* p, std::size_t, std::align_val_t) noexcept { releaseAligned(p); }
 

@@ -2,7 +2,7 @@
 Language: Cpp
 BasedOnStyle: LLVM
 Standard: c++20
-ColumnLimit: 100
+ColumnLimit: 120
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
@@ -13,3 +13,25 @@ ReferenceAlignment: Left
 SeparateDefinitionBlocks: Always
 SortIncludes: CaseSensitive
 IncludeBlocks: Preserve
+
+PenaltyBreakBeforeFirstCallParameter: 100
+PenaltyBreakOpenParenthesis: 0
+# --- Wrapped/continuation lines: one flat indent, no column alignment ---
+AlignAfterOpenBracket: DontAlign
+AlignOperands: DontAlign
+ContinuationIndentWidth: 4        # the "+1 level"; set 8 if you want it visually distinct
+IndentWrappedFunctionNames: false
+
+# --- Consecutive-line alignment: all off ---
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: None
+AlignConsecutiveBitFields: None
+
+# --- Trailing elements ---
+AlignEscapedNewlines: DontAlign   # the \ in multiline macros: one space, no column
+AlignTrailingComments: false      # don't column-align // comments
+
+# --- Initializer tables ---
+AlignArrayOfStructures: None      # clang-format 13+
+

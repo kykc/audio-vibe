@@ -25,9 +25,8 @@ public:
     ~SharedMapping() { close(); }
 
     SharedMapping(SharedMapping&& other) noexcept
-        : mapping_(std::exchange(other.mapping_, nullptr)),
-          view_(std::exchange(other.view_, nullptr)), size_(std::exchange(other.size_, 0)),
-          createdNew_(std::exchange(other.createdNew_, false)) {}
+        : mapping_(std::exchange(other.mapping_, nullptr)), view_(std::exchange(other.view_, nullptr)),
+          size_(std::exchange(other.size_, 0)), createdNew_(std::exchange(other.createdNew_, false)) {}
 
     SharedMapping& operator=(SharedMapping&& other) noexcept {
         if (this != &other) {
@@ -43,8 +42,7 @@ public:
     SharedMapping(const SharedMapping&) = delete;
     SharedMapping& operator=(const SharedMapping&) = delete;
 
-    [[nodiscard]] static bool openOrCreate(const std::wstring& name, std::size_t size,
-                                           SharedMapping& out);
+    [[nodiscard]] static bool openOrCreate(const std::wstring& name, std::size_t size, SharedMapping& out);
 
     [[nodiscard]] bool valid() const noexcept { return view_ != nullptr; }
 

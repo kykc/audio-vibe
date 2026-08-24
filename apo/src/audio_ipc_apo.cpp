@@ -54,11 +54,9 @@ thread_local HANDLE gMmcssTask = nullptr;
 // SDK's own design for the single-interface case and there is nothing to do about it here.
 #pragma warning(push)
 #pragma warning(disable : 4815)
-const CRegAPOProperties<1> AudioIpcApo::s_properties(
-    __uuidof(AudioIpcApo), protocol::kApoFriendlyName.data(), L"", 1, 0,
-    __uuidof(IAudioProcessingObject),
-    static_cast<APO_FLAG>(APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH |
-                          APO_FLAG_INPLACE));
+const CRegAPOProperties<1> AudioIpcApo::s_properties(__uuidof(AudioIpcApo), protocol::kApoFriendlyName.data(), L"", 1,
+    0, __uuidof(IAudioProcessingObject),
+    static_cast<APO_FLAG>(APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH | APO_FLAG_INPLACE));
 #pragma warning(pop)
 
 // `s_properties`, not `&s_properties`: the conversion to `const APO_REG_PROPERTIES*` is a member
@@ -68,9 +66,7 @@ AudioIpcApo::AudioIpcApo(IUnknown* outer) : CBaseAudioProcessingObject(s_propert
     // and is safe precisely because `INonDelegatingUnknown` declares the same three methods, in
     // the same order, with the same signatures as `IUnknown` -- so its vtable *is* an IUnknown
     // vtable. It is also why that base has to come first in the class's base list.
-    outer_ = outer != nullptr
-                 ? outer
-                 : reinterpret_cast<IUnknown*>(static_cast<INonDelegatingUnknown*>(this));
+    outer_ = outer != nullptr ? outer : reinterpret_cast<IUnknown*>(static_cast<INonDelegatingUnknown*>(this));
     ::InterlockedIncrement(&gInstanceCount);
 }
 
@@ -82,9 +78,7 @@ AudioIpcApo::~AudioIpcApo() {
     ::InterlockedDecrement(&gInstanceCount);
 }
 
-LONG AudioIpcApo::instanceCount() noexcept {
-    return ::InterlockedCompareExchange(&gInstanceCount, 0, 0);
-}
+LONG AudioIpcApo::instanceCount() noexcept { return ::InterlockedCompareExchange(&gInstanceCount, 0, 0); }
 
 // ---------------------------------------------------------------------------------------------
 // IUnknown
@@ -93,17 +87,11 @@ LONG AudioIpcApo::instanceCount() noexcept {
 // The delegating three. An aggregated object's public IUnknown belongs to the outer object, and
 // when there is no outer, `outer_` points back here.
 
-STDMETHODIMP AudioIpcApo::QueryInterface(REFIID riid, void** ppv) {
-    return outer_->QueryInterface(riid, ppv);
-}
+STDMETHODIMP AudioIpcApo::QueryInterface(REFIID riid, void** ppv) { return outer_->QueryInterface(riid, ppv); }
 
-STDMETHODIMP_(ULONG) AudioIpcApo::AddRef() {
-    return outer_->AddRef();
-}
+STDMETHODIMP_(ULONG) AudioIpcApo::AddRef() { return outer_->AddRef(); }
 
-STDMETHODIMP_(ULONG) AudioIpcApo::Release() {
-    return outer_->Release();
-}
+STDMETHODIMP_(ULONG) AudioIpcApo::Release() { return outer_->Release(); }
 
 // The non-delegating three: this object's actual identity and lifetime.
 
@@ -173,8 +161,8 @@ STDMETHODIMP AudioIpcApo::Initialize(UINT32 cbDataSize, BYTE* pbyData) {
 
     settings_ = Settings::load();
     gTraceSinks = settings_.traceSinks;
-    trace(L"Initialize: entered, cbDataSize=%u (APOInitSystemEffects is %u)",
-          static_cast<unsigned>(cbDataSize), static_cast<unsigned>(sizeof(APOInitSystemEffects)));
+    trace(L"Initialize: entered, cbDataSize=%u (APOInitSystemEffects is %u)", static_cast<unsigned>(cbDataSize),
+        static_cast<unsigned>(sizeof(APOInitSystemEffects)));
 
     auto* init = reinterpret_cast<APOInitSystemEffects*>(pbyData);
     if (init->pAPOEndpointProperties == nullptr) {
@@ -209,7 +197,7 @@ STDMETHODIMP AudioIpcApo::Initialize(UINT32 cbDataSize, BYTE* pbyData) {
     ::PropVariantClear(&value);
 
     trace(L"Initialize: endpoint objects at %s (forwardSilentBlocks=%d)", objectBase_.c_str(),
-          settings_.forwardSilentBlocks ? 1 : 0);
+        settings_.forwardSilentBlocks ? 1 : 0);
     return S_OK;
 }
 
@@ -229,14 +217,11 @@ STDMETHODIMP AudioIpcApo::GetLatency(HNSTIME* pTime) {
     return S_OK;
 }
 
-STDMETHODIMP AudioIpcApo::LockForProcess(UINT32 u32NumInputConnections,
-                                         APO_CONNECTION_DESCRIPTOR** ppInputConnections,
-                                         UINT32 u32NumOutputConnections,
-                                         APO_CONNECTION_DESCRIPTOR** ppOutputConnections) {
+STDMETHODIMP AudioIpcApo::LockForProcess(UINT32 u32NumInputConnections, APO_CONNECTION_DESCRIPTOR** ppInputConnections,
+    UINT32 u32NumOutputConnections, APO_CONNECTION_DESCRIPTOR** ppOutputConnections) {
     promoted_ = false;
-    trace(L"LockForProcess: entered, %u in / %u out",
-          static_cast<unsigned>(u32NumInputConnections),
-          static_cast<unsigned>(u32NumOutputConnections));
+    trace(L"LockForProcess: entered, %u in / %u out", static_cast<unsigned>(u32NumInputConnections),
+        static_cast<unsigned>(u32NumOutputConnections));
 
     HRESULT hr = CBaseAudioProcessingObject::LockForProcess(
         u32NumInputConnections, ppInputConnections, u32NumOutputConnections, ppOutputConnections);
@@ -248,8 +233,7 @@ STDMETHODIMP AudioIpcApo::LockForProcess(UINT32 u32NumInputConnections,
     UNCOMPRESSEDAUDIOFORMAT outFormat{};
     hr = ppOutputConnections[0]->pFormat->GetUncompressedAudioFormat(&outFormat);
     if (FAILED(hr)) {
-        trace(L"LockForProcess: GetUncompressedAudioFormat failed, hr=0x%08X",
-              static_cast<unsigned>(hr));
+        trace(L"LockForProcess: GetUncompressedAudioFormat failed, hr=0x%08X", static_cast<unsigned>(hr));
         return hr;
     }
 
@@ -265,16 +249,14 @@ STDMETHODIMP AudioIpcApo::LockForProcess(UINT32 u32NumInputConnections,
         return S_OK;
     }
 
-    trace(L"LockForProcess: stream open at %u Hz x%u ch, objects %s",
-          static_cast<unsigned>(sampleRate), static_cast<unsigned>(channelCount_),
-          objectBase_.c_str());
+    trace(L"LockForProcess: stream open at %u Hz x%u ch, objects %s", static_cast<unsigned>(sampleRate),
+        static_cast<unsigned>(channelCount_), objectBase_.c_str());
     return S_OK;
 }
 
 STDMETHODIMP AudioIpcApo::UnlockForProcess() {
-    trace(L"UnlockForProcess: %llu blocks, %llu evictions",
-          static_cast<unsigned long long>(king_.blockCount()),
-          static_cast<unsigned long long>(king_.evictionCount()));
+    trace(L"UnlockForProcess: %llu blocks, %llu evictions", static_cast<unsigned long long>(king_.blockCount()),
+        static_cast<unsigned long long>(king_.evictionCount()));
 
     // The stream is left **open**, which is what the predecessor does and is therefore what the
     // deployed client already copes with. It is also the kinder behaviour: an attached valet
@@ -289,10 +271,9 @@ STDMETHODIMP AudioIpcApo::UnlockForProcess() {
 // ---------------------------------------------------------------------------------------------
 
 STDMETHODIMP_(void)
-AudioIpcApo::APOProcess(UINT32 u32NumInputConnections,
-                        APO_CONNECTION_PROPERTY** ppInputConnections,
-                        UINT32 u32NumOutputConnections,
-                        APO_CONNECTION_PROPERTY** ppOutputConnections) {
+
+AudioIpcApo::APOProcess(UINT32 u32NumInputConnections, APO_CONNECTION_PROPERTY** ppInputConnections,
+    UINT32 u32NumOutputConnections, APO_CONNECTION_PROPERTY** ppOutputConnections) {
     UNREFERENCED_PARAMETER(u32NumInputConnections);
     UNREFERENCED_PARAMETER(u32NumOutputConnections);
 
@@ -337,8 +318,7 @@ AudioIpcApo::APOProcess(UINT32 u32NumInputConnections,
         return;
     }
 
-    const auto size =
-        static_cast<std::int32_t>(in->u32ValidFrameCount) * static_cast<std::int32_t>(channelCount_);
+    const auto size = static_cast<std::int32_t>(in->u32ValidFrameCount) * static_cast<std::int32_t>(channelCount_);
 
     auto* input = reinterpret_cast<float*>(in->pBuffer);
     auto* output = reinterpret_cast<float*>(out->pBuffer);

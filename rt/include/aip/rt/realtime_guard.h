@@ -32,12 +32,9 @@ struct ViolationCounts {
     std::uint64_t deallocations = 0;
     std::uint64_t locks = 0;
 
-    [[nodiscard]] std::uint64_t total() const noexcept {
-        return allocations + deallocations + locks;
-    }
+    [[nodiscard]] std::uint64_t total() const noexcept { return allocations + deallocations + locks; }
 
-    [[nodiscard]] friend bool operator==(const ViolationCounts&,
-                                         const ViolationCounts&) = default;
+    [[nodiscard]] friend bool operator==(const ViolationCounts&, const ViolationCounts&) = default;
 };
 
 namespace detail {
@@ -51,8 +48,7 @@ inline std::atomic<bool> gBreakOnViolation{false};
 /// Non-null while a ViolationProbe is in scope on this thread. See the class below.
 inline thread_local ViolationCounts* tlsProbe = nullptr;
 
-inline void note(std::atomic<std::uint64_t>& counter,
-                 std::uint64_t ViolationCounts::*field) noexcept {
+inline void note(std::atomic<std::uint64_t>& counter, std::uint64_t ViolationCounts::* field) noexcept {
     if (tlsRealtimeDepth == 0) {
         return;
     }
@@ -106,8 +102,7 @@ inline void noteLock() noexcept {
 [[nodiscard]] inline ViolationCounts violations() noexcept {
 #if defined(AIP_RT_CHECKS)
     return ViolationCounts{detail::gAllocations.load(std::memory_order_relaxed),
-                           detail::gDeallocations.load(std::memory_order_relaxed),
-                           detail::gLocks.load(std::memory_order_relaxed)};
+        detail::gDeallocations.load(std::memory_order_relaxed), detail::gLocks.load(std::memory_order_relaxed)};
 #else
     return ViolationCounts{};
 #endif

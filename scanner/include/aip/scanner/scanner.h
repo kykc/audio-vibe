@@ -48,17 +48,15 @@ struct ScanOptions {
 
 /// Called as each entry completes, with how many of `paths` are now accounted for. Runs on
 /// whatever thread called `scanModules` -- a Qt caller must marshal, not paint from here.
-using ScanProgress = std::function<void(const ScannedModule& module, std::size_t done,
-                                        std::size_t total)>;
+using ScanProgress = std::function<void(const ScannedModule& module, std::size_t done, std::size_t total)>;
 
 /// Probes every path, in order, and returns one entry per path.
 ///
 /// Never throws and has no failure return: a scan that cannot start a child still produces a
 /// report, with every entry marked and the reason in its `error`. There is no sensible way for a
 /// caller to react differently, and a report is the thing the caller needs either way.
-[[nodiscard]] ScanReport scanModules(const std::vector<std::string>& paths,
-                                     const ScanOptions& options = {},
-                                     const ScanProgress& progress = {});
+[[nodiscard]] ScanReport scanModules(
+    const std::vector<std::string>& paths, const ScanOptions& options = {}, const ScanProgress& progress = {});
 
 /// Where `scanModules` would look for the child, and why it did not find it. Exposed for the
 /// diagnostic it gives: "the scanner is missing" is otherwise indistinguishable from "every one of

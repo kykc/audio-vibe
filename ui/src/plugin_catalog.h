@@ -38,9 +38,7 @@ namespace aip::ui {
 
 class PluginCatalog {
 public:
-    [[nodiscard]] const std::vector<scanner::ScannedModule>& modules() const noexcept {
-        return modules_;
-    }
+    [[nodiscard]] const std::vector<scanner::ScannedModule>& modules() const noexcept { return modules_; }
 
     /// Takes the cached report out of a loaded session. Nothing is verified here -- that happens
     /// on the first `ensureScanned`, where there is a window to put a progress dialog on.
@@ -73,7 +71,7 @@ private:
     /// Runs `paths` through `scanner::scanModules` on a worker thread while `parent` shows a
     /// progress dialog. Returns false if the user cancelled.
     bool run(QWidget* parent, const std::vector<std::string>& paths, const QString& title,
-             std::vector<scanner::ScannedModule>& out);
+        std::vector<scanner::ScannedModule>& out);
 
     std::vector<scanner::ScannedModule> modules_;
     /// Keyed by module path. Parallel to `modules_` by path rather than by index, because the two

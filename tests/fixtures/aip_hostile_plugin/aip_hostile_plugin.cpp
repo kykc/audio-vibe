@@ -15,13 +15,9 @@
 
 #include <windows.h>
 
-extern "C" __declspec(dllexport) bool InitDll() {
-    return true;
-}
+extern "C" __declspec(dllexport) bool InitDll() { return true; }
 
-extern "C" __declspec(dllexport) bool ExitDll() {
-    return true;
-}
+extern "C" __declspec(dllexport) bool ExitDll() { return true; }
 
 extern "C" __declspec(dllexport) void* GetPluginFactory() {
 #if defined(AIP_HOSTILE_HANG)

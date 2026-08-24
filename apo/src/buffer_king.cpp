@@ -6,20 +6,18 @@
 
 namespace aip::apo {
 
-bool BufferKing::open(const std::wstring& objectBase, std::uint32_t sampleRate,
-                      std::uint32_t channelCount) {
+bool BufferKing::open(const std::wstring& objectBase, std::uint32_t sampleRate, std::uint32_t channelCount) {
     close();
 
     if (!ipc::SharedMapping::openOrCreate(objectBase, protocol::kMappingSize, mapping_)) {
         return false;
     }
-    if (!ipc::ManualEvent::create(protocol::kingEventName(objectBase), /*initiallySignaled=*/true,
-                                  kingEvent_)) {
+    if (!ipc::ManualEvent::create(protocol::kingEventName(objectBase), /*initiallySignaled=*/true, kingEvent_)) {
         close();
         return false;
     }
     if (!ipc::ManualEvent::create(protocol::valetEventName(objectBase),
-                                  /*initiallySignaled=*/false, valetEvent_)) {
+            /*initiallySignaled=*/false, valetEvent_)) {
         close();
         return false;
     }
@@ -53,8 +51,7 @@ bool BufferKing::open(const std::wstring& objectBase, std::uint32_t sampleRate,
     return true;
 }
 
-bool BufferKing::smartOpen(const std::wstring& objectBase, std::uint32_t sampleRate,
-                           std::uint32_t channelCount) {
+bool BufferKing::smartOpen(const std::wstring& objectBase, std::uint32_t sampleRate, std::uint32_t channelCount) {
     if (!opened_) {
         return open(objectBase, sampleRate, channelCount);
     }
@@ -84,8 +81,7 @@ void BufferKing::close() noexcept {
     opened_ = false;
 }
 
-DispatchResult BufferKing::dispatch(const float* interleavedIn, float* interleavedOut,
-                                    std::int32_t size) noexcept {
+DispatchResult BufferKing::dispatch(const float* interleavedIn, float* interleavedOut, std::int32_t size) noexcept {
     if (!opened_ || !header_.valid()) {
         return DispatchResult::Unusable;
     }

@@ -51,10 +51,9 @@ struct INonDelegatingUnknown {
 
 #pragma AVRT_VTABLES_BEGIN
 
-class __declspec(uuid("C6A6A861-A99F-4F00-B636-657F38F353E9")) AudioIpcApo final
-    : public INonDelegatingUnknown,
-      public CBaseAudioProcessingObject,
-      public IAudioSystemEffects {
+class __declspec(uuid("C6A6A861-A99F-4F00-B636-657F38F353E9")) AudioIpcApo final : public INonDelegatingUnknown,
+                                                                                   public CBaseAudioProcessingObject,
+                                                                                   public IAudioSystemEffects {
 public:
     /// `outer` is the controlling unknown, or null when not aggregated -- in which case the
     /// object controls itself and the delegating methods below become the non-delegating ones.
@@ -87,14 +86,14 @@ public:
 
     // IAudioProcessingObjectConfiguration
     STDMETHOD(LockForProcess)
-    (UINT32 u32NumInputConnections, APO_CONNECTION_DESCRIPTOR** ppInputConnections,
-     UINT32 u32NumOutputConnections, APO_CONNECTION_DESCRIPTOR** ppOutputConnections) override;
+    (UINT32 u32NumInputConnections, APO_CONNECTION_DESCRIPTOR** ppInputConnections, UINT32 u32NumOutputConnections,
+        APO_CONNECTION_DESCRIPTOR** ppOutputConnections) override;
     STDMETHOD(UnlockForProcess)() override;
 
     // IAudioProcessingObjectRT -- the audio thread, and the only thing on it.
     STDMETHOD_(void, APOProcess)
-    (UINT32 u32NumInputConnections, APO_CONNECTION_PROPERTY** ppInputConnections,
-     UINT32 u32NumOutputConnections, APO_CONNECTION_PROPERTY** ppOutputConnections) override;
+    (UINT32 u32NumInputConnections, APO_CONNECTION_PROPERTY** ppInputConnections, UINT32 u32NumOutputConnections,
+        APO_CONNECTION_PROPERTY** ppOutputConnections) override;
 
     /// The registration properties this class is published with, also used by
     /// `DllRegisterServer`. `APO_FLAG_FRAMESPERSECOND_MUST_MATCH | BITSPERSAMPLE_MUST_MATCH |

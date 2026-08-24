@@ -52,7 +52,10 @@ TEST_CASE("the detector sees an allocation inside a real-time section", "[rt][de
     REQUIRE_FALSE(rt::inRealtimeSection());
 
     // Outside a section, allocation is ordinary control-plane work and must not be counted.
-    { volatile auto outside = std::make_unique<int>(1); (void)outside; }
+    {
+        volatile auto outside = std::make_unique<int>(1);
+        (void)outside;
+    }
     REQUIRE(rt::violations().total() == 0);
 
     {
@@ -90,8 +93,7 @@ TEST_CASE("the detector sees a lock taken inside a real-time section", "[rt][det
     rt::resetViolations();
 }
 
-TEST_CASE("a probe counts what a real-time section did without charging the process",
-          "[rt][probe]") {
+TEST_CASE("a probe counts what a real-time section did without charging the process", "[rt][probe]") {
     // The whole value of `rt::ViolationProbe` is the second half of that sentence. Deliberately
     // exercising third-party code that is expected to allocate -- which is what the engine's
     // plugin warm-up does -- must not move the counters sec. 7.4.3 makes an acceptance criterion,
@@ -176,16 +178,14 @@ TEST_CASE("steady state performs exactly zero audio-thread allocations", "[rt][s
     // Warm up: first-touch page faults, thread start-up and lazy CRT initialisation all belong
     // to attach, not to steady state.
     for (int i = 0; i < kWarmupBlocks; ++i) {
-        REQUIRE(king.dispatch(input.data(), output.data(), kSize) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(king.dispatch(input.data(), output.data(), kSize) == harness::DispatchResult::Processed);
     }
 
     rt::resetViolations();
     const std::size_t rssBefore = workingSetBytes();
 
     for (int i = 0; i < kSoakBlocks; ++i) {
-        if (king.dispatch(input.data(), output.data(), kSize) !=
-            harness::DispatchResult::Processed) {
+        if (king.dispatch(input.data(), output.data(), kSize) != harness::DispatchResult::Processed) {
             FAIL("block " << i << " did not complete the rendezvous");
         }
     }

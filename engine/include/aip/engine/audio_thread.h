@@ -24,9 +24,7 @@ inline thread_local bool tlsOnAudioThread = false;
 /// entry point the audio thread has into `engine/`.
 class AudioThreadMarker {
 public:
-    AudioThreadMarker() noexcept : previous_(detail::tlsOnAudioThread) {
-        detail::tlsOnAudioThread = true;
-    }
+    AudioThreadMarker() noexcept : previous_(detail::tlsOnAudioThread) { detail::tlsOnAudioThread = true; }
 
     ~AudioThreadMarker() noexcept { detail::tlsOnAudioThread = previous_; }
 

@@ -60,27 +60,20 @@ int main(int argc, char** argv) {
         QApplication::setWindowIcon(aip::ui::applicationIcon());
 
         QCommandLineParser parser;
-        parser.setApplicationDescription(
-            QStringLiteral("System-wide audio processing utility -- client shell."));
+        parser.setApplicationDescription(QStringLiteral("System-wide audio processing utility -- client shell."));
         parser.addHelpOption();
         // Not "plugin": see the note at the top of this file. Qt would eat it.
-        const QCommandLineOption pluginOption(
-            QStringLiteral("vst3"),
-            QStringLiteral("Load a .vst3 into the rack at startup. Repeatable."),
-            QStringLiteral("path"));
+        const QCommandLineOption pluginOption(QStringLiteral("vst3"),
+            QStringLiteral("Load a .vst3 into the rack at startup. Repeatable."), QStringLiteral("path"));
         const QCommandLineOption editorsOption(
             QStringLiteral("editors"), QStringLiteral("Open an editor for every loaded plugin."));
         const QCommandLineOption attachOption(
-            QStringLiteral("attach"),
-            QStringLiteral("Attach to the default render endpoint at startup."));
+            QStringLiteral("attach"), QStringLiteral("Attach to the default render endpoint at startup."));
         // Not "session": Qt reserves that one as well.
-        const QCommandLineOption configOption(
-            QStringLiteral("config"),
-            QStringLiteral("Session file to use instead of the portable/AppData search."),
-            QStringLiteral("path"));
+        const QCommandLineOption configOption(QStringLiteral("config"),
+            QStringLiteral("Session file to use instead of the portable/AppData search."), QStringLiteral("path"));
         const QCommandLineOption scanOption(
-            QStringLiteral("scan"),
-            QStringLiteral("Update the plugin catalog at startup, as the first Add would."));
+            QStringLiteral("scan"), QStringLiteral("Update the plugin catalog at startup, as the first Add would."));
         parser.addOption(pluginOption);
         parser.addOption(editorsOption);
         parser.addOption(attachOption);
@@ -90,8 +83,8 @@ int main(int argc, char** argv) {
 
         aip::ui::MainWindow window(parser.value(configOption));
         window.show();
-        window.applyStartupOptions(parser.values(pluginOption), parser.isSet(editorsOption),
-                                   parser.isSet(attachOption), parser.isSet(scanOption));
+        window.applyStartupOptions(parser.values(pluginOption), parser.isSet(editorsOption), parser.isSet(attachOption),
+            parser.isSet(scanOption));
         result = QApplication::exec();
     }
 

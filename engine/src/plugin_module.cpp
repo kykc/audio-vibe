@@ -11,8 +11,8 @@ PluginModule::PluginModule(VST3::Hosting::Module::Ptr module) : module_(std::mov
         if (info.category() != kVstAudioEffectClass) {
             continue;
         }
-        audioEffects_.push_back(PluginClass{info.ID(), info.name(), info.vendor(), info.version(),
-                                            info.category(), info.subCategoriesString()});
+        audioEffects_.push_back(PluginClass{
+            info.ID(), info.name(), info.vendor(), info.version(), info.category(), info.subCategoriesString()});
     }
 }
 

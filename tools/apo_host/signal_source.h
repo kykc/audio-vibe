@@ -63,8 +63,7 @@ struct SignalFactory {
 /// the other end.
 ///
 /// Returns null on any failure, with `error` set to something a user can act on. Never throws.
-[[nodiscard]] std::unique_ptr<SignalSource> makeSignal(const std::wstring& spec,
-                                                       std::uint32_t sampleRate,
-                                                       std::wstring& error);
+[[nodiscard]] std::unique_ptr<SignalSource> makeSignal(
+    const std::wstring& spec, std::uint32_t sampleRate, std::wstring& error);
 
 } // namespace aip::tools

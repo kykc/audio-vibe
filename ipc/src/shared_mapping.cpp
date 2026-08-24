@@ -6,14 +6,12 @@
 
 namespace aip::ipc {
 
-bool SharedMapping::openOrCreate(const std::wstring& name, std::size_t size,
-                                 SharedMapping& out) {
+bool SharedMapping::openOrCreate(const std::wstring& name, std::size_t size, SharedMapping& out) {
     NullDacl dacl;
 
     ::SetLastError(ERROR_SUCCESS);
-    HANDLE mapping = ::CreateFileMappingW(INVALID_HANDLE_VALUE, dacl.securityAttributes(),
-                                          PAGE_READWRITE, 0, static_cast<DWORD>(size),
-                                          name.c_str());
+    HANDLE mapping = ::CreateFileMappingW(
+        INVALID_HANDLE_VALUE, dacl.securityAttributes(), PAGE_READWRITE, 0, static_cast<DWORD>(size), name.c_str());
     if (mapping == nullptr) {
         return false;
     }

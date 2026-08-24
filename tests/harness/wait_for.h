@@ -14,8 +14,7 @@ namespace aip::harness {
 inline constexpr std::chrono::milliseconds kDefaultWait{3000};
 
 template <typename Predicate>
-[[nodiscard]] bool waitFor(Predicate predicate,
-                           std::chrono::milliseconds timeout = kDefaultWait) {
+[[nodiscard]] bool waitFor(Predicate predicate, std::chrono::milliseconds timeout = kDefaultWait) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         if (predicate()) {

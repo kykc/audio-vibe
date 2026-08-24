@@ -33,9 +33,9 @@ class SpscQueue {
     static_assert(Slots >= 2, "need at least two slots");
     static_assert((Slots & (Slots - 1)) == 0, "Slots must be a power of two");
     static_assert(std::is_nothrow_default_constructible_v<T>,
-                  "storage is default-constructed up front; T must not throw or allocate");
+        "storage is default-constructed up front; T must not throw or allocate");
     static_assert(std::is_nothrow_move_assignable_v<T> || std::is_nothrow_copy_assignable_v<T>,
-                  "push/pop must not throw on the audio thread");
+        "push/pop must not throw on the audio thread");
 
 public:
     static constexpr std::size_t capacity() noexcept { return Slots - 1; }

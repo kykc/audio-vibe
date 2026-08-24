@@ -21,8 +21,7 @@ namespace aip::config {
 inline constexpr std::size_t kBase64LineLength = 76;
 
 /// `lineLength` 0 emits one unbroken line.
-[[nodiscard]] std::string base64Encode(const std::vector<char>& data,
-                                       std::size_t lineLength = kBase64LineLength);
+[[nodiscard]] std::string base64Encode(const std::vector<char>& data, std::size_t lineLength = kBase64LineLength);
 
 /// Ignores any whitespace, so it reads back what `base64Encode` wrapped and also whatever a
 /// hand-edit turned it into. False means the text is not valid base64 -- a wrong character, or a

@@ -63,9 +63,7 @@ public:
 
     [[nodiscard]] std::size_t size() const noexcept { return plugins_.size(); }
 
-    [[nodiscard]] PluginInstance& at(std::size_t index) const noexcept {
-        return *plugins_[index];
-    }
+    [[nodiscard]] PluginInstance& at(std::size_t index) const noexcept { return *plugins_[index]; }
 
     /// Channels each scratch bank holds: the stream's width, or the widest bus a plugin in this
     /// chain settled on if that is wider. Never less than `format().channelCount`.
@@ -99,8 +97,7 @@ private:
     /// samples. A memset of at most (W - channelCount) * frames floats, which is nothing beside
     /// what the plugin is about to do with them -- and skipping it is how the padding stops
     /// being silence after the first plugin in the chain.
-    void silencePadding(float* const* channels, std::uint32_t upTo,
-                        std::int32_t frames) const noexcept;
+    void silencePadding(float* const* channels, std::uint32_t upTo, std::int32_t frames) const noexcept;
 
     StreamFormat format_;
     std::vector<PluginInstance*> plugins_;

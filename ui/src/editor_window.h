@@ -38,8 +38,7 @@ public:
     /// Returns null with `error` set when the plugin has no editor, offers no HWND view, or
     /// refuses the window we hand it. `parent` is used for window ownership only -- the result is
     /// a top-level window, not a child widget.
-    [[nodiscard]] static EditorWindow* create(engine::PluginInstance& instance, QWidget* parent,
-                                              QString& error);
+    [[nodiscard]] static EditorWindow* create(engine::PluginInstance& instance, QWidget* parent, QString& error);
 
     ~EditorWindow() override;
 
@@ -74,8 +73,7 @@ private:
 
     bool embed(QString& error);
     bool attachView(QString& error);
-    bool onPluginResizeRequest(Steinberg::IPlugView& view,
-                              const Steinberg::ViewRect& size) override;
+    bool onPluginResizeRequest(Steinberg::IPlugView& view, const Steinberg::ViewRect& size) override;
 
     /// Centres the window on the shell's, while it is still ours to place: before it is shown, and
     /// again for every size the plugin asks for after that.

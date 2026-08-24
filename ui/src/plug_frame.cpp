@@ -2,8 +2,7 @@
 
 namespace aip::ui {
 
-Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView* view,
-                                                    Steinberg::ViewRect* newSize) {
+Steinberg::tresult PLUGIN_API PlugFrame::resizeView(Steinberg::IPlugView* view, Steinberg::ViewRect* newSize) {
     if (view == nullptr || newSize == nullptr) {
         return Steinberg::kInvalidArgument;
     }

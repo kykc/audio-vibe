@@ -120,8 +120,7 @@ void printEndpoints(const std::vector<ipc::RenderEndpoint>& endpoints) {
     std::printf("Active render endpoints:\n");
     for (std::size_t i = 0; i < endpoints.size(); ++i) {
         const ipc::RenderEndpoint& endpoint = endpoints[i];
-        std::printf("  [%zu]%s %ls\n", i, endpoint.isDefault ? " (default)" : "",
-                    endpoint.friendlyName.c_str());
+        std::printf("  [%zu]%s %ls\n", i, endpoint.isDefault ? " (default)" : "", endpoint.friendlyName.c_str());
         std::printf("        guid: %ls\n", endpoint.guid.c_str());
         std::printf("        base: %ls\n", protocol::objectBaseName(endpoint.guid).c_str());
     }
@@ -129,9 +128,7 @@ void printEndpoints(const std::vector<ipc::RenderEndpoint>& endpoints) {
 
 /// A VST3 String128 is char16_t[128]; on Windows wchar_t is also 16-bit, which is the whole
 /// reason the SDK offers `wscast`. Printing through it keeps this file free of a string library.
-const wchar_t* asWide(const Steinberg::Vst::TChar* text) {
-    return reinterpret_cast<const wchar_t*>(text);
-}
+const wchar_t* asWide(const Steinberg::Vst::TChar* text) { return reinterpret_cast<const wchar_t*>(text); }
 
 struct Options {
     bool list = false;
@@ -146,9 +143,8 @@ struct Options {
     std::vector<std::string> plugins;
 };
 
-const char* kUsage =
-    "Usage: valet_probe [--list] [--endpoint N] [--endpoint-guid GUID] [--gain G]"
-    " [--plugin PATH]... [--inspect] [--scan] [--seconds S]";
+const char* kUsage = "Usage: valet_probe [--list] [--endpoint N] [--endpoint-guid GUID] [--gain G]"
+                     " [--plugin PATH]... [--inspect] [--scan] [--seconds S]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
     for (int i = 1; i < argc; ++i) {
@@ -195,36 +191,26 @@ bool parseOptions(int argc, char** argv, Options& out) {
 /// state is the bus layout *before* the arrangement is negotiated -- which a chain build would
 /// have already destroyed by the time it failed. This is also the shape `scanner/` needs
 /// (sec. 7.2), one process further out.
-void reportBusses(Steinberg::Vst::IComponent& component,
-                  Steinberg::Vst::IAudioProcessor* processor) {
+void reportBusses(Steinberg::Vst::IComponent& component, Steinberg::Vst::IAudioProcessor* processor) {
     for (Steinberg::Vst::BusDirection dir : {Steinberg::Vst::kInput, Steinberg::Vst::kOutput}) {
         const Steinberg::int32 count = component.getBusCount(Steinberg::Vst::kAudio, dir);
-        std::printf("       %s : %d\n",
-                    dir == Steinberg::Vst::kInput ? "audio in  " : "audio out ", count);
+        std::printf("       %s : %d\n", dir == Steinberg::Vst::kInput ? "audio in  " : "audio out ", count);
         for (Steinberg::int32 b = 0; b < count; ++b) {
             Steinberg::Vst::BusInfo bus{};
-            if (component.getBusInfo(Steinberg::Vst::kAudio, dir, b, bus) !=
-                Steinberg::kResultOk) {
+            if (component.getBusInfo(Steinberg::Vst::kAudio, dir, b, bus) != Steinberg::kResultOk) {
                 continue;
             }
             Steinberg::Vst::SpeakerArrangement arrangement = 0;
             const bool haveArrangement =
-                processor != nullptr &&
-                processor->getBusArrangement(dir, b, arrangement) == Steinberg::kResultOk;
-            std::printf("         [%d] %ls  %d ch  %s  %s  arr=0x%llx%s\n", b, asWide(bus.name),
-                        bus.channelCount,
-                        bus.busType == Steinberg::Vst::kMain ? "main" : "aux ",
-                        (bus.flags & Steinberg::Vst::BusInfo::kDefaultActive) != 0
-                            ? "default-active  "
-                            : "default-inactive",
-                        static_cast<unsigned long long>(arrangement),
-                        haveArrangement ? "" : " (unavailable)");
+                processor != nullptr && processor->getBusArrangement(dir, b, arrangement) == Steinberg::kResultOk;
+            std::printf("         [%d] %ls  %d ch  %s  %s  arr=0x%llx%s\n", b, asWide(bus.name), bus.channelCount,
+                bus.busType == Steinberg::Vst::kMain ? "main" : "aux ",
+                (bus.flags & Steinberg::Vst::BusInfo::kDefaultActive) != 0 ? "default-active  " : "default-inactive",
+                static_cast<unsigned long long>(arrangement), haveArrangement ? "" : " (unavailable)");
         }
     }
-    const Steinberg::int32 eventIn = component.getBusCount(Steinberg::Vst::kEvent,
-                                                           Steinberg::Vst::kInput);
-    const Steinberg::int32 eventOut = component.getBusCount(Steinberg::Vst::kEvent,
-                                                            Steinberg::Vst::kOutput);
+    const Steinberg::int32 eventIn = component.getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kInput);
+    const Steinberg::int32 eventOut = component.getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kOutput);
     std::printf("       event bus : %d in, %d out\n", eventIn, eventOut);
 }
 
@@ -257,8 +243,8 @@ int runInspection(const Options& options) {
         std::printf("  name   : %s\n", module->name().c_str());
 
         for (const engine::PluginClass& info : module->audioEffects()) {
-            std::printf("  effect : %s  [%s %s]  %s\n", info.name.c_str(), info.vendor.c_str(),
-                        info.version.c_str(), info.subCategories.c_str());
+            std::printf("  effect : %s  [%s %s]  %s\n", info.name.c_str(), info.vendor.c_str(), info.version.c_str(),
+                info.subCategories.c_str());
 
             std::unique_ptr<engine::PluginInstance> instance =
                 engine::PluginInstance::create(module, info.id, hostContext, error);
@@ -274,17 +260,14 @@ int runInspection(const Options& options) {
 
             // A single-component plugin is one object wearing both interfaces. The distinction
             // decides how it is connected and torn down, so it is worth reporting.
-            const bool single =
-                Steinberg::U::cast<Steinberg::Vst::IEditController>(component) != nullptr;
+            const bool single = Steinberg::U::cast<Steinberg::Vst::IEditController>(component) != nullptr;
 
             std::printf("       controller : %s\n",
-                        controller == nullptr  ? "none"
-                        : single               ? "same object (single component)"
-                                               : "separate object (split component)");
-            std::printf("       parameters : %d\n",
-                        controller != nullptr ? controller->getParameterCount() : 0);
-            std::printf("       latency    : %u samples\n",
-                        processor ? processor->getLatencySamples() : 0u);
+                controller == nullptr ? "none"
+                    : single          ? "same object (single component)"
+                                      : "separate object (split component)");
+            std::printf("       parameters : %d\n", controller != nullptr ? controller->getParameterCount() : 0);
+            std::printf("       latency    : %u samples\n", processor ? processor->getLatencySamples() : 0u);
             std::puts("       -- as instantiated --");
             reportBusses(*component, processor);
 
@@ -292,15 +275,14 @@ int runInspection(const Options& options) {
             // would make the report describe a device the user never named. The engine falls back
             // to a guess of the right cardinality, which is what an inspection wants anyway.
             if (!instance->prepare(format, 0, error)) {
-                std::printf("       PREPARE FAILED at %u Hz x%u ch: %s\n", format.sampleRate,
-                            format.channelCount, error.c_str());
+                std::printf("       PREPARE FAILED at %u Hz x%u ch: %s\n", format.sampleRate, format.channelCount,
+                    error.c_str());
                 ++failures;
             } else {
-                std::printf("       prepared at %u Hz x%u ch, up to %d frames  (%s)\n",
-                            format.sampleRate, format.channelCount, format.maxFrames,
-                            instance->fullBusNegotiation()
-                                ? "all busses negotiated"
-                                : "main busses only; aux busses left connected");
+                std::printf("       prepared at %u Hz x%u ch, up to %d frames  (%s)\n", format.sampleRate,
+                    format.channelCount, format.maxFrames,
+                    instance->fullBusNegotiation() ? "all busses negotiated"
+                                                   : "main busses only; aux busses left connected");
                 std::puts("       -- as prepared --");
                 reportBusses(*component, processor);
             }
@@ -323,9 +305,8 @@ int runInspection(const Options& options) {
 /// probing *in this process*, which is fine for a plugin already known to be sound and fatal for
 /// one that is not -- and "which of my plugins is not" is exactly the question a scan answers.
 int runScan(const Options& options) {
-    const std::vector<std::string> paths = options.plugins.empty()
-                                               ? engine::PluginModule::installedModulePaths()
-                                               : options.plugins;
+    const std::vector<std::string> paths =
+        options.plugins.empty() ? engine::PluginModule::installedModulePaths() : options.plugins;
     if (paths.empty()) {
         std::puts("No VST3 plugins found in the standard search locations.");
         return 0;
@@ -334,16 +315,12 @@ int runScan(const Options& options) {
 
     const auto started = std::chrono::steady_clock::now();
     const scanner::ScanReport report = scanner::scanModules(
-        paths, scanner::ScanOptions{},
-        [](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
-            std::printf("[%3zu/%3zu] %-11s %s\n", done, total, scanner::toString(module.status),
-                        module.path.c_str());
+        paths, scanner::ScanOptions{}, [](const scanner::ScannedModule& module, std::size_t done, std::size_t total) {
+            std::printf("[%3zu/%3zu] %-11s %s\n", done, total, scanner::toString(module.status), module.path.c_str());
             for (const scanner::ScannedClass& info : module.classes) {
-                std::printf("            %s  [%s %s]  %d params, %d in / %d out%s%s\n",
-                            info.name.c_str(), info.vendor.c_str(), info.version.c_str(),
-                            info.parameterCount, info.mainInputChannels, info.mainOutputChannels,
-                            info.hasEditor ? ", editor" : "",
-                            info.prepared ? "" : ", NOT PREPARED");
+                std::printf("            %s  [%s %s]  %d params, %d in / %d out%s%s\n", info.name.c_str(),
+                    info.vendor.c_str(), info.version.c_str(), info.parameterCount, info.mainInputChannels,
+                    info.mainOutputChannels, info.hasEditor ? ", editor" : "", info.prepared ? "" : ", NOT PREPARED");
                 if (!info.error.empty()) {
                     std::printf("            -- %s\n", info.error.c_str());
                 }
@@ -356,11 +333,9 @@ int runScan(const Options& options) {
     const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started);
     std::printf("\n%zu usable, %zu unloadable, %zu crashed, %zu timed out"
                 " -- %d scanner process(es), %.1f s\n",
-                report.countWith(scanner::ScanStatus::Ok),
-                report.countWith(scanner::ScanStatus::LoadFailed),
-                report.countWith(scanner::ScanStatus::Crashed),
-                report.countWith(scanner::ScanStatus::TimedOut), report.childProcesses,
-                seconds.count());
+        report.countWith(scanner::ScanStatus::Ok), report.countWith(scanner::ScanStatus::LoadFailed),
+        report.countWith(scanner::ScanStatus::Crashed), report.countWith(scanner::ScanStatus::TimedOut),
+        report.childProcesses, seconds.count());
     std::puts("Nothing was attached; no audio was touched.");
     return 0;
 }
@@ -426,8 +401,7 @@ int main(int argc, char** argv) {
     std::printf("GUID     : %ls\n", target.guid.c_str());
     std::printf("Objects  : %ls\n", protocol::objectBaseName(target.guid).c_str());
     if (target.channelMask != 0) {
-        std::printf("Speakers : 0x%08x (%u channels configured)\n", target.channelMask,
-                    target.deviceChannelCount);
+        std::printf("Speakers : 0x%08x (%u channels configured)\n", target.channelMask, target.deviceChannelCount);
     } else {
         std::puts("Speakers : not reported; plugins get a guessed arrangement");
     }
@@ -468,9 +442,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    ipc::BlockProcessor& processor = options.plugins.empty()
-                                         ? static_cast<ipc::BlockProcessor&>(gainProcessor)
-                                         : host.blockProcessor();
+    ipc::BlockProcessor& processor =
+        options.plugins.empty() ? static_cast<ipc::BlockProcessor&>(gainProcessor) : host.blockProcessor();
     ipc::ValetSupervisor supervisor(target.guid, processor);
 
     supervisor.setStateCallback([](ipc::LinkState state, ipc::ValetExitReason reason) {
@@ -508,8 +481,8 @@ int main(int argc, char** argv) {
             std::string error;
             if (host.serviceFormatChange(error)) {
                 const engine::StreamFormat built = host.builtFormat();
-                std::printf("[chain] built for %u Hz x%u ch, up to %d frames\n",
-                            built.sampleRate, built.channelCount, built.maxFrames);
+                std::printf("[chain] built for %u Hz x%u ch, up to %d frames\n", built.sampleRate, built.channelCount,
+                    built.maxFrames);
                 std::fflush(stdout);
             } else if (!error.empty()) {
                 std::printf("[chain] not built: %s\n", error.c_str());
@@ -526,12 +499,10 @@ int main(int argc, char** argv) {
         const ipc::ValetCounters::Snapshot now = supervisor.counters().snapshot();
         std::printf("blocks %llu (+%llu/s)  timeouts %llu  malformed %llu  reclaims %llu  "
                     "%u Hz x%u ch, %d frames\n",
-                    static_cast<unsigned long long>(now.blocks),
-                    static_cast<unsigned long long>(now.blocks - previous.blocks),
-                    static_cast<unsigned long long>(now.timeouts),
-                    static_cast<unsigned long long>(now.malformedBlocks),
-                    static_cast<unsigned long long>(now.reclaims), now.lastSampleRate,
-                    now.lastChannelCount, now.lastFrameCount);
+            static_cast<unsigned long long>(now.blocks), static_cast<unsigned long long>(now.blocks - previous.blocks),
+            static_cast<unsigned long long>(now.timeouts), static_cast<unsigned long long>(now.malformedBlocks),
+            static_cast<unsigned long long>(now.reclaims), now.lastSampleRate, now.lastChannelCount,
+            now.lastFrameCount);
         std::fflush(stdout);
         previous = now;
     }
@@ -550,12 +521,9 @@ int main(int argc, char** argv) {
     if constexpr (rt::checksEnabled()) {
         const rt::ViolationCounts counts = rt::violations();
         std::puts("");
-        std::printf("Audio-thread allocations : %llu\n",
-                    static_cast<unsigned long long>(counts.allocations));
-        std::printf("Audio-thread frees       : %llu\n",
-                    static_cast<unsigned long long>(counts.deallocations));
-        std::printf("Audio-thread locks       : %llu\n",
-                    static_cast<unsigned long long>(counts.locks));
+        std::printf("Audio-thread allocations : %llu\n", static_cast<unsigned long long>(counts.allocations));
+        std::printf("Audio-thread frees       : %llu\n", static_cast<unsigned long long>(counts.deallocations));
+        std::printf("Audio-thread locks       : %llu\n", static_cast<unsigned long long>(counts.locks));
         if (counts.total() != 0 && !options.plugins.empty()) {
             std::puts("Note: the detector counts everything on the valet thread, the plugin's own");
             std::puts("work included. A nonzero count here is not by itself a defect in our code");
@@ -566,14 +534,10 @@ int main(int argc, char** argv) {
 
     if (!options.plugins.empty()) {
         const engine::ChainProcessor& chain = host.chainProcessor();
-        std::printf("Chain blocks    : %llu\n",
-                    static_cast<unsigned long long>(chain.blocksProcessed()));
-        std::printf("Passed through  : %llu\n",
-                    static_cast<unsigned long long>(chain.blocksPassedThrough()));
-        std::printf("Format misses   : %llu\n",
-                    static_cast<unsigned long long>(chain.formatMismatches()));
-        std::printf("Dropped edits   : %llu\n",
-                    static_cast<unsigned long long>(host.droppedParameterEdits()));
+        std::printf("Chain blocks    : %llu\n", static_cast<unsigned long long>(chain.blocksProcessed()));
+        std::printf("Passed through  : %llu\n", static_cast<unsigned long long>(chain.blocksPassedThrough()));
+        std::printf("Format misses   : %llu\n", static_cast<unsigned long long>(chain.formatMismatches()));
+        std::printf("Dropped edits   : %llu\n", static_cast<unsigned long long>(host.droppedParameterEdits()));
     }
 
     if (final.blocks == 0) {

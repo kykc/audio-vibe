@@ -49,8 +49,7 @@ TEST_CASE("interleave conversion round-trips exactly", "[protocol][planar]") {
     protocol::PlanarView view(planar.data(), channelCount, size);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         for (std::int32_t frame = 0; frame < frames; ++frame) {
-            REQUIRE(view.channel(ch)[frame] ==
-                    static_cast<float>(ch) * 100000.f + static_cast<float>(frame));
+            REQUIRE(view.channel(ch)[frame] == static_cast<float>(ch) * 100000.f + static_cast<float>(frame));
         }
     }
 

@@ -82,8 +82,7 @@ TEST_CASE("a known APO in a modern slot counts too", "[ipc][apo]") {
 TEST_CASE("being anywhere in a multi-entry chain counts", "[ipc][apo]") {
     // What a REG_MULTI_SZ slot looks like once its separators have been flattened: a list of
     // CLSIDs, ours in the middle. Being second of three is being in the chain.
-    const std::wstring chain =
-        std::wstring(kStranger) + L" " + kOurs + L" {99999999-8888-7777-6666-555555555555}";
+    const std::wstring chain = std::wstring(kStranger) + L" " + kOurs + L" {99999999-8888-7777-6666-555555555555}";
     const ipc::SlotMatch match = ipc::matchApoSlot(slotName(L"6"), chain);
     REQUIRE(match.matched);
     REQUIRE(match.slot == L"6");
@@ -92,9 +91,7 @@ TEST_CASE("being anywhere in a multi-entry chain counts", "[ipc][apo]") {
 TEST_CASE("the CLSID comparison ignores case", "[ipc][apo]") {
     // Not a nicety. The MMDevice API hands the endpoint GUID back upper-cased while the registry
     // stores it lower-cased, and nothing promises which case a given installer wrote a CLSID in.
-    REQUIRE(ipc::matchApoSlot(slotName(L"2"),
-                              L"{b6a6a861-a99f-4f00-b636-657f38f353e9}")
-                .matched);
+    REQUIRE(ipc::matchApoSlot(slotName(L"2"), L"{b6a6a861-a99f-4f00-b636-657f38f353e9}").matched);
 }
 
 TEST_CASE("somebody else's APO does not count", "[ipc][apo]") {
@@ -133,8 +130,7 @@ TEST_CASE("a real endpoint GUID that names nothing reads as absent, not as unkno
     // A well-formed GUID with no key behind it is the shape of an endpoint that has never had an
     // effect chain registered. That is a fact about the endpoint, so it must not be reported as
     // "could not tell" -- the two lead to different words on screen.
-    const ipc::ApoRegistration reg =
-        ipc::readApoRegistration(L"{00000000-0000-0000-0000-000000000000}");
+    const ipc::ApoRegistration reg = ipc::readApoRegistration(L"{00000000-0000-0000-0000-000000000000}");
     REQUIRE(reg.presence == ipc::ApoPresence::Absent);
     REQUIRE_FALSE(reg.detail.empty());
 }

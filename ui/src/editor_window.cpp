@@ -51,9 +51,8 @@ public:
             ::RegisterClassExW(&wc);
             registered = true;
         }
-        hwnd_ = ::CreateWindowExW(0, kClassName, L"", WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
-                                  0, 0, width, height, nullptr, nullptr,
-                                  ::GetModuleHandleW(nullptr), nullptr);
+        hwnd_ = ::CreateWindowExW(0, kClassName, L"", WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, width, height,
+            nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     }
 
     ~NativeHostWindow() {
@@ -93,8 +92,7 @@ EditorWindow::EditorWindow(engine::PluginInstance& instance, QWidget* parent)
 
 EditorWindow::~EditorWindow() { release(); }
 
-EditorWindow* EditorWindow::create(engine::PluginInstance& instance, QWidget* parent,
-                                   QString& error) {
+EditorWindow* EditorWindow::create(engine::PluginInstance& instance, QWidget* parent, QString& error) {
     error.clear();
 
     Vst::IEditController* controller = instance.controller();
@@ -256,8 +254,7 @@ void EditorWindow::closeEvent(QCloseEvent* event) {
 
 // -------------------------------------------------------------------------------------- sizing
 
-bool EditorWindow::onPluginResizeRequest(Steinberg::IPlugView& view,
-                                        const Steinberg::ViewRect& size) {
+bool EditorWindow::onPluginResizeRequest(Steinberg::IPlugView& view, const Steinberg::ViewRect& size) {
     if (view_ == nullptr || &view != view_.get()) {
         return false;
     }
@@ -340,8 +337,7 @@ QString EditorWindow::describe() const {
     // "logical", because that is what these numbers are and the physical size is what the plugin
     // was measured in -- on a scaled monitor the two differ, and a report that does not say which
     // it means is a report that cannot be checked against anything.
-    return QStringLiteral(
-               "its own editor, %1 x %2 logical, %3 child window(s), content-scale interface: %4")
+    return QStringLiteral("its own editor, %1 x %2 logical, %3 child window(s), content-scale interface: %4")
         .arg(width())
         .arg(height())
         .arg(childWindowCount())

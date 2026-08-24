@@ -73,13 +73,10 @@ public:
 
     void processBlock(ipc::BlockInfo& block) noexcept override {
         const std::size_t index = count_.fetch_add(1, std::memory_order_relaxed);
-        slots_[index % kCapacity] = Observation{block.sampleRate, block.channelCount,
-                                                block.audio.frameCount()};
+        slots_[index % kCapacity] = Observation{block.sampleRate, block.channelCount, block.audio.frameCount()};
     }
 
-    [[nodiscard]] std::size_t count() const noexcept {
-        return count_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] std::size_t count() const noexcept { return count_.load(std::memory_order_acquire); }
 
     /// The most recently recorded observation. Only meaningful once `count() > 0`.
     [[nodiscard]] Observation last() const noexcept {

@@ -11,9 +11,7 @@ namespace aip::tools {
 namespace {
 
 /// Peak dBFS to linear amplitude. `-20` -> 0.1, `-6` -> ~0.501, `0` -> 1.0.
-[[nodiscard]] float amplitudeFromDbfs(double dbfs) noexcept {
-    return static_cast<float>(std::pow(10.0, dbfs / 20.0));
-}
+[[nodiscard]] float amplitudeFromDbfs(double dbfs) noexcept { return static_cast<float>(std::pow(10.0, dbfs / 20.0)); }
 
 /// Splits `sine:1000:-12` into `sine` and `{1000, -12}`. Colons rather than commas because a
 /// comma is what a shell and a CSV both want to own.
@@ -73,8 +71,7 @@ public:
 /// not pretending to be a cryptographic or a Gaussian source.
 class NoiseSource final : public SignalSource {
 public:
-    explicit NoiseSource(double peakDbfs) noexcept
-        : peakDbfs_(peakDbfs), amplitude_(amplitudeFromDbfs(peakDbfs)) {}
+    explicit NoiseSource(double peakDbfs) noexcept : peakDbfs_(peakDbfs), amplitude_(amplitudeFromDbfs(peakDbfs)) {}
 
     void fill(float* interleaved, std::int32_t frames, std::uint32_t channels) noexcept override {
         for (std::int32_t f = 0; f < frames; ++f) {
@@ -152,8 +149,8 @@ private:
 /// plugin with a few dB of gain in it does not clip before anyone has looked at a meter.
 constexpr double kDefaultSineDbfs = -6.0;
 
-[[nodiscard]] std::unique_ptr<SignalSource> makeSilence(const std::vector<std::wstring>& params,
-                                                        std::uint32_t, std::wstring& error) {
+[[nodiscard]] std::unique_ptr<SignalSource> makeSilence(
+    const std::vector<std::wstring>& params, std::uint32_t, std::wstring& error) {
     if (!params.empty()) {
         error = L"silence takes no parameters";
         return nullptr;
@@ -161,8 +158,8 @@ constexpr double kDefaultSineDbfs = -6.0;
     return std::make_unique<SilenceSource>();
 }
 
-[[nodiscard]] std::unique_ptr<SignalSource> makeNoise(const std::vector<std::wstring>& params,
-                                                      std::uint32_t, std::wstring& error) {
+[[nodiscard]] std::unique_ptr<SignalSource> makeNoise(
+    const std::vector<std::wstring>& params, std::uint32_t, std::wstring& error) {
     if (params.size() != 1) {
         error = L"noise needs exactly one parameter: the peak level in dBFS, e.g. noise:-20";
         return nullptr;
@@ -181,9 +178,8 @@ constexpr double kDefaultSineDbfs = -6.0;
     return std::make_unique<NoiseSource>(dbfs);
 }
 
-[[nodiscard]] std::unique_ptr<SignalSource> makeSine(const std::vector<std::wstring>& params,
-                                                     std::uint32_t sampleRate,
-                                                     std::wstring& error) {
+[[nodiscard]] std::unique_ptr<SignalSource> makeSine(
+    const std::vector<std::wstring>& params, std::uint32_t sampleRate, std::wstring& error) {
     if (params.empty() || params.size() > 2) {
         error = L"sine needs a frequency in Hz and optionally a peak level in dBFS, "
                 L"e.g. sine:1000 or sine:1000:-12";
@@ -200,8 +196,8 @@ constexpr double kDefaultSineDbfs = -6.0;
     const double nyquist = static_cast<double>(sampleRate) / 2.0;
     if (hz < 20.0 || hz > nyquist) {
         std::wostringstream out;
-        out << L"sine: " << hz << L" Hz is outside 20 Hz to " << nyquist
-            << L" Hz (Nyquist at " << sampleRate << L" Hz)";
+        out << L"sine: " << hz << L" Hz is outside 20 Hz to " << nyquist << L" Hz (Nyquist at " << sampleRate
+            << L" Hz)";
         error = out.str();
         return nullptr;
     }
@@ -220,8 +216,7 @@ constexpr double kDefaultSineDbfs = -6.0;
     return std::make_unique<SineSource>(hz, dbfs, sampleRate);
 }
 
-using Builder = std::unique_ptr<SignalSource> (*)(const std::vector<std::wstring>&, std::uint32_t,
-                                                  std::wstring&);
+using Builder = std::unique_ptr<SignalSource> (*)(const std::vector<std::wstring>&, std::uint32_t, std::wstring&);
 
 struct Entry {
     SignalFactory info;
@@ -230,14 +225,10 @@ struct Entry {
 
 const std::vector<Entry>& entries() {
     static const std::vector<Entry> table = {
-        {{L"silence", L"silence", L"digital black -- the baseline a level check is measured against"},
-         &makeSilence},
-        {{L"noise", L"noise:<peak dBFS>",
-          L"deterministic uniform white noise, for level and broadband checks"},
-         &makeNoise},
-        {{L"sine", L"sine:<Hz>[:<peak dBFS>]",
-          L"continuous tone, phase-continuous across blocks"},
-         &makeSine},
+        {{L"silence", L"silence", L"digital black -- the baseline a level check is measured against"}, &makeSilence},
+        {{L"noise", L"noise:<peak dBFS>", L"deterministic uniform white noise, for level and broadband checks"},
+            &makeNoise},
+        {{L"sine", L"sine:<Hz>[:<peak dBFS>]", L"continuous tone, phase-continuous across blocks"}, &makeSine},
     };
     return table;
 }
@@ -255,8 +246,7 @@ const std::vector<SignalFactory>& signalFactories() {
     return infos;
 }
 
-std::unique_ptr<SignalSource> makeSignal(const std::wstring& spec, std::uint32_t sampleRate,
-                                         std::wstring& error) {
+std::unique_ptr<SignalSource> makeSignal(const std::wstring& spec, std::uint32_t sampleRate, std::wstring& error) {
     error.clear();
     if (sampleRate == 0) {
         error = L"sample rate must be nonzero";

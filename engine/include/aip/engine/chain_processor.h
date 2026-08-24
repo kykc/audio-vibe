@@ -55,13 +55,9 @@ public:
     // What a bypassed block gets is the king's own samples, handed back exactly as they arrived:
     // `processBlock` returns before the chain is even read.
 
-    void setBypassed(bool bypassed) noexcept {
-        bypassed_.store(bypassed, std::memory_order_relaxed);
-    }
+    void setBypassed(bool bypassed) noexcept { bypassed_.store(bypassed, std::memory_order_relaxed); }
 
-    [[nodiscard]] bool bypassed() const noexcept {
-        return bypassed_.load(std::memory_order_relaxed);
-    }
+    [[nodiscard]] bool bypassed() const noexcept { return bypassed_.load(std::memory_order_relaxed); }
 
     // ---------------------------------------------------------------- control thread ---------
 
@@ -75,9 +71,7 @@ public:
 
     /// The currently published chain, or null. Valid to dereference only from the control
     /// thread, which is the only thread that can replace it.
-    [[nodiscard]] PluginChain* current() const noexcept {
-        return current_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] PluginChain* current() const noexcept { return current_.load(std::memory_order_acquire); }
 
     /// The geometry of the most recent block, whether or not a chain could run it. Zeroed until
     /// the first block arrives. `maxFrames` reports the frame count actually observed, not a

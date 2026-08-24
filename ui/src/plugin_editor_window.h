@@ -36,10 +36,8 @@ namespace aip::ui {
 /// This is also the window kind that goes without a title-bar icon -- the one exemption from
 /// design_doc.md sec. 5.6. That part cannot be said in a window flag; see
 /// `hideTitleBarIcon` in window_chrome.h.
-inline constexpr Qt::WindowFlags kEditorWindowFlags = Qt::Window | Qt::CustomizeWindowHint |
-                                                      Qt::WindowTitleHint |
-                                                      Qt::WindowSystemMenuHint |
-                                                      Qt::WindowCloseButtonHint;
+inline constexpr Qt::WindowFlags kEditorWindowFlags =
+    Qt::Window | Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint;
 
 class PluginEditorWindow : public QWidget {
     Q_OBJECT

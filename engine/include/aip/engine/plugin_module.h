@@ -50,13 +50,9 @@ public:
     /// Every class in the factory whose category is `kVstAudioEffectClass`. This is what can be
     /// instantiated as a processor; the rest (controllers named separately, and so on) are
     /// reached through the component, not through the factory.
-    [[nodiscard]] const std::vector<PluginClass>& audioEffects() const noexcept {
-        return audioEffects_;
-    }
+    [[nodiscard]] const std::vector<PluginClass>& audioEffects() const noexcept { return audioEffects_; }
 
-    [[nodiscard]] const VST3::Hosting::PluginFactory& factory() const noexcept {
-        return module_->getFactory();
-    }
+    [[nodiscard]] const VST3::Hosting::PluginFactory& factory() const noexcept { return module_->getFactory(); }
 
     /// Handed to the factory before any instantiation, so a plugin can query IHostApplication
     /// during `createInstance`. Must stay alive for as long as the module does.

@@ -93,7 +93,7 @@ public:
     std::vector<float> run(const std::vector<float>& in) {
         std::vector<float> out(in.size(), 0.f);
         REQUIRE(king_.dispatch(in.data(), out.data(), static_cast<std::int32_t>(in.size())) ==
-                harness::DispatchResult::Processed);
+            harness::DispatchResult::Processed);
         return out;
     }
 
@@ -118,8 +118,7 @@ std::vector<float> signedRamp(std::int32_t frames) {
 
 /// Reaches the plugin through the *rack*, not through the published chain. That is the whole
 /// point of the split: a rack position is stable across rebuilds, and a chain index is not.
-void setParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vst::ParamID id,
-                  double normalized) {
+void setParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vst::ParamID id, double normalized) {
     engine::PluginInstance* plugin = host.pluginAt(pluginIndex);
     REQUIRE(plugin != nullptr);
     Steinberg::Vst::IEditController* controller = plugin->controller();
@@ -164,8 +163,7 @@ TEST_CASE("the test plugin module loads and exposes one audio effect", "[engine]
 
 TEST_CASE("loading something that is not a plugin fails without throwing", "[engine][module]") {
     std::string error;
-    engine::PluginModule::Ptr module =
-        engine::PluginModule::load("D:/definitely/not/here.vst3", error);
+    engine::PluginModule::Ptr module = engine::PluginModule::load("D:/definitely/not/here.vst3", error);
 
     CHECK(module == nullptr);
     CHECK_FALSE(error.empty());
@@ -229,8 +227,7 @@ TEST_CASE("a side-chain bus is negotiated away and backed with silence", "[engin
     REQUIRE(component->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput) == 2);
 
     Steinberg::Vst::BusInfo aux{};
-    REQUIRE(component->getBusInfo(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, 1, aux) ==
-            Steinberg::kResultOk);
+    REQUIRE(component->getBusInfo(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, 1, aux) == Steinberg::kResultOk);
     CHECK(aux.busType == Steinberg::Vst::kAux);
     // Still claiming channels after the negotiation -- which is exactly why the silence backing
     // has to exist rather than being an optimisation.
@@ -441,7 +438,7 @@ TEST_CASE("reordering the rack reorders processing", "[engine][rack]") {
     REQUIRE(host.appendPlugin(kTestPluginPath, error)); // rack 1: the offset
     REQUIRE(host.rebuild(stereoFormat(), error));
 
-    setParameter(host, 0, kGainParam, 1.0);                            // 2x, no offset
+    setParameter(host, 0, kGainParam, 1.0); // 2x, no offset
     setParameter(host, 1, kOffsetParam, static_cast<double>(kOffset)); // unity, +0.25
 
     Rig rig(host.blockProcessor(), L"engine-reorder");
@@ -479,8 +476,7 @@ TEST_CASE("blocks pass through untouched when no chain is published", "[engine][
     CHECK(host.chainProcessor().blocksProcessed() == 0);
 }
 
-TEST_CASE("a format the chain was not built for is passed through and reported",
-          "[engine][format]") {
+TEST_CASE("a format the chain was not built for is passed through and reported", "[engine][format]") {
     constexpr std::int32_t kFrames = 64;
 
     engine::Engine host;
@@ -518,8 +514,7 @@ TEST_CASE("a format the chain was not built for is passed through and reported",
     }
 }
 
-TEST_CASE("the first chain is built from the geometry the audio thread observed",
-          "[engine][format]") {
+TEST_CASE("the first chain is built from the geometry the audio thread observed", "[engine][format]") {
     // What a real attach looks like: the endpoint's format is not known until the king publishes
     // a header (sec. 4.5), so there is nothing to build for until a block has been through.
     constexpr std::int32_t kFrames = 80;
@@ -555,8 +550,7 @@ TEST_CASE("the first chain is built from the geometry the audio thread observed"
     }
 }
 
-TEST_CASE("a channel count the plugin refuses fails the rebuild, not the stream",
-          "[engine][format]") {
+TEST_CASE("a channel count the plugin refuses fails the rebuild, not the stream", "[engine][format]") {
     engine::Engine host;
     std::string error;
     REQUIRE(host.appendPlugin(kTestPluginPath, error));
@@ -698,8 +692,7 @@ TEST_CASE("queued values for one parameter collapse to the last", "[engine][para
     CHECK(plugin->droppedParameters() == 0);
 }
 
-TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread allocations",
-          "[engine][rt][soak]") {
+TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread allocations", "[engine][rt][soak]") {
     // The sec. 7.4.3 acceptance criterion again, this time with a real VST3 plugin on the call
     // stack rather than an inert processor. The IPC soak in realtime_safety_test.cpp proves our
     // plumbing is clean; this one proves that hosting a plugin did not make it dirty.
@@ -729,8 +722,7 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
     // Warm-up covers the plugin's own first-block laziness as well as our page faults. Sec. 7.4.3
     // allows a transition to be noisy; it is steady state that must be inert.
     for (int i = 0; i < kWarmupBlocks; ++i) {
-        REQUIRE(rig.king().dispatch(in.data(), out.data(), size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(rig.king().dispatch(in.data(), out.data(), size) == harness::DispatchResult::Processed);
         if (i % 64 == 0) {
             host.serviceParameterEdits(4096);
         }
@@ -743,8 +735,7 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
     // Serviced regularly, the way a control thread would. 64 blocks is 512 edits, comfortably
     // inside the 1023-slot ring.
     for (int i = 0; i < kSoakBlocks; ++i) {
-        if (rig.king().dispatch(in.data(), out.data(), size) !=
-            harness::DispatchResult::Processed) {
+        if (rig.king().dispatch(in.data(), out.data(), size) != harness::DispatchResult::Processed) {
             FAIL("block " << i << " did not complete the rendezvous");
         }
         if (i % 64 == 0) {
@@ -755,8 +746,8 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
 
     const rt::ViolationCounts serviced = rt::violations();
     INFO("blocks processed: " << host.chainProcessor().blocksProcessed());
-    INFO("serviced: allocations " << serviced.allocations << " frees " << serviced.deallocations
-                                  << " locks " << serviced.locks);
+    INFO("serviced: allocations " << serviced.allocations << " frees " << serviced.deallocations << " locks "
+                                  << serviced.locks);
 
     CHECK(serviced.allocations == 0);
     CHECK(serviced.deallocations == 0);
@@ -768,16 +759,14 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
     // that it costs exactly as little as the happy path.
     const std::uint64_t droppedBefore = host.droppedParameterEdits();
     for (int i = 0; i < kOverflowBlocks; ++i) {
-        if (rig.king().dispatch(in.data(), out.data(), size) !=
-            harness::DispatchResult::Processed) {
+        if (rig.king().dispatch(in.data(), out.data(), size) != harness::DispatchResult::Processed) {
             FAIL("overflow block " << i << " did not complete the rendezvous");
         }
     }
 
     const rt::ViolationCounts starved = rt::violations();
-    INFO("starved: allocations " << starved.allocations << " frees " << starved.deallocations
-                                 << " locks " << starved.locks << " dropped "
-                                 << host.droppedParameterEdits());
+    INFO("starved: allocations " << starved.allocations << " frees " << starved.deallocations << " locks "
+                                 << starved.locks << " dropped " << host.droppedParameterEdits());
 
     CHECK(starved.allocations == 0);
     CHECK(starved.deallocations == 0);
@@ -788,8 +777,7 @@ TEST_CASE("a plugin chain in steady state performs exactly zero audio-thread all
     CHECK(host.chainProcessor().blocksPassedThrough() == 0);
 }
 
-TEST_CASE("delivering parameters into a plugin allocates nothing on the audio thread",
-          "[engine][rt][soak]") {
+TEST_CASE("delivering parameters into a plugin allocates nothing on the audio thread", "[engine][rt][soak]") {
     // Parameter delivery put new work *on* the audio thread -- draining a ring into
     // `inputParameterChanges` at the top of every block -- so it needs the sec. 7.4.3 acceptance
     // criterion applied to it specifically, not just inherited from the chain soak above. The
@@ -834,24 +822,21 @@ TEST_CASE("delivering parameters into a plugin allocates nothing on the audio th
 
     for (int i = 0; i < kWarmupBlocks; ++i) {
         gesture(i);
-        REQUIRE(rig.king().dispatch(in.data(), out.data(), size) ==
-                harness::DispatchResult::Processed);
+        REQUIRE(rig.king().dispatch(in.data(), out.data(), size) == harness::DispatchResult::Processed);
     }
 
     rt::resetViolations();
 
     for (int i = 0; i < kSoakBlocks; ++i) {
         gesture(i);
-        if (rig.king().dispatch(in.data(), out.data(), size) !=
-            harness::DispatchResult::Processed) {
+        if (rig.king().dispatch(in.data(), out.data(), size) != harness::DispatchResult::Processed) {
             FAIL("block " << i << " did not complete the rendezvous");
         }
     }
 
     const rt::ViolationCounts counts = rt::violations();
     INFO("delivered " << host.deliveredParameters() << " dropped " << host.droppedParameters());
-    INFO("allocations " << counts.allocations << " frees " << counts.deallocations << " locks "
-                        << counts.locks);
+    INFO("allocations " << counts.allocations << " frees " << counts.deallocations << " locks " << counts.locks);
 
     CHECK(counts.allocations == 0);
     CHECK(counts.deallocations == 0);
@@ -891,7 +876,6 @@ TEST_CASE("republishing while audio is running retires the old chain safely", "[
     const std::vector<float> after = rig.run(in);
     CHECK(after == in);
 }
-
 
 // ------------------------------------------------------------------ bus arrangement tiers -----
 //
@@ -1012,8 +996,7 @@ TEST_CASE("a plugin with one fixed wide bus is padded, not refused", "[engine][b
     }
 }
 
-TEST_CASE("the padding is silence again for every plugin, not just the first",
-          "[engine][busses]") {
+TEST_CASE("the padding is silence again for every plugin, not just the first", "[engine][busses]") {
     // The bug this is here to catch: fill the padding once at the top of the block and it stops
     // being silence the moment the first plugin writes its own full output width into the bank.
     // The second plugin then reads whatever the first one made of it.
@@ -1075,7 +1058,6 @@ TEST_CASE("a plugin narrower than the stream is still refused", "[engine][busses
     CHECK(host.chainProcessor().current() != nullptr);
 }
 
-
 // -------------------------------------------------------------- the host's own parameter path -
 
 TEST_CASE("a plugin is allowed to have no editor of its own", "[engine][editor]") {
@@ -1089,8 +1071,8 @@ TEST_CASE("a plugin is allowed to have no editor of its own", "[engine][editor]"
 
     Steinberg::IPtr<Steinberg::Vst::HostApplication> hostContext =
         Steinberg::owned(new Steinberg::Vst::HostApplication());
-    std::unique_ptr<engine::PluginInstance> instance = engine::PluginInstance::create(
-        module, module->audioEffects().front().id, hostContext, error);
+    std::unique_ptr<engine::PluginInstance> instance =
+        engine::PluginInstance::create(module, module->audioEffects().front().id, hostContext, error);
     REQUIRE(instance != nullptr);
 
     Steinberg::Vst::IEditController* controller = instance->controller();
@@ -1105,8 +1087,7 @@ TEST_CASE("a plugin is allowed to have no editor of its own", "[engine][editor]"
     CHECK(controller->getParameterCount() > 0);
 }
 
-TEST_CASE("a host-originated parameter edit reaches both halves of the plugin",
-          "[engine][params]") {
+TEST_CASE("a host-originated parameter edit reaches both halves of the plugin", "[engine][params]") {
     // A plugin's own editor sets its controller itself and reports the edit through
     // IComponentHandler, and Engine::serviceParameterEdits carries that across to the processor.
     // An edit made in a window of *ours* has neither going for it, so `setParameter` has to do
@@ -1163,11 +1144,9 @@ TEST_CASE("a host-originated edit survives a rebuild, like any other", "[engine]
     CHECK(getParameter(host, 0, kOffsetParam) == Approx(0.25));
 }
 
-
 // ------------------------------------------------------------------------------- warm-up ------
 
-TEST_CASE("a plugin is exercised the moment it is prepared, not the first time audio arrives",
-          "[engine][warmup]") {
+TEST_CASE("a plugin is exercised the moment it is prepared, not the first time audio arrives", "[engine][warmup]") {
     // Left alone, a plugin's first-call behaviour -- allocating, building tables, faulting --
     // happens on the valet thread the first time the user plays something, which may be hours
     // after they loaded it and with nothing on screen connecting the two. The warm-up moves it
@@ -1221,16 +1200,14 @@ TEST_CASE("warming up costs the process no counted violations", "[engine][warmup
     // So the warm-up cannot tell anyone what a plugin allocates. It can only make the plugin do
     // it here rather than on the valet thread, which needs no counter. Anything nonzero in this
     // field is our own processing path misbehaving, and would be a defect.
-    INFO("allocations " << report.violations.allocations << " frees "
-                        << report.violations.deallocations << " locks "
+    INFO("allocations " << report.violations.allocations << " frees " << report.violations.deallocations << " locks "
                         << report.violations.locks);
     CHECK(report.violations.total() == 0);
 
     rt::resetViolations();
 }
 
-TEST_CASE("a plugin inserted into a running rack is warmed before it can be reached",
-          "[engine][warmup]") {
+TEST_CASE("a plugin inserted into a running rack is warmed before it can be reached", "[engine][warmup]") {
     // The other prepare site. Here there is no retract to lean on -- the instance is warmed while
     // it is still outside the rack, which is what makes it unreachable from the audio thread.
     engine::Engine host;
@@ -1288,11 +1265,9 @@ TEST_CASE("warming up does not disturb a restored parameter", "[engine][warmup][
     }
 }
 
-
 // ------------------------------------------------------------------- speculative preparation --
 
-TEST_CASE("a rack is prepared from the endpoint's format before any block arrives",
-          "[engine][speculative]") {
+TEST_CASE("a rack is prepared from the endpoint's format before any block arrives", "[engine][speculative]") {
     // Protocol v1 announces the format nowhere (sec. 4.5), so a client that attaches while
     // nothing is playing used to sit with every plugin unprepared -- no warm-up, and no way to
     // learn that a plugin refuses the format -- until the user happened to play something.
@@ -1317,8 +1292,7 @@ TEST_CASE("a rack is prepared from the endpoint's format before any block arrive
     CHECK(host.builtFormatIsSpeculative());
 }
 
-TEST_CASE("a correct guess is confirmed by the first block rather than rebuilt",
-          "[engine][speculative]") {
+TEST_CASE("a correct guess is confirmed by the first block rather than rebuilt", "[engine][speculative]") {
     engine::Engine host;
     std::string error;
     REQUIRE(host.appendPlugin(kTestPluginPath, error));
@@ -1348,8 +1322,7 @@ TEST_CASE("a correct guess is confirmed by the first block rather than rebuilt",
     CHECK(plugin->processCalls() == warmedCalls + 1);
 }
 
-TEST_CASE("a wrong guess costs one passed-through block and then corrects itself",
-          "[engine][speculative]") {
+TEST_CASE("a wrong guess costs one passed-through block and then corrects itself", "[engine][speculative]") {
     // The safety argument for guessing at all. ChainProcessor compares every block against the
     // format the chain was built for and passes it through untouched on a mismatch, so a wrong
     // guess is a handled case rather than a hazard.
@@ -1386,8 +1359,7 @@ TEST_CASE("a wrong guess costs one passed-through block and then corrects itself
     }
 }
 
-TEST_CASE("guessing does not overwrite a format a block already established",
-          "[engine][speculative]") {
+TEST_CASE("guessing does not overwrite a format a block already established", "[engine][speculative]") {
     // Re-attaching to the same endpoint must not tear down a chain built from real evidence and
     // replace it with one built from a guess.
     engine::Engine host;
@@ -1408,8 +1380,7 @@ TEST_CASE("guessing does not overwrite a format a block already established",
     CHECK_FALSE(host.builtFormatIsSpeculative());
 }
 
-TEST_CASE("an endpoint that reports no format is declined, not guessed at",
-          "[engine][speculative]") {
+TEST_CASE("an endpoint that reports no format is declined, not guessed at", "[engine][speculative]") {
     // A device that reports a plain WAVEFORMATEX, or none at all, leaves these zero. Inventing a
     // plausible-looking 48 kHz stereo would be asserting something we were not told.
     engine::Engine host;
@@ -1432,8 +1403,7 @@ TEST_CASE("an endpoint that reports no format is declined, not guessed at",
 // `Echo` (id 6) makes the plugin announce a latency change from inside its own reactivation. See
 // the top of `aip_test_plugin.cpp`.
 
-TEST_CASE("a plugin that announces a new latency is reactivated, and only then believed",
-          "[engine][restart]") {
+TEST_CASE("a plugin that announces a new latency is reactivated, and only then believed", "[engine][restart]") {
     // The whole reason kLatencyChanged is treated as a reconfiguration rather than as a number to
     // re-read: the SDK says `getLatencySamples` is valid only after `setActive(true)`, and the
     // fixture holds itself to that. A host that skipped the rebuild would read 0 here and report
@@ -1466,8 +1436,7 @@ TEST_CASE("a plugin that announces a new latency is reactivated, and only then b
     CHECK(plugin->latencySamples() == 256);
 }
 
-TEST_CASE("a rebuild driven by a restart keeps the rack's parameters and its chain",
-          "[engine][restart]") {
+TEST_CASE("a rebuild driven by a restart keeps the rack's parameters and its chain", "[engine][restart]") {
     // A reconfiguration must cost no more than a format change does: the instances survive, their
     // values survive, and audio comes back processed rather than passed through.
     constexpr std::int32_t kFrames = 64;
@@ -1497,8 +1466,7 @@ TEST_CASE("a rebuild driven by a restart keeps the rack's parameters and its cha
     }
 }
 
-TEST_CASE("a restart that only says the values moved does not touch the chain",
-          "[engine][restart]") {
+TEST_CASE("a restart that only says the values moved does not touch the chain", "[engine][restart]") {
     // kParamValuesChanged invalidates caches this host does not have. Reporting it and doing
     // nothing is the correct response, and "doing nothing" has to be checkable -- a rebuild would
     // be audible, and audible for no reason at all.
@@ -1511,8 +1479,7 @@ TEST_CASE("a restart that only says the values moved does not touch the chain",
     REQUIRE(plugin != nullptr);
     const std::uint64_t calls = plugin->processCalls();
 
-    CHECK(plugin->setParameter(kRestartParam,
-                               restartRequest(Steinberg::Vst::kParamValuesChanged)));
+    CHECK(plugin->setParameter(kRestartParam, restartRequest(Steinberg::Vst::kParamValuesChanged)));
     host.serviceParameterEdits();
 
     const engine::Engine::RestartReport& report = host.lastRestart();
@@ -1538,9 +1505,8 @@ TEST_CASE("a flag this host does not act on is named rather than obeyed", "[engi
     REQUIRE(plugin != nullptr);
     const std::uint64_t calls = plugin->processCalls();
 
-    CHECK(plugin->setParameter(kRestartParam,
-                               restartRequest(Steinberg::Vst::kParamTitlesChanged |
-                                              Steinberg::Vst::kRoutingInfoChanged)));
+    CHECK(plugin->setParameter(
+        kRestartParam, restartRequest(Steinberg::Vst::kParamTitlesChanged | Steinberg::Vst::kRoutingInfoChanged)));
     host.serviceParameterEdits();
 
     const engine::Engine::RestartReport& report = host.lastRestart();
@@ -1551,8 +1517,7 @@ TEST_CASE("a flag this host does not act on is named rather than obeyed", "[engi
     CHECK(plugin->processCalls() == calls);
 }
 
-TEST_CASE("a restart request with no chain to rebuild is recorded and left alone",
-          "[engine][restart]") {
+TEST_CASE("a restart request with no chain to rebuild is recorded and left alone", "[engine][restart]") {
     // Nothing is prepared, so there is nothing to deactivate. The next prepare *is* the
     // reconfiguration the plugin asked for, and it reads the new latency on its way out of it --
     // the case where doing nothing is not merely safe but correct.
@@ -1578,8 +1543,7 @@ TEST_CASE("a restart request with no chain to rebuild is recorded and left alone
     CHECK(plugin->latencySamples() == 256);
 }
 
-TEST_CASE("the rebuild does not chase the request its own reactivation raised",
-          "[engine][restart]") {
+TEST_CASE("the rebuild does not chase the request its own reactivation raised", "[engine][restart]") {
     // `Echo` is the JUCE-shaped plugin that announces its latency from inside `setActive(true)`.
     // Acting on that announcement produces another one, so a host that acts on every request it
     // sees rebuilds until somebody kills it. One rebuild per servicing tick, and the requests the

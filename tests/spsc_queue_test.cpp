@@ -47,8 +47,7 @@ TEST_CASE("drain performs bounded work", "[rt][spsc]") {
 
     // Sec. 7.4.2: a backlogged queue is drained a fixed maximum per block, not caught up in one go.
     std::vector<int> seen;
-    const std::size_t consumed =
-        queue.drain(10, [&](const Command& c) { seen.push_back(c.value); });
+    const std::size_t consumed = queue.drain(10, [&](const Command& c) { seen.push_back(c.value); });
 
     REQUIRE(consumed == 10);
     REQUIRE(seen.size() == 10);

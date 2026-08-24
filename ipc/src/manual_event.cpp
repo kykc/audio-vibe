@@ -17,8 +17,8 @@ bool ManualEvent::open(const std::wstring& name, ManualEvent& out) {
 
 bool ManualEvent::create(const std::wstring& name, bool initiallySignaled, ManualEvent& out) {
     NullDacl dacl;
-    HANDLE h = ::CreateEventW(dacl.securityAttributes(), /*bManualReset=*/TRUE,
-                              initiallySignaled ? TRUE : FALSE, name.c_str());
+    HANDLE h = ::CreateEventW(
+        dacl.securityAttributes(), /*bManualReset=*/TRUE, initiallySignaled ? TRUE : FALSE, name.c_str());
     if (h == nullptr) {
         return false;
     }
@@ -28,8 +28,7 @@ bool ManualEvent::create(const std::wstring& name, bool initiallySignaled, Manua
 }
 
 bool ManualEvent::createLocal(bool initiallySignaled, ManualEvent& out) {
-    HANDLE h = ::CreateEventW(nullptr, /*bManualReset=*/TRUE, initiallySignaled ? TRUE : FALSE,
-                              nullptr);
+    HANDLE h = ::CreateEventW(nullptr, /*bManualReset=*/TRUE, initiallySignaled ? TRUE : FALSE, nullptr);
     if (h == nullptr) {
         return false;
     }

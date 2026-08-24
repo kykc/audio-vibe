@@ -61,8 +61,7 @@ namespace {
 /// rather than be quietly given something invented.
 class SingleValuePropertyStore final : public IPropertyStore {
 public:
-    explicit SingleValuePropertyStore(std::wstring endpointGuid)
-        : endpointGuid_(std::move(endpointGuid)) {}
+    explicit SingleValuePropertyStore(std::wstring endpointGuid) : endpointGuid_(std::move(endpointGuid)) {}
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
         if (ppv == nullptr) {
@@ -77,9 +76,7 @@ public:
         return E_NOINTERFACE;
     }
 
-    STDMETHODIMP_(ULONG) AddRef() override {
-        return static_cast<ULONG>(::InterlockedIncrement(&refs_));
-    }
+    STDMETHODIMP_(ULONG) AddRef() override { return static_cast<ULONG>(::InterlockedIncrement(&refs_)); }
 
     STDMETHODIMP_(ULONG) Release() override {
         const LONG remaining = ::InterlockedDecrement(&refs_);
@@ -119,8 +116,7 @@ public:
             // store does, and an APO that mishandles it should get to mishandle it here.
             return S_OK;
         }
-        auto* copy = static_cast<wchar_t*>(
-            ::CoTaskMemAlloc((endpointGuid_.size() + 1) * sizeof(wchar_t)));
+        auto* copy = static_cast<wchar_t*>(::CoTaskMemAlloc((endpointGuid_.size() + 1) * sizeof(wchar_t)));
         if (copy == nullptr) {
             return E_OUTOFMEMORY;
         }
@@ -153,15 +149,13 @@ using DllGetClassObjectFn = HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
 /// is expected to be rejected. Reporting here would print `CLASS_E_CLASSNOTAVAILABLE` on every
 /// successful run against the other binary, which is the kind of routine scary output that
 /// teaches people to ignore output.
-[[nodiscard]] HRESULT activateFromFile(const std::wstring& path, REFCLSID clsid,
-                                       IAudioProcessingObject** out) {
+[[nodiscard]] HRESULT activateFromFile(const std::wstring& path, REFCLSID clsid, IAudioProcessingObject** out) {
     const HMODULE module = ::LoadLibraryW(path.c_str());
     if (module == nullptr) {
         return HRESULT_FROM_WIN32(::GetLastError());
     }
 
-    auto getClassObject =
-        reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
+    auto getClassObject = reinterpret_cast<DllGetClassObjectFn>(::GetProcAddress(module, "DllGetClassObject"));
     if (getClassObject == nullptr) {
         return E_NOINTERFACE;
     }
@@ -172,8 +166,7 @@ using DllGetClassObjectFn = HRESULT(STDAPICALLTYPE*)(REFCLSID, REFIID, void**);
         return hr;
     }
 
-    hr = factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject),
-                                 reinterpret_cast<void**>(out));
+    hr = factory->CreateInstance(nullptr, __uuidof(IAudioProcessingObject), reinterpret_cast<void**>(out));
     factory->Release();
     // The module is deliberately not freed: the APO instance lives in it, and this process exits
     // when it is done anyway.
@@ -238,26 +231,25 @@ struct Options {
 };
 
 void printUsage() {
-    std::wprintf(
-        L"apo_host -- drive an APO DLL without audiodg.exe\n"
-        L"\n"
-        L"  --dll <path>        the APO to load (default: aip_apo.dll beside this executable)\n"
-        L"  --endpoint <guid>   endpoint GUID the APO is told it belongs to, braces included.\n"
-        L"                      Determines the protocol v1 object names, so pass a real one to\n"
-        L"                      let the real shell attach -- but only while nothing is playing\n"
-        L"                      to that device, or audiodg's own APO is already the king.\n"
-        L"  --signal <spec>     test signal to feed in (default: silence). --list-signals\n"
-        L"  --rate <hz>         sample rate (default 48000)\n"
-        L"  --channels <n>      channel count (default 2)\n"
-        L"  --frames <n>        frames per block (default 480, i.e. 10 ms at 48 kHz)\n"
-        L"  --seconds <s>       how long to run (default 10; 0 runs until Ctrl-C)\n"
-        L"  --silent-blocks     mark every block BUFFER_SILENT instead of BUFFER_VALID\n"
-        L"  --no-inplace        give the APO separate input and output buffers. The engine does\n"
-        L"                      not, for an APO_FLAG_INPLACE APO, so this is the unusual path\n"
-        L"  --verify            check that output matches input, block by block\n"
-        L"  --list-signals      print the signal bank and exit\n"
-        L"\n"
-        L"Must run elevated: it creates Global\\ kernel objects (sec. 4.2).\n");
+    std::wprintf(L"apo_host -- drive an APO DLL without audiodg.exe\n"
+                 L"\n"
+                 L"  --dll <path>        the APO to load (default: aip_apo.dll beside this executable)\n"
+                 L"  --endpoint <guid>   endpoint GUID the APO is told it belongs to, braces included.\n"
+                 L"                      Determines the protocol v1 object names, so pass a real one to\n"
+                 L"                      let the real shell attach -- but only while nothing is playing\n"
+                 L"                      to that device, or audiodg's own APO is already the king.\n"
+                 L"  --signal <spec>     test signal to feed in (default: silence). --list-signals\n"
+                 L"  --rate <hz>         sample rate (default 48000)\n"
+                 L"  --channels <n>      channel count (default 2)\n"
+                 L"  --frames <n>        frames per block (default 480, i.e. 10 ms at 48 kHz)\n"
+                 L"  --seconds <s>       how long to run (default 10; 0 runs until Ctrl-C)\n"
+                 L"  --silent-blocks     mark every block BUFFER_SILENT instead of BUFFER_VALID\n"
+                 L"  --no-inplace        give the APO separate input and output buffers. The engine does\n"
+                 L"                      not, for an APO_FLAG_INPLACE APO, so this is the unusual path\n"
+                 L"  --verify            check that output matches input, block by block\n"
+                 L"  --list-signals      print the signal bank and exit\n"
+                 L"\n"
+                 L"Must run elevated: it creates Global\\ kernel objects (sec. 4.2).\n");
 }
 
 [[nodiscard]] bool parseUnsigned(const wchar_t* text, std::uint32_t& out) {
@@ -402,26 +394,25 @@ int wmain(int argc, wchar_t** argv) {
         }
         hr = activateFromFile(options.dllPath, clsid, &apo);
         if (SUCCEEDED(hr)) {
-            std::wprintf(L"apo:      %s\n          class %s\n", options.dllPath.c_str(),
-                         std::wstring(candidate).c_str());
+            std::wprintf(
+                L"apo:      %s\n          class %s\n", options.dllPath.c_str(), std::wstring(candidate).c_str());
             break;
         }
     }
     if (FAILED(hr) || apo == nullptr) {
         std::fwprintf(stderr,
-                      L"could not create an APO from %s (last hr 0x%08X).\n"
-                      L"Neither known CLSID answered. If the file exists and is a 64-bit APO,\n"
-                      L"it is a third one -- this tool only knows the two in apo_identity.h.\n",
-                      options.dllPath.c_str(), static_cast<unsigned>(hr));
+            L"could not create an APO from %s (last hr 0x%08X).\n"
+            L"Neither known CLSID answered. If the file exists and is a 64-bit APO,\n"
+            L"it is a third one -- this tool only knows the two in apo_identity.h.\n",
+            options.dllPath.c_str(), static_cast<unsigned>(hr));
         return 1;
     }
 
     IAudioProcessingObjectRT* apoRt = nullptr;
     IAudioProcessingObjectConfiguration* apoConfig = nullptr;
-    if (FAILED(apo->QueryInterface(__uuidof(IAudioProcessingObjectRT),
-                                   reinterpret_cast<void**>(&apoRt))) ||
-        FAILED(apo->QueryInterface(__uuidof(IAudioProcessingObjectConfiguration),
-                                   reinterpret_cast<void**>(&apoConfig)))) {
+    if (FAILED(apo->QueryInterface(__uuidof(IAudioProcessingObjectRT), reinterpret_cast<void**>(&apoRt))) ||
+        FAILED(
+            apo->QueryInterface(__uuidof(IAudioProcessingObjectConfiguration), reinterpret_cast<void**>(&apoConfig)))) {
         std::fwprintf(stderr, L"the class does not implement the APO interfaces\n");
         return 1;
     }
@@ -447,8 +438,7 @@ int wmain(int argc, wchar_t** argv) {
     const std::size_t samples = static_cast<std::size_t>(options.frames) * options.channels;
     const std::size_t bytes = samples * sizeof(float);
     auto* inputBuffer = static_cast<float*>(_aligned_malloc(bytes, 128));
-    auto* outputBuffer =
-        options.inPlace ? inputBuffer : static_cast<float*>(_aligned_malloc(bytes, 128));
+    auto* outputBuffer = options.inPlace ? inputBuffer : static_cast<float*>(_aligned_malloc(bytes, 128));
     std::vector<float> reference(samples);
     if (inputBuffer == nullptr || outputBuffer == nullptr) {
         std::fwprintf(stderr, L"could not allocate %zu-byte block buffers\n", bytes);
@@ -463,8 +453,8 @@ int wmain(int argc, wchar_t** argv) {
     IAudioMediaType* mediaType = nullptr;
     hr = ::CreateAudioMediaTypeFromUncompressedAudioFormat(&format, &mediaType);
     if (FAILED(hr)) {
-        std::fwprintf(stderr, L"CreateAudioMediaTypeFromUncompressedAudioFormat failed: 0x%08X\n",
-                      static_cast<unsigned>(hr));
+        std::fwprintf(
+            stderr, L"CreateAudioMediaTypeFromUncompressedAudioFormat failed: 0x%08X\n", static_cast<unsigned>(hr));
         return 1;
     }
 
@@ -502,21 +492,17 @@ int wmain(int argc, wchar_t** argv) {
 
     ::SetConsoleCtrlHandler(consoleHandler, TRUE);
 
-    const double blockSeconds =
-        static_cast<double>(options.frames) / static_cast<double>(options.sampleRate);
-    const long long totalBlocks =
-        options.seconds <= 0.0 ? -1 : static_cast<long long>(options.seconds / blockSeconds);
+    const double blockSeconds = static_cast<double>(options.frames) / static_cast<double>(options.sampleRate);
+    const long long totalBlocks = options.seconds <= 0.0 ? -1 : static_cast<long long>(options.seconds / blockSeconds);
 
     std::wprintf(L"endpoint: %s\n", options.endpointGuid.c_str());
     std::wprintf(L"objects:  Global\\TOMATL.AUDIO.IPC.%s\n", options.endpointGuid.c_str());
-    std::wprintf(L"format:   %u Hz x%u ch, %d frames (%.2f ms), %s, %s\n", options.sampleRate,
-                 options.channels, options.frames, blockSeconds * 1000.0,
-                 options.inPlace ? L"in place" : L"separate buffers",
-                 options.silentBlocks ? L"BUFFER_SILENT" : L"BUFFER_VALID");
+    std::wprintf(L"format:   %u Hz x%u ch, %d frames (%.2f ms), %s, %s\n", options.sampleRate, options.channels,
+        options.frames, blockSeconds * 1000.0, options.inPlace ? L"in place" : L"separate buffers",
+        options.silentBlocks ? L"BUFFER_SILENT" : L"BUFFER_VALID");
     std::wprintf(L"signal:   %s\n", signal->describe().c_str());
     std::wprintf(L"running:  %s -- Ctrl-C to stop\n\n",
-                 totalBlocks < 0 ? L"until stopped"
-                                 : (std::to_wstring(totalBlocks) + L" blocks").c_str());
+        totalBlocks < 0 ? L"until stopped" : (std::to_wstring(totalBlocks) + L" blocks").c_str());
 
     // The engine calls APOProcess on a promoted thread and paces it by the endpoint clock. Both
     // are reproduced -- the pacing so that a valet on the other end sees a realistic block rate,
@@ -559,7 +545,7 @@ int wmain(int argc, wchar_t** argv) {
         ::QueryPerformanceCounter(&blockEnd);
 
         const double blockMs = 1000.0 * static_cast<double>(blockEnd.QuadPart - blockStart.QuadPart) /
-                               static_cast<double>(frequency.QuadPart);
+            static_cast<double>(frequency.QuadPart);
         if (blockMs > worstBlockMs) {
             worstBlockMs = blockMs;
         }
@@ -572,15 +558,14 @@ int wmain(int argc, wchar_t** argv) {
 
         // Pace to the endpoint clock. Sleep resolution is coarse, so this busy-waits the last
         // stretch -- the same shape a real engine's timing loop has.
-        const long long deadlineTicks =
-            start.QuadPart +
-            static_cast<long long>(static_cast<double>(blocks) * blockSeconds *
-                                   static_cast<double>(frequency.QuadPart));
+        const long long deadlineTicks = start.QuadPart +
+            static_cast<long long>(
+                static_cast<double>(blocks) * blockSeconds * static_cast<double>(frequency.QuadPart));
         LARGE_INTEGER now{};
         for (;;) {
             ::QueryPerformanceCounter(&now);
-            const double remainingMs = 1000.0 * static_cast<double>(deadlineTicks - now.QuadPart) /
-                                       static_cast<double>(frequency.QuadPart);
+            const double remainingMs =
+                1000.0 * static_cast<double>(deadlineTicks - now.QuadPart) / static_cast<double>(frequency.QuadPart);
             if (remainingMs <= 0.0) {
                 break;
             }
@@ -589,18 +574,16 @@ int wmain(int argc, wchar_t** argv) {
             }
         }
 
-        const double sinceReportMs = 1000.0 * static_cast<double>(now.QuadPart - lastReport.QuadPart) /
-                                     static_cast<double>(frequency.QuadPart);
+        const double sinceReportMs =
+            1000.0 * static_cast<double>(now.QuadPart - lastReport.QuadPart) / static_cast<double>(frequency.QuadPart);
         if (sinceReportMs >= 1000.0) {
             std::wprintf(L"blocks %-8lld in %6.1f dBFS peak / %6.1f rms   "
                          L"out %6.1f dBFS peak / %6.1f rms   worst block %.3f ms%s\n",
-                         blocks, inputLevels.peakDbfs(), inputLevels.rmsDbfs(),
-                         outputLevels.peakDbfs(), outputLevels.rmsDbfs(), worstBlockMs,
-                         options.verify
-                             ? (mismatches == 0 ? L"   verify ok"
-                                                : (L"   MISMATCHES " + std::to_wstring(mismatches))
-                                                      .c_str())
-                             : L"");
+                blocks, inputLevels.peakDbfs(), inputLevels.rmsDbfs(), outputLevels.peakDbfs(), outputLevels.rmsDbfs(),
+                worstBlockMs,
+                options.verify
+                    ? (mismatches == 0 ? L"   verify ok" : (L"   MISMATCHES " + std::to_wstring(mismatches)).c_str())
+                    : L"");
             lastReport = now;
             inputLevels = Levels{};
             outputLevels = Levels{};

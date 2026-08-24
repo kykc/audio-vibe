@@ -23,8 +23,7 @@ class HeaderAccess {
 public:
     HeaderAccess() = default;
 
-    explicit HeaderAccess(void* mappingBase) noexcept
-        : header_(static_cast<SharedHeader*>(mappingBase)) {}
+    explicit HeaderAccess(void* mappingBase) noexcept : header_(static_cast<SharedHeader*>(mappingBase)) {}
 
     [[nodiscard]] bool valid() const noexcept { return header_ != nullptr; }
 
@@ -36,9 +35,7 @@ public:
 
     [[nodiscard]] std::uint32_t sampleRate() const noexcept { return load(header_->sampleRate); }
 
-    [[nodiscard]] std::uint32_t channelCount() const noexcept {
-        return load(header_->channelCount);
-    }
+    [[nodiscard]] std::uint32_t channelCount() const noexcept { return load(header_->channelCount); }
 
     /// Total sample count, i.e. `frames * channelCount` (sec. 4.3).
     [[nodiscard]] std::int32_t size() const noexcept { return load(header_->size); }
@@ -56,9 +53,7 @@ public:
 
     /// Convenience: a planar view over the payload using the header's current geometry. Call
     /// `validateBlock` first -- a malformed header must not be turned into a view.
-    [[nodiscard]] PlanarView planarView() const noexcept {
-        return PlanarView(payload(), channelCount(), size());
-    }
+    [[nodiscard]] PlanarView planarView() const noexcept { return PlanarView(payload(), channelCount(), size()); }
 
 private:
     template <typename T>

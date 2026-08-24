@@ -125,8 +125,7 @@ TEST_CASE("the Nyquist limit follows the sample rate", "[tools][signal]") {
     REQUIRE(tools::makeSignal(L"sine:23000", 96000, error) != nullptr);
 }
 
-TEST_CASE("a sine peaks at the level it was given, and defaults below full scale",
-          "[tools][signal]") {
+TEST_CASE("a sine peaks at the level it was given, and defaults below full scale", "[tools][signal]") {
     std::wstring error;
 
     auto quiet = tools::makeSignal(L"sine:1000:-12", kRate, error);

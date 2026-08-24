@@ -9,9 +9,7 @@ namespace aip::config {
 
 AttachGuard::AttachGuard(const fs::path& sessionPath) : path_(markPath(sessionPath)) {}
 
-AttachGuard::~AttachGuard() {
-    clear();
-}
+AttachGuard::~AttachGuard() { clear(); }
 
 fs::path AttachGuard::markPath(const fs::path& sessionPath) {
     if (sessionPath.empty()) {
@@ -42,8 +40,8 @@ UncleanAttach AttachGuard::takePrevious(const fs::path& sessionPath) {
     std::error_code ec;
     fs::remove(path, ec);
     // Written by us and only by us, but a truncated write is possible in principle.
-    while (!previous.endpointName.empty() && (previous.endpointName.back() == '\r' ||
-                                              previous.endpointName.back() == '\n')) {
+    while (!previous.endpointName.empty() &&
+        (previous.endpointName.back() == '\r' || previous.endpointName.back() == '\n')) {
         previous.endpointName.pop_back();
     }
     return previous;
