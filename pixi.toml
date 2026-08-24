@@ -12,6 +12,11 @@ cmake = ">=3.28"
 ninja = "*"
 catch2 = "3.*"
 qt6-main = "6.*"
+# Pinned to a major on purpose: clang-format changes its own output between LLVM generations, so
+# an open range would silently reformat the whole tree on an unrelated `pixi update`. It is not
+# compiler-specific, so it lives here rather than in a vs* feature -- the shared solve group gives
+# both environments the same binary.
+clang-format = "22.*"
 
 # One environment per Visual Studio generation: `pixi run <task>` builds with VS2022 and
 # `pixi run -e vs2026 <task>` with VS2026. Match the environment to the machine. Each
@@ -55,3 +60,12 @@ ui = { cmd = "build/ui/RelWithDebInfo/aip_ui.exe", depends-on = ["build"] }
 # The portable folder: build/package, which runs on a machine with no pixi, no Qt and no Visual
 # Studio. Copy it anywhere. See cmake/package.cmake for what goes in it and why.
 package = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --build --preset dev --target aip_package", depends-on = ["build"] }
+# Hygiene (sec. 6.1). `.clang-format` already holds the style, including the 100-column limit that
+# was hand-maintained until now. Both tasks take their file list from `git ls-files`, so the
+# FetchContent dependencies under build/ are never touched and the extension list lives in one
+# place. `apo/src/aip_apo.def` is excluded by that list on purpose -- clang-format has no grammar
+# for a module-definition file and would mangle it.
+format = "git ls-files '*.cpp' '*.h' | xargs clang-format -i"
+# The verifying half, for CI: reports every misformatted line and exits non-zero instead of
+# editing anything.
+format-check = "git ls-files '*.cpp' '*.h' | xargs clang-format --dry-run --Werror"
