@@ -1,11 +1,16 @@
-# The portable package: a folder that runs `aip_ui.exe` on a machine that has none of this
-# installed -- no pixi environment, no Qt, no Visual Studio -- and, in `apo/`, registers and
-# manages the APO on it.
+# The portable package: one folder that runs `aip_ui.exe` on a machine that has none of this
+# installed -- no pixi environment, no Qt, no Visual Studio -- and also registers and manages the
+# APO on it.
 #
-# The two halves are deliberately separate folders. Running the shell costs nothing and is undone
-# by closing it; putting an APO into an endpoint's effect chain rewrites machine state, needs
-# elevation, and can silence the machine until it is undone (apo/README.md). A folder boundary is
-# the cheapest way to say that they are not the same act.
+# The APO half used to live in an `apo/` subfolder, on the argument that a folder boundary is worth
+# having between running the shell and rewriting machine state. It is flat now, which costs that
+# signpost and buys two things. The first is that `regsvr32 aip_apo.dll` and `aip_ui.exe` are run
+# from the same directory, so the instructions have no "from the folder above" in them. The second
+# is that there is only one directory whose imports have to resolve, which is the thing Windows
+# actually cares about -- see `aip_stage_folder`.
+#
+# What the boundary was saying still has to be said, so `README.txt` says it in words: everything
+# except `apo_admin --list` needs elevation, and an installed APO outlives the folder it came from.
 #
 # Two kinds of thing have to be in it, and only the first is found by looking at the executable:
 #
@@ -55,11 +60,12 @@ set(AIP_PACKAGE_DIR "${CMAKE_BINARY_DIR}/package" CACHE PATH
 add_custom_target(aip_package
     COMMAND ${CMAKE_COMMAND}
         -D "AIP_PACKAGE_DIR=${AIP_PACKAGE_DIR}"
-        -D "AIP_PACKAGE_EXECUTABLES=$<TARGET_FILE:aip_ui>|$<TARGET_FILE:aip_scan>"
-        # The APO half. `aip_apo.dll` is a MODULE to the dependency walk and not an executable --
-        # nothing links it, and `audiodg.exe` loads it by the path `regsvr32` recorded.
-        -D "AIP_PACKAGE_APO_EXECUTABLES=$<TARGET_FILE:apo_admin>|$<TARGET_FILE:apo_host>"
-        -D "AIP_PACKAGE_APO_MODULES=$<TARGET_FILE:aip_apo>"
+        # The shell, its scanner, and the two APO tools -- all four ordinary executables, all four
+        # in the same directory now, so the dependency walk sees them as one set.
+        -D "AIP_PACKAGE_EXECUTABLES=$<TARGET_FILE:aip_ui>|$<TARGET_FILE:aip_scan>|$<TARGET_FILE:apo_admin>|$<TARGET_FILE:apo_host>"
+        # `aip_apo.dll` is a MODULE to the dependency walk and not an executable -- nothing links
+        # it, and `audiodg.exe` loads it by the path `regsvr32` recorded.
+        -D "AIP_PACKAGE_MODULES=$<TARGET_FILE:aip_apo>"
         -D "AIP_PACKAGE_QT_PLUGIN_DIR=${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}"
         -D "AIP_PACKAGE_SEARCH_DIRS=${QT6_INSTALL_PREFIX}/bin"
         -P "${CMAKE_CURRENT_LIST_DIR}/package_impl.cmake"

@@ -59,11 +59,10 @@ probe = { cmd = "build/tools/valet_probe/RelWithDebInfo/valet_probe.exe", depend
 ui = { cmd = "build/ui/RelWithDebInfo/aip_ui.exe", depends-on = ["build"] }
 # The portable folder: build/package, which runs on a machine with no pixi, no Qt and no Visual
 # Studio -- but with the MSVC redistributable, which is a prerequisite and not a payload
-# (design_doc.md sec. 6.7). Plus build/package/apo -- the APO and the tools that register and
-# manage it. Copy it
-# anywhere, but note that registering the APO records the path it was registered from, so the apo
-# folder wants to be somewhere it can stay (its README.txt says where and why). See
-# cmake/package.cmake for what goes in and why.
+# (design_doc.md sec. 6.7). The APO and the tools that register and manage it are in it too, flat,
+# beside the shell. Copy it anywhere, but note that registering the APO records the path it was
+# registered from, so once registered the folder wants to stay put (its README.txt says where and
+# why). See cmake/package.cmake for what goes in and why.
 package = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --build --preset dev --target aip_package", depends-on = ["build"] }
 # Hygiene (sec. 6.1). `.clang-format` already holds the style, including the 100-column limit that
 # was hand-maintained until now. Both tasks take their file list from `git ls-files`, so the

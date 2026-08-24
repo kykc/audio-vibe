@@ -74,7 +74,7 @@ pixi run build        # RelWithDebInfo
 pixi run test         # ctest
 pixi run package      # build/package -- a portable folder needing no pixi, Qt or VS
                       # (one prerequisite: the MSVC redistributable -- sec. 6.7),
-                      # with the APO and its tools in build/package/apo
+                      # with the APO and its tools in it, beside the shell
 ```
 
 **The first build downloads about 124 MB** (the VST3 SDK archive) and compiles five SDK

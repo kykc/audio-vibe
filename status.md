@@ -185,8 +185,8 @@ To hand the thing to someone who has none of this installed:
 
 ```
 pixi run package       # build/package -- a folder that runs on a machine with no pixi,
-                       # no Qt and no Visual Studio. Copy it anywhere. build/package/apo
-                       # is the APO and the tools that register and manage it (item 88).
+                       # no Qt and no Visual Studio. Copy it anywhere. The APO and the
+                       # tools that register and manage it are in it too (item 88).
 ```
 
 The shell also takes a command line, for checking a state without clicking through to it. Note
@@ -677,17 +677,24 @@ Proven against the real deployed APO on the development machine:
   now instead of 30, and the same test -- the folder copied out of the build tree, run from a shell
   with no pixi environment on `PATH` -- still comes up, enumerates the endpoint and restores its own
   portable `aip_config.yaml`. `aip_scan.exe` still probes an installed plugin from there and ends
-  `end ok`, and `apo\apo_admin.exe` still reports the endpoint's GFX slot. All three are `/MD`, so
+  `end ok`, and `apo_admin.exe` still reports the endpoint's GFX slot. All three are `/MD`, so
   what that shows is the machine's own redistributable being found in `System32` -- which is what
   design_doc.md sec. 6.7 relies on. It does *not* show what happens on a machine without it; that
   is the one thing this machine cannot demonstrate, since Visual Studio put it there.
-- **The packaged `apo/` folder runs from where it is packaged, as far as it can be tested without
-  changing this machine.** On 2026-08-24, with the folder freshly written: `apo_admin --list` runs
-  from `build/package/apo` with no pixi environment on `PATH` and reports this machine's endpoint
-  and GFX slot correctly, so the staged CRT is doing its job; and `LoadLibraryW` on the packaged
+- **The packaged APO runs from where it is packaged, as far as it can be tested without changing
+  this machine.** On 2026-08-24, with the folder freshly written: `apo_admin --list` runs from
+  `build/package` with no pixi environment on `PATH` and reports this machine's endpoint and GFX
+  slot correctly, so the staged CRT is doing its job; and `LoadLibraryW` on the packaged
   `aip_apo.dll` succeeds and finds all four COM entry points -- `DllGetClassObject`,
   `DllCanUnloadNow`, `DllRegisterServer`, `DllUnregisterServer` -- so the DLL that would be
   registered is intact and its imports resolve.
+
+  Both checks were re-driven on 2026-08-24 after the APO artifacts were moved out of `apo/` and up
+  into the package root: same results from the flat folder, and the dependency walk adds nothing to
+  the 22 DLLs it already had -- `aip_apo.dll` is the 23rd file and brings no imports of its own,
+  which is what `/MT` was for. `apo_host.exe` is still unrunnable unelevated by design (its
+  manifest asks for administrator), so what was checked there is that it is present, not that it
+  starts.
 
   What has *not* been done from the package is the registration itself: `regsvr32 aip_apo.dll`
   followed by `apo_admin --install --restart-audio` would move this machine's live APO from the

@@ -12,15 +12,14 @@ if(POLICY CMP0207)
 endif()
 
 foreach(required AIP_PACKAGE_DIR AIP_PACKAGE_EXECUTABLES AIP_PACKAGE_QT_PLUGIN_DIR
-                 AIP_PACKAGE_SEARCH_DIRS AIP_PACKAGE_APO_EXECUTABLES AIP_PACKAGE_APO_MODULES)
+                 AIP_PACKAGE_SEARCH_DIRS AIP_PACKAGE_MODULES)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "${required} was not passed to package_impl.cmake")
     endif()
 endforeach()
 
 string(REPLACE "|" ";" AIP_PACKAGE_EXECUTABLES "${AIP_PACKAGE_EXECUTABLES}")
-string(REPLACE "|" ";" AIP_PACKAGE_APO_EXECUTABLES "${AIP_PACKAGE_APO_EXECUTABLES}")
-string(REPLACE "|" ";" AIP_PACKAGE_APO_MODULES "${AIP_PACKAGE_APO_MODULES}")
+string(REPLACE "|" ";" AIP_PACKAGE_MODULES "${AIP_PACKAGE_MODULES}")
 string(REPLACE "|" ";" AIP_PACKAGE_SEARCH_DIRS "${AIP_PACKAGE_SEARCH_DIRS}")
 
 # Which Qt plugins go in. A dependency walk cannot discover these -- they are loaded by name at
@@ -40,9 +39,7 @@ set(AIP_QT_PLUGIN_DIRS platforms styles imageformats iconengines)
 # ------------------------------------------------------------------------------ staging a folder
 
 # Everything Windows itself provides. `api-ms-win-*` and `ext-ms-win-*` are the API sets that
-# front the system CRT and are never redistributed; the rest is the usual system surface. Held in
-# a variable because two folders are staged now -- the shell and `apo/` -- and a second copy of
-# this list is a second thing to keep in step.
+# front the system CRT and are never redistributed; the rest is the usual system surface.
 #
 # The MSVC runtime is in this list for a different reason than the rest, and the reason matters
 # enough to say twice: it is not shipped because it is a machine prerequisite (design_doc.md
@@ -67,15 +64,16 @@ set(AIP_SYSTEM_PATH_REGEXES "[Ss]ystem32" "[Ww]inSxS")
 # Walks the import tables of what has already been copied into `destination` and copies what they
 # need in beside them.
 #
-# Called once per folder rather than once for the whole package, because Windows resolves an
-# executable's imports against its own directory and never against the parent's: a DLL that
-# `apo\apo_admin.exe` needs has to be in `apo\`, not merely somewhere in the package. Today the two
-# folders happen to need disjoint sets -- the shell needs Qt, and the APO tools need only the
-# machine's own CRT -- but that is an outcome of what they link, not something to rely on.
+# Takes the folder as an argument, and is still worded that way, because the reason it used to be
+# called twice has not gone away: Windows resolves an executable's imports against its own
+# directory and never against the parent's, so a DLL that `apo_admin.exe` needs has to sit beside
+# it. That constraint is what a flat package satisfies for free -- there is one directory, so
+# anything the walk finds is beside everything that asked for it -- and it is the reason the
+# `apo/` subfolder needed its own walk rather than inheriting the shell's.
 function(aip_stage_folder destination)
     cmake_parse_arguments(PARSE_ARGV 1 ARG "" "" "EXECUTABLES;MODULES")
 
-    # The plugins and the APO go in as MODULES, not EXECUTABLES: they are not linked into
+    # The Qt plugins and `aip_apo.dll` go in as MODULES, not EXECUTABLES: they are not linked into
     # anything, and their own imports are part of what has to be shipped.
     file(GET_RUNTIME_DEPENDENCIES
         EXECUTABLES ${ARG_EXECUTABLES}
@@ -124,6 +122,25 @@ endforeach()
 # running executable first, and falls back to a compile-time path that names this build tree
 # (status.md sec. 7 item 42). A package without it reports every plugin on the machine as broken.
 
+# `aip_apo.dll` beside them is not tidiness either, and for a heavier reason: its path is
+# *recorded*. `regsvr32` writes this location into `InprocServer32` and the audio engine loads the
+# DLL from there ever after, so the package folder is the deployment location and not a staging
+# area. `apo_host.exe` also wants the DLL beside it, which the same copy satisfies -- its default
+# `--dll` is "next to this executable".
+#
+# Flat rather than in `apo/` means that recorded path is now the folder holding Qt as well, so the
+# whole package has to stay where it was registered and stay readable by the audio service account.
+# `README.txt` says both.
+set(staged_modules)
+foreach(module IN LISTS AIP_PACKAGE_MODULES)
+    if(NOT EXISTS "${module}")
+        message(FATAL_ERROR "${module} does not exist -- build before packaging")
+    endif()
+    file(COPY "${module}" DESTINATION "${AIP_PACKAGE_DIR}")
+    get_filename_component(name "${module}" NAME)
+    list(APPEND staged_modules "${AIP_PACKAGE_DIR}/${name}")
+endforeach()
+
 set(staged_plugins)
 foreach(plugin_dir IN LISTS AIP_QT_PLUGIN_DIRS)
     set(source "${AIP_PACKAGE_QT_PLUGIN_DIR}/${plugin_dir}")
@@ -141,57 +158,21 @@ endforeach()
 
 # ------------------------------------------------------------------------------- the dependencies
 
+# One walk, over everything, because there is one directory. `aip_apo.dll` contributes nothing to
+# it in practice and is in it for the day it does: it is /MT and imports only AVRT, ole32, ADVAPI32
+# and KERNEL32 -- deliberately, since a VC redistributable inside `audiodg.exe` is exactly what the
+# static CRT avoids (apo/CMakeLists.txt). The APO tools are ordinary /MD executables, so what they
+# need is the MSVC runtime, which the machine provides and this package does not carry.
 aip_stage_folder("${AIP_PACKAGE_DIR}"
     EXECUTABLES ${staged_executables}
-    MODULES ${staged_plugins})
-
-# ------------------------------------------------------------------------------------------- apo/
-
-# The half that changes the machine rather than running on it: the APO, the tool that puts it into
-# an endpoint's effect chain, and the tool that drives it with `audiodg.exe` out of the loop.
-#
-# `aip_apo.dll` is here rather than beside the shell because its path is *recorded* --
-# `regsvr32` writes it into `InprocServer32` and the audio engine loads it from there ever after --
-# so this folder is the deployment location, not a staging area. `apo_host.exe` needs the DLL
-# beside it too, which the same copy satisfies: its default `--dll` is "next to this executable".
-set(apo_dir "${AIP_PACKAGE_DIR}/apo")
-file(MAKE_DIRECTORY "${apo_dir}")
-
-set(staged_apo_executables)
-foreach(executable IN LISTS AIP_PACKAGE_APO_EXECUTABLES)
-    if(NOT EXISTS "${executable}")
-        message(FATAL_ERROR "${executable} does not exist -- build before packaging")
-    endif()
-    file(COPY "${executable}" DESTINATION "${apo_dir}")
-    get_filename_component(name "${executable}" NAME)
-    list(APPEND staged_apo_executables "${apo_dir}/${name}")
-endforeach()
-
-set(staged_apo_modules)
-foreach(module IN LISTS AIP_PACKAGE_APO_MODULES)
-    if(NOT EXISTS "${module}")
-        message(FATAL_ERROR "${module} does not exist -- build before packaging")
-    endif()
-    file(COPY "${module}" DESTINATION "${apo_dir}")
-    get_filename_component(name "${module}" NAME)
-    list(APPEND staged_apo_modules "${apo_dir}/${name}")
-endforeach()
-
-# Nothing is expected to come out of this walk today, and it is here for the day something does.
-# `aip_apo.dll` is /MT and imports only AVRT, ole32, ADVAPI32 and KERNEL32 -- deliberately, since a
-# VC redistributable inside `audiodg.exe` is exactly what the static CRT avoids
-# (apo/CMakeLists.txt). The two tools are ordinary /MD executables, so what they need is the MSVC
-# runtime, which the machine provides and this package does not carry.
-aip_stage_folder("${apo_dir}"
-    EXECUTABLES ${staged_apo_executables}
-    MODULES ${staged_apo_modules})
+    MODULES ${staged_plugins} ${staged_modules})
 
 # The operating instructions, in the folder they operate on. A file of its own rather than a string
 # here: it is forty lines of prose containing Windows paths, and every backslash in it would need
 # doubling to survive CMake's parser. `apo/README.md` is a different document -- that one is about
 # the source tree and the design; this one is the commands, in order, and the two ways the whole
 # thing silently does nothing.
-configure_file("${CMAKE_CURRENT_LIST_DIR}/apo_readme.txt" "${apo_dir}/README.txt" COPYONLY)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/apo_readme.txt" "${AIP_PACKAGE_DIR}/README.txt" COPYONLY)
 
 # ------------------------------------------------------------------------------------ the settings
 
@@ -215,9 +196,9 @@ file(WRITE "${AIP_PACKAGE_DIR}/aip_config.yaml"
 # %APPDATA% instead. It is rewritten in full every time the shell closes.\n\
 version: 1\n")
 
-file(GLOB packaged "${AIP_PACKAGE_DIR}/*.dll")
-list(LENGTH packaged dll_count)
-file(GLOB apo_packaged "${apo_dir}/*.dll" "${apo_dir}/*.exe")
-list(LENGTH apo_packaged apo_count)
-message(STATUS "Packaged ${dll_count} DLL(s) into ${AIP_PACKAGE_DIR}"
-               " and ${apo_count} file(s) into ${apo_dir}")
+file(GLOB packaged_dlls "${AIP_PACKAGE_DIR}/*.dll")
+list(LENGTH packaged_dlls dll_count)
+file(GLOB packaged_exes "${AIP_PACKAGE_DIR}/*.exe")
+list(LENGTH packaged_exes exe_count)
+message(STATUS "Packaged ${exe_count} executable(s) and ${dll_count} DLL(s)"
+               " into ${AIP_PACKAGE_DIR}")
