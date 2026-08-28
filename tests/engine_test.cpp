@@ -35,6 +35,7 @@
 #include <memory>
 #include <numeric>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace aip;
@@ -134,15 +135,24 @@ double getParameter(engine::Engine& host, std::size_t pluginIndex, Steinberg::Vs
     return controller->getParamNormalized(id);
 }
 
-/// The class id of the module's wide plugin, resolved rather than hardcoded: a UID written out
-/// by hand is a test that fails for the wrong reason the day the fixture is edited.
-std::string widePluginClassId() {
+/// The class id of one of the module's plugins by name, resolved rather than hardcoded: a UID
+/// written out by hand is a test that fails for the wrong reason the day the fixture is edited.
+std::string classIdNamed(std::string_view name) {
     std::string error;
     engine::PluginModule::Ptr module = engine::PluginModule::load(kTestPluginPath, error);
     REQUIRE(module != nullptr);
-    REQUIRE(module->audioEffects().size() == 2);
-    return module->audioEffects()[1].id.toString();
+    for (const engine::PluginClass& info : module->audioEffects()) {
+        if (info.name == name) {
+            return info.id.toString();
+        }
+    }
+    FAIL("the test plugin module has no class named " << name);
+    return {};
 }
+
+std::string widePluginClassId() { return classIdNamed("AIP Wide Plugin"); }
+
+std::string namelessBusPluginClassId() { return classIdNamed("AIP Nameless Bus Plugin"); }
 
 } // namespace
 
@@ -153,12 +163,13 @@ TEST_CASE("the test plugin module loads and exposes one audio effect", "[engine]
     INFO("path: " << kTestPluginPath << " error: " << error);
     REQUIRE(module != nullptr);
     CHECK(error.empty());
-    REQUIRE(module->audioEffects().size() == 2);
+    REQUIRE(module->audioEffects().size() == 3);
     CHECK(module->audioEffects().front().name == "AIP Test Plugin");
     CHECK(module->audioEffects().front().vendor == "audio-ipc2");
-    // Second, so that `appendPlugin` -- which takes the first audio effect -- goes on meaning
+    // Not first, so that `appendPlugin` -- which takes the first audio effect -- goes on meaning
     // TestPlugin everywhere below.
-    CHECK(module->audioEffects().back().name == "AIP Wide Plugin");
+    CHECK(module->audioEffects()[1].name == "AIP Wide Plugin");
+    CHECK(module->audioEffects()[2].name == "AIP Nameless Bus Plugin");
 }
 
 TEST_CASE("loading something that is not a plugin fails without throwing", "[engine][module]") {
@@ -989,6 +1000,57 @@ TEST_CASE("a plugin with one fixed wide bus is padded, not refused", "[engine][b
     //     out1 = b + (a + b) = a + 2b                        ->  5k
     //
     // Any padding channel carrying something other than zero raises both numbers.
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        const float k = static_cast<float>(f + 1);
+        REQUIRE(out[static_cast<std::size_t>(f) * 2] == Approx(4.f * k));
+        REQUIRE(out[static_cast<std::size_t>(f) * 2 + 1] == Approx(5.f * k));
+    }
+}
+
+TEST_CASE("a plugin that will not name its wide bus is padded, not refused", "[engine][busses]") {
+    // The bug the fallback in tier 3 exists for. `AIP Nameless Bus Plugin` refuses every
+    // arrangement but its own stereo-in / fifteen-out, and then declines `getBusArrangement` on
+    // the output -- which is not obstinacy but the only honest answer a JUCE plugin with an
+    // `AudioChannelSet::discreteChannels(15)` bus can give, since no set of VST3 speaker bits
+    // means "fifteen channels with no assigned positions". `getBusInfo` still says fifteen.
+    //
+    // Reading the unanswered call as a refusal is what used to happen, and it reported the
+    // plugin as unloadable ("would not say which bus arrangement it wants") over channel roles
+    // this protocol never carries (sec. 4.3). soundscape_zone_demo_cu was the specimen.
+    constexpr std::int32_t kFrames = 32;
+    constexpr std::uint32_t kNamelessChannels = 15;
+
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.insertPluginByClassId(0, kTestPluginPath, namelessBusPluginClassId(), error));
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    INFO("rebuild error: " << error);
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->prepared());
+    CHECK(plugin->padded());
+    // Asymmetric on purpose, and the shape of the specimen: the input bus names itself and takes
+    // the stream width, the output bus does not and keeps its own.
+    CHECK(plugin->inputChannelCount() == 2);
+    CHECK(plugin->outputChannelCount() == kNamelessChannels);
+    CHECK(plugin->format().channelCount == 2);
+
+    Rig rig(host.blockProcessor(), L"engine-nameless-bus");
+
+    std::vector<float> in(static_cast<std::size_t>(kFrames) * 2);
+    for (std::int32_t f = 0; f < kFrames; ++f) {
+        in[static_cast<std::size_t>(f) * 2] = static_cast<float>(f + 1);
+        in[static_cast<std::size_t>(f) * 2 + 1] = 2.f * static_cast<float>(f + 1);
+    }
+
+    const std::vector<float> out = rig.run(in);
+
+    // The wide plugin's arithmetic, for the wide plugin's reason: every output channel is its own
+    // input plus the sum of the whole input bus, so out0 = 2a + b and out1 = a + 2b with a = k
+    // and b = 2k. The input bus is unpadded here, so what these numbers actually pin down is that
+    // the host read the *negotiated* widths off the buffers rather than assuming the two busses
+    // agreed -- get that wrong and the thirteen surplus output channels are written somewhere.
     for (std::int32_t f = 0; f < kFrames; ++f) {
         const float k = static_cast<float>(f + 1);
         REQUIRE(out[static_cast<std::size_t>(f) * 2] == Approx(4.f * k));

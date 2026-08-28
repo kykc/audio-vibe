@@ -99,16 +99,47 @@ bool trySetArrangement(Vst::IAudioProcessor& processor, Steinberg::int32 inBusCo
     return processor.setBusArrangements(&input, 1, &output, 1) == kResultOk;
 }
 
-// What the plugin's main busses currently report, which is the only way to ask a VST3 plugin
-// what it wants: there is no "describe your capabilities" call, only trial and inspection. After
-// a refused `setBusArrangements` this is the arrangement the plugin kept, i.e. the one it is
-// telling us it insists on.
-bool readMainArrangements(
-    Vst::IAudioProcessor& processor, Vst::SpeakerArrangement& input, Vst::SpeakerArrangement& output) {
-    input = 0;
-    output = 0;
-    return processor.getBusArrangement(Vst::kInput, 0, input) == kResultOk &&
-        processor.getBusArrangement(Vst::kOutput, 0, output) == kResultOk;
+// What the plugin's main bus in `direction` currently reports, which is the only way to ask a
+// VST3 plugin what it wants: there is no "describe your capabilities" call, only trial and
+// inspection. After a refused `setBusArrangements` this is the arrangement the plugin kept, i.e.
+// the one it is telling us it insists on.
+//
+// `getBusArrangement` is the natural source and the only one carrying channel *roles*, but it is
+// not the only one carrying the *width*, and a plugin can be unable to answer it while answering
+// `getBusInfo` perfectly well. A JUCE plugin whose bus is an `AudioChannelSet::discreteChannels(n)`
+// for n > 1 is the case that matters: no combination of VST3 speaker bits denotes "n channels
+// with no assigned positions", so JUCE's wrapper returns `kResultFalse` here (and asserts on
+// itself while doing it) and reports `channelCount == n` from `getBusInfo` one call later. That
+// is a plugin that cannot *name* its channels, not one that cannot process them, and refusing it
+// would cost the user a plugin that works -- protocol v1 carries no channel-order information at
+// all (sec. 4.3), so at this tier the roles were never going to be used.
+//
+// So: the arrangement when the plugin will name one, otherwise a `speakerArrangementFor` guess of
+// the width `getBusInfo` reports. Both are checked for a nonzero width, because a zero-channel
+// answer is `kEmpty` -- a bus the plugin considers unconnected -- and reading that as "insists on
+// 0 channels" would report it as too narrow for the stream rather than as unanswered.
+bool readMainArrangement(Vst::IComponent& component, Vst::IAudioProcessor& processor, Vst::BusDirection direction,
+    Vst::SpeakerArrangement& arrangement) {
+    arrangement = 0;
+    if (processor.getBusArrangement(direction, 0, arrangement) == kResultOk &&
+        Vst::SpeakerArr::getChannelCount(arrangement) > 0) {
+        return true;
+    }
+
+    Vst::BusInfo bus{};
+    if (component.getBusInfo(Vst::kAudio, direction, 0, bus) != kResultOk || bus.channelCount < 1) {
+        arrangement = 0;
+        return false;
+    }
+    arrangement = speakerArrangementFor(static_cast<std::uint32_t>(bus.channelCount));
+    return arrangement != Vst::SpeakerArr::kEmpty;
+}
+
+// Both main busses, by the rule above.
+bool readMainArrangements(Vst::IComponent& component, Vst::IAudioProcessor& processor, Vst::SpeakerArrangement& input,
+    Vst::SpeakerArrangement& output) {
+    return readMainArrangement(component, processor, Vst::kInput, input) &&
+        readMainArrangement(component, processor, Vst::kOutput, output);
 }
 
 } // namespace
@@ -390,7 +421,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
         // planar payload is addressed by channel index (sec. 4.3).
         Vst::SpeakerArrangement in = 0;
         Vst::SpeakerArrangement out = 0;
-        if (readMainArrangements(*processor_, in, out) && Vst::SpeakerArr::getChannelCount(in) == wanted &&
+        if (readMainArrangements(*component_, *processor_, in, out) && Vst::SpeakerArr::getChannelCount(in) == wanted &&
             Vst::SpeakerArr::getChannelCount(out) == wanted) {
             exact = true;
             break;
@@ -408,7 +439,7 @@ bool PluginInstance::prepare(const StreamFormat& format, std::uint32_t channelMa
         // outright, and there is no honest way to do that.
         Vst::SpeakerArrangement in = 0;
         Vst::SpeakerArrangement out = 0;
-        if (!readMainArrangements(*processor_, in, out)) {
+        if (!readMainArrangements(*component_, *processor_, in, out)) {
             error = name_ + ": would not say which bus arrangement it wants";
             return false;
         }

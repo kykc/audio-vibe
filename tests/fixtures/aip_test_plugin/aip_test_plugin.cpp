@@ -73,6 +73,15 @@
 // on every block. Silence from the host changes nothing; a null pointer stamps kNullBusStamp
 // into the output instead of being dereferenced, so the failure is a wrong number and not a
 // dead test process.
+//
+// A *third* class, `AIP Nameless Bus Plugin`, is the wide plugin one step meaner: besides
+// insisting on its own width it declines `getBusArrangement` on the output bus outright, while
+// `getBusInfo` reports the width as usual. That is what a JUCE plugin whose bus is an
+// `AudioChannelSet::discreteChannels(n)`, n > 1, does -- no set of VST3 speaker bits denotes n
+// positionless channels, so its wrapper has nothing to answer with -- and a host that reads the
+// unanswered call as a refusal reports a working plugin as unloadable. Its busses are
+// deliberately asymmetric (stereo in, fifteen out) because the specimen's were, and because a
+// host that assumed the two agreed would size one of them from the other.
 
 #include "public.sdk/source/vst/vstsinglecomponenteffect.h"
 
@@ -87,6 +96,7 @@
 
 #define AIP_TEST_PLUGIN_NAME "AIP Test Plugin"
 #define AIP_WIDE_PLUGIN_NAME "AIP Wide Plugin"
+#define AIP_NAMELESS_BUS_PLUGIN_NAME "AIP Nameless Bus Plugin"
 #define AIP_TEST_PLUGIN_VENDOR "audio-ipc2"
 
 namespace aip::testplugin {
@@ -513,6 +523,98 @@ public:
 
 const FUID WidePlugin::cid(0xA1B2C302, 0x4E5F6071, 0x82934455, 0x66778899);
 
+/// The width `NamelessBusPlugin` insists on, and its arrangement: the low fifteen speaker bits.
+///
+/// Fifteen because that is what the specimen has (soundscape_zone_demo_cu, a fifteen-speaker cabin
+/// renderer) and because no standard VST3 layout has that many, so nothing here can pass by
+/// accident on a lucky guess from `speakerArrangementFor`'s table of named layouts.
+constexpr int32 kNamelessChannels = 15;
+constexpr SpeakerArrangement kNamelessArrangement = (SpeakerArrangement{1} << kNamelessChannels) - 1;
+
+/// A plugin whose output bus is wide, fixed, and *unnameable*: it will not tell a host what
+/// arrangement it wants, while reporting the width perfectly well through `getBusInfo`.
+///
+/// Not a hypothetical. A JUCE bus declared `AudioChannelSet::discreteChannels(n)` for n > 1 is
+/// exactly this: no combination of VST3 speaker bits denotes "n channels with no assigned
+/// positions", so JUCE's wrapper fails `getBusArrangement` outright -- with a `jassertfalse` and a
+/// comment saying it cannot represent the layout -- one call after `getBusInfo` said `n`. Every
+/// plugin built that way lands here.
+///
+/// The two together are what makes it a host test rather than a plugin test. Tiers 1 and 2 are
+/// refused, because the plugin's width is not the stream's; tier 3 then has to learn the width
+/// from `getBusInfo` and guess an arrangement of it, because the call that would have named one
+/// does not answer. A host that treats the unanswered call as a refusal reports a working plugin
+/// as unloadable, which is the bug this class exists to keep fixed.
+///
+/// The input bus is an ordinary stereo one and names itself normally: the specimen's does, and a
+/// fixture that failed both directions could not tell a host that fell back on both from one that
+/// fell back everywhere.
+///
+/// DSP is WidePlugin's, for WidePlugin's reason -- every output channel is its own input plus the
+/// sum of the whole input bus, so padding that is not silence shows up as a wrong number.
+class NamelessBusPlugin : public SingleComponentEffect {
+public:
+    static const FUID cid;
+
+    static FUnknown* createInstance(void*) { return static_cast<IAudioProcessor*>(new NamelessBusPlugin()); }
+
+    tresult PLUGIN_API initialize(FUnknown* context) SMTG_OVERRIDE {
+        const tresult result = SingleComponentEffect::initialize(context);
+        if (result != kResultOk) {
+            return result;
+        }
+        addAudioInput(STR16("Input"), SpeakerArr::kStereo);
+        addAudioOutput(STR16("Speaker Output"), kNamelessArrangement);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API canProcessSampleSize(int32 symbolicSampleSize) SMTG_OVERRIDE {
+        return symbolicSampleSize == kSample32 ? kResultTrue : kResultFalse;
+    }
+
+    // Stereo in, fifteen out, and no other shape. Which fifteen is not our business; the count is.
+    tresult PLUGIN_API setBusArrangements(
+        SpeakerArrangement* inputs, int32 numIns, SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
+        if (numIns != 1 || numOuts != 1 || SpeakerArr::getChannelCount(inputs[0]) != 2 ||
+            SpeakerArr::getChannelCount(outputs[0]) != kNamelessChannels) {
+            return kResultFalse;
+        }
+        return SingleComponentEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
+    }
+
+    // The whole point. The output bus has no name for its layout, so the honest answer is that
+    // there is no answer -- `getBusInfo` still reports fifteen channels, because the base class
+    // took the arrangement above at face value and a width is not a layout.
+    tresult PLUGIN_API getBusArrangement(BusDirection dir, int32 index, SpeakerArrangement& arr) SMTG_OVERRIDE {
+        if (dir == kOutput) {
+            return kResultFalse;
+        }
+        return SingleComponentEffect::getBusArrangement(dir, index, arr);
+    }
+
+    tresult PLUGIN_API process(ProcessData& data) SMTG_OVERRIDE {
+        if (data.numInputs < 1 || data.numOutputs < 1 || data.numSamples <= 0) {
+            return kResultOk;
+        }
+        const int32 inChannels = data.inputs[0].numChannels;
+        const int32 outChannels = data.outputs[0].numChannels;
+
+        for (int32 s = 0; s < data.numSamples; ++s) {
+            Sample32 busSum = 0.f;
+            for (int32 c = 0; c < inChannels; ++c) {
+                busSum += data.inputs[0].channelBuffers32[c][s];
+            }
+            for (int32 c = 0; c < outChannels; ++c) {
+                const Sample32 own = c < inChannels ? data.inputs[0].channelBuffers32[c][s] : Sample32{0.f};
+                data.outputs[0].channelBuffers32[c][s] = own + busSum;
+            }
+        }
+        return kResultOk;
+    }
+};
+
+const FUID NamelessBusPlugin::cid(0xA1B2C303, 0x4E5F6071, 0x82934455, 0x66778899);
+
 } // namespace aip::testplugin
 
 BEGIN_FACTORY_DEF(AIP_TEST_PLUGIN_VENDOR, "https://example.invalid", "mailto:nobody@example.invalid")
@@ -526,5 +628,10 @@ DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::TestPlugin::cid), PClassInfo::k
 DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::WidePlugin::cid), PClassInfo::kManyInstances, kVstAudioEffectClass,
     AIP_WIDE_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0", kVstVersionString,
     aip::testplugin::WidePlugin::createInstance)
+
+// Third, for the same reason the second is second.
+DEF_CLASS2(INLINE_UID_FROM_FUID(aip::testplugin::NamelessBusPlugin::cid), PClassInfo::kManyInstances,
+    kVstAudioEffectClass, AIP_NAMELESS_BUS_PLUGIN_NAME, 0, Steinberg::Vst::PlugType::kFx, "1.0.0", kVstVersionString,
+    aip::testplugin::NamelessBusPlugin::createInstance)
 
 END_FACTORY

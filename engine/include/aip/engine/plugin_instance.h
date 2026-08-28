@@ -124,6 +124,14 @@ public:
     ///      `format.channelCount` wide, with the surplus channels fed silence and their outputs
     ///      discarded. See `inputChannelCount`.
     ///
+    /// Tier 3 reads that fixed arrangement from `getBusArrangement`, and falls back to a
+    /// `speakerArrangementFor` guess of the width `getBusInfo` reports when the plugin declines to
+    /// name one. A plugin can genuinely be unable to: a JUCE bus declared as
+    /// `AudioChannelSet::discreteChannels(n)`, n > 1, has no VST3 speaker arrangement that denotes
+    /// it, so JUCE's wrapper fails `getBusArrangement` outright while reporting the width from
+    /// `getBusInfo` one call later. Taking that for a refusal would reject a working plugin over
+    /// channel roles this protocol does not carry (sec. 4.3).
+    ///
     /// Fails if the plugin will not accept at least `format.channelCount` channels on its main
     /// busses. That is a refusal, not a fallback: a plugin narrower than the stream would have to
     /// drop channels, and silently dropping channels corrupts the planar payload.
