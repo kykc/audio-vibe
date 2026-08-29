@@ -2513,6 +2513,35 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     against one binary directory, and two configs writing one path is a race and the same shape of
     duplicate-output failure that `CMAKE_CXX_SCAN_FOR_MODULES OFF` exists to avoid.
 
+    **The same string is a VERSIONINFO resource on all five shipped binaries** (project owner,
+    2026-08-29): `vibeaudio.exe`, `aip_scan.exe`, `apo_admin.exe`, `apo_host.exe` and
+    `aip_apo.dll`. It is what Explorer's Properties -> Details tab reads and what Task Manager
+    shows in its Description column, so the answer to "which build is this" no longer requires
+    launching the one binary that has an About box -- which is the wrong shape of question to ask
+    about a DLL that lives inside `audiodg.exe`.
+
+    The mechanism is deliberately the same run of the generator. `write_version_header.cmake`
+    composes the string once and writes it into *two* files: `aip/version.h` for C++ and
+    `aip/version_rc.h` for rc.exe, the second holding nothing but `#define`s because the resource
+    compiler preprocesses what it is handed and then parses it as resource script -- a namespace
+    and an `inline constexpr` are a syntax error there, and `#pragma once` is not understood
+    either. The About box reads `kVersionString`, the resource reads `AIP_VERSION_STRING`, and
+    they are the same characters because one `set()` produced both. Substituting the version into
+    the .rc with CMake `@`-expansion would have been simpler and wrong: that is configure time,
+    which is exactly the staleness this whole item exists to avoid.
+
+    `aip_add_version_resource(<target> DESCRIPTION "...")` in `cmake/version.cmake` configures
+    `cmake/version_resource.rc.in` per target. Only the description is given; VFT_APP against
+    VFT_DLL comes from the target's `TYPE` and the `OriginalFilename` from its `OUTPUT_NAME`,
+    because a resource that disagreed with either is a resource somebody hand-edited and forgot.
+    The numeric `FILEVERSION` is the three `project()` components and a literal 0 -- the commit
+    cannot go in four 16-bit fields, which is why the strings carry it instead. Ninja tracks
+    `version_rc.h` as a dependency of each `.rc.res` (`ninja -t deps` confirms it), so a new
+    commit recompiles the resources; `copy_if_different` means an unchanged one does not.
+
+    Nothing outside the package gets a resource. `valet_probe` and `editor_spike` are
+    development-only and nobody is ever asked which version of them they are running.
+
     Exit on the File menu is `close()` and deliberately not `QApplication::quit()`. `quit()`
     returns from `exec()` without delivering a close event, so `closeEvent` -- the session save and
     the attach-mark clear -- would not run, and the *next* start would report an unclean attach

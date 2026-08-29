@@ -71,6 +71,12 @@ target_include_directories(vibeaudio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(vibeaudio PRIVATE ${AIP_VERSION_INCLUDE_DIR})
 add_dependencies(vibeaudio aip_version_header)
 
+# The same version, in the file's own metadata rather than only in a dialog the user has to open
+# (cmake/version.cmake). This adds a second .rc to the target beside vibeaudio.rc; two resource
+# scripts on one binary are fine as long as nothing in them collides, and an icon and a
+# VERSIONINFO are different resource types entirely.
+aip_add_version_resource(vibeaudio DESCRIPTION "VibeAudio")
+
 target_link_libraries(vibeaudio PRIVATE
     aip_common
     # The session file: what the shell remembers between runs (status.md sec. 5).

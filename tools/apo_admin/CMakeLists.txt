@@ -21,3 +21,7 @@ target_link_libraries(apo_admin PRIVATE
 #
 # Mutating paths check `elevated()` themselves and say so plainly, which is a better diagnostic
 # than a UAC refusal.
+
+# What Explorer's Details tab and Task Manager show about this file (cmake/version.cmake). The
+# version in it is the one the About box quotes, resolved on the same build.
+aip_add_version_resource(apo_admin DESCRIPTION "VibeAudio APO administration tool")

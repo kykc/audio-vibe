@@ -93,3 +93,7 @@ target_sources(aip_apo PUBLIC
         include/aip/apo/buffer_king.h
         include/aip/apo/settings.h
 )
+
+# What Explorer's Details tab and Task Manager show about this file (cmake/version.cmake). The
+# version in it is the one the About box quotes, resolved on the same build.
+aip_add_version_resource(aip_apo DESCRIPTION "VibeAudio audio processing object")

@@ -72,9 +72,12 @@ void showAboutDialog(QWidget* parent) {
     // The project version and the commit it was built from, in one line. The commit is resolved
     // at build time (cmake/version.cmake), so this names the binary in front of the user rather
     // than whatever was checked out when somebody last ran CMake.
-    identity->addWidget(prose(&dialog,
-        QStringLiteral("Version %1 (%2)")
-            .arg(QString::fromLatin1(kVersionNumber), QString::fromLatin1(kGitDescription))));
+    //
+    // One constant rather than the two it is made of, because the same string is embedded in
+    // every shipped binary's VERSIONINFO resource: a user quoting Explorer's Details tab and a
+    // user quoting this dialog have to be quoting the same characters, and two format strings
+    // assembling it separately is how that stops being true.
+    identity->addWidget(prose(&dialog, QStringLiteral("Version %1").arg(QString::fromLatin1(kVersionString))));
 
     heading->addLayout(identity, 1);
     // Both columns to the top, and no stretch inside either: a stretch here would be free

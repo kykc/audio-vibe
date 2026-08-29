@@ -38,3 +38,7 @@ add_custom_command(TARGET apo_host POST_BUILD
 # Asking for elevation in the manifest turns "runs and silently creates nothing" into a prompt.
 set_target_properties(apo_host PROPERTIES LINK_FLAGS
     "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+
+# What Explorer's Details tab and Task Manager show about this file (cmake/version.cmake). The
+# version in it is the one the About box quotes, resolved on the same build.
+aip_add_version_resource(apo_host DESCRIPTION "VibeAudio APO test host")

@@ -476,6 +476,11 @@ built from, `-dirty` when the tree had uncommitted changes. That string is resol
 (`cmake/version.cmake`), so it names the binary in front of you rather than whatever was checked
 out when CMake last ran. Quote it in a defect report; the label is selectable for that reason.
 
+The same string is embedded as a VERSIONINFO resource in every binary the package ships --
+`vibeaudio.exe`, `aip_scan.exe`, `apo_admin.exe`, `apo_host.exe` and `aip_apo.dll` -- so right-click
+-> Properties -> Details answers the same question without launching anything, which is the only
+way to ask it of the APO.
+
 **Link.** An endpoint combo box, `Refresh`, and `Attach`. Endpoints without this project's APO
 registered are greyed out, sorted to the bottom, and cannot be selected -- attaching to one can
 never work, because there is no other side to the rendezvous, and it looks exactly like a device

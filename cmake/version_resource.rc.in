@@ -1,0 +1,61 @@
+// Configured per target by `aip_add_version_resource` (cmake/version.cmake) into the build tree.
+// Do not edit the copy under build/; edit this template.
+//
+// This is the VERSIONINFO resource, which is what Explorer's Properties -> Details tab reads and
+// what Task Manager shows in its Description column. Every binary this project ships carries one:
+// a file with no VERSIONINFO reports blank fields there, and a user who has been asked which
+// version they are running has nowhere to look but the About box of the one binary that has one.
+//
+// **The strings come from the generated `aip/version_rc.h`, not from CMake substitution.** Both
+// that header and `aip/version.h` -- which is where the About box reads the same number -- are
+// written by one run of cmake/write_version_header.cmake on every build, so the resource cannot
+// name a different commit from the dialog. Substituting the version in here with @-expansion
+// would move it back to configure time, which is the staleness cmake/version.cmake exists to
+// avoid.
+//
+// The @-substituted values below are the ones that genuinely are per target and genuinely are
+// fixed at configure time: what the file is, what it is called, and whether it is an .exe or
+// a .dll.
+
+#include <winresrc.h>
+
+#include "aip/version_rc.h"
+
+VS_VERSION_INFO VERSIONINFO
+// The numeric version, which is what Explorer sorts and compares on. Four 16-bit fields, so the
+// commit cannot appear here -- it lives in the strings below, where it is the part a person
+// actually needs when reporting a fault.
+FILEVERSION AIP_VERSION_MAJOR, AIP_VERSION_MINOR, AIP_VERSION_PATCH, 0
+PRODUCTVERSION AIP_VERSION_MAJOR, AIP_VERSION_MINOR, AIP_VERSION_PATCH, 0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+// No flags claimed. VS_FF_PRERELEASE and friends are assertions this build has no way to check,
+// and a wrong one is worse than a missing one; the version string says `-dirty` when it matters.
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE @AIP_RESOURCE_FILETYPE@
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // US English, Unicode. The pair has to agree with the Translation value at the bottom --
+        // a mismatch leaves Explorer showing nothing at all rather than showing it in the wrong
+        // language, because it looks the block up by that name.
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "@AIP_RESOURCE_COMPANY@"
+            VALUE "FileDescription", "@AIP_RESOURCE_DESCRIPTION@"
+            VALUE "FileVersion", AIP_VERSION_STRING
+            VALUE "InternalName", "@AIP_RESOURCE_INTERNAL_NAME@"
+            VALUE "LegalCopyright", "@AIP_RESOURCE_COPYRIGHT@"
+            VALUE "OriginalFilename", "@AIP_RESOURCE_ORIGINAL_FILENAME@"
+            VALUE "ProductName", "@AIP_RESOURCE_PRODUCT@"
+            VALUE "ProductVersion", AIP_VERSION_STRING
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        // 0x0409 is US English and 1200 is 0x04B0, the Unicode code page -- the same pair the
+        // block above is named after, in the numeric form this block wants.
+        VALUE "Translation", 0x409, 1200
+    END
+END

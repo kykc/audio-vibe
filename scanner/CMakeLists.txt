@@ -53,3 +53,7 @@ target_link_libraries(aip_scan PRIVATE
 # answer, because that is the one that will be true in the field. This is the same escape hatch
 # tests/ uses for AIP_TEST_PLUGIN_PATH: a compile definition beats a relative path that rots.
 target_compile_definitions(aip_scanner PRIVATE AIP_SCAN_EXECUTABLE="$<TARGET_FILE:aip_scan>")
+
+# What Explorer's Details tab and Task Manager show about this file (cmake/version.cmake). The
+# version in it is the one the About box quotes, resolved on the same build.
+aip_add_version_resource(aip_scan DESCRIPTION "VibeAudio plugin scanner")
