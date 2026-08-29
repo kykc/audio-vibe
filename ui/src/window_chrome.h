@@ -1,5 +1,5 @@
-// Window chrome that Qt has no portable API for: the application icon, the caption text, and the
-// one window kind that goes without an icon.
+// Window chrome that Qt has no portable API for: the application icon, and the one window kind
+// that goes without one.
 //
 // **Every window this application puts on screen wears the same icon** (design_doc.md sec. 5.6),
 // with the one exemption below. The shell, the picker, the progress dialogs and every message box
@@ -53,16 +53,5 @@ inline constexpr int kApplicationIconId = 1;
 /// had its say about the icon, which amounts to the same moment: Qt applies the application icon
 /// when it creates the platform window, and this undoes it.
 void hideTitleBarIcon(QWidget& window);
-
-/// Leaves `window` with no title text at all.
-///
-/// `setWindowTitle(QString())` is not enough on its own: Qt treats an empty widget title as "no
-/// preference" and substitutes `QCoreApplication::applicationName()` when it creates the native
-/// window, so the application's own name appears in the caption anyway. This clears the native
-/// window text after the fact, which is the only way to mean it.
-///
-/// Call it after the native window exists, and only for windows whose title never changes -- a
-/// later `setWindowTitle` would put Qt back in charge and bring the name back.
-void clearTitleText(QWidget& window);
 
 } // namespace aip::ui

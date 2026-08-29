@@ -486,8 +486,8 @@ The mechanics that satisfy the rule, and the reasons they are the ones chosen:
 **Superseded:** an earlier build removed the title-bar icon from *every* window and left the
 executable's icon to Explorer and the taskbar alone. It took four Win32 steps to make stick, and
 those four steps are what the editor exemption above still uses; the reasoning is in status.md
-sec. 7 item 35. The caption *text* of the shell's own window stays blank -- that is a separate
-decision and is not affected by this one.
+sec. 7 item 35. The caption *text* of the shell's own window is `VibeAudio` (project owner,
+2026-08-29) -- that is a separate decision and is not affected by this one.
 
 ---
 

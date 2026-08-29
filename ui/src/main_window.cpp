@@ -5,7 +5,6 @@
 #include "audio_device_dialog.h"
 #include "process_footprint.h"
 #include "qt_paths.h"
-#include "window_chrome.h"
 
 #include "aip/config/attach_guard.h"
 #include "aip/config/load_guard.h"
@@ -114,20 +113,17 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     // modules, the editors -- is inside the figure the counters show.
     uptime_.start();
 
-    // Deliberately blank. Repeating the application's own name back at the user in its own title
-    // bar is a habit modern Windows applications have dropped, and the icon beside it says which
-    // application this is without spelling it out.
+    // The application's name, plainly (project owner, 2026-08-29). This caption was blank until
+    // now on the argument that modern Windows applications have stopped repeating their own name
+    // at the user and that the icon beside it already says which one this is -- which is true of
+    // an application the user launched from its own tile a moment ago, and less true of one that
+    // spends its life in the background processing every sound on the machine.
     //
-    // Note what this also does: with a standard frame the caption text *is* the window title, so
-    // the taskbar and Alt-Tab labels go blank with it. There is no way to separate the two without
-    // drawing the title bar ourselves -- the icon is what identifies the application there, and it
-    // is the same one this title bar shows (design_doc.md sec. 5.6). Plugin editors keep their
+    // With a standard frame the caption text *is* the window title, so this is also the taskbar
+    // and Alt-Tab label, which is where it earns the most: those are the two places the user goes
+    // looking when they want to know what is holding their audio. Plugin editors keep their own
     // titles -- with several open at once, the plugin's name is the only thing telling them apart.
-    setWindowTitle(QString());
-    // Forces the native window into existence, and Qt fills an empty title in with the
-    // application name at exactly that moment -- so this has to happen after `setWindowTitle`,
-    // not before.
-    clearTitleText(*this);
+    setWindowTitle(QStringLiteral("VibeAudio"));
 
     auto* central = new QWidget(this);
     auto* layout = new QVBoxLayout(central);

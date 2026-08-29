@@ -91,14 +91,4 @@ void hideTitleBarIcon(QWidget& window) {
     ::SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 }
 
-void clearTitleText(QWidget& window) {
-    // winId() forces the native window into existence, which is the point: there is no window
-    // text to clear until there is a window.
-    const auto hwnd = reinterpret_cast<HWND>(window.winId());
-    if (hwnd == nullptr) {
-        return;
-    }
-    ::SetWindowTextW(hwnd, L"");
-}
-
 } // namespace aip::ui

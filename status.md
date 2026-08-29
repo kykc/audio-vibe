@@ -318,8 +318,8 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             100 ms servicing tick), editor_manager (which editors are open, which *kind* each one
             is, and the guarantee none outlives its plugin -- item 87),
             editor_window (one editor, embedded per sec. 5.1),
-            plug_frame (IPlugFrame), window_chrome (the application icon every window wears,
-            and the shell's blank caption -- item 35),
+            plug_frame (IPlugFrame), window_chrome (the application icon every window wears --
+            item 35),
             vibeaudio.rc + assets/ -- the application icon, declared on the executable and nowhere
             else
 scanner/    both halves of the out-of-process probe, in one directory because they share a wire
@@ -1489,18 +1489,23 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     frame to measure until it exists. That is `realizeFrame` in `window_placement.h` now, called
     by both editors alongside `hideTitleBarIcon` and named for the reason it is done.
 
-    **The shell's caption text is blank**, which is what modern Windows applications do
-    rather than repeating their own name back at the user. `setWindowTitle(QString())` does not
-    achieve it on its own: Qt reads an empty widget title as "no preference" and substitutes
-    `QCoreApplication::applicationName()` when it creates the native window, so the name appears
-    anyway. `clearTitleText` clears the native window text afterwards, which is the only way to
-    mean it -- and it only works for a window whose title never changes, because a later
-    `setWindowTitle` hands control back to Qt.
+    **The shell's caption text is `VibeAudio`** (project owner, 2026-08-29). It was blank until
+    then, on the argument that modern Windows applications have stopped repeating their own name
+    back at the user and that the icon beside it identifies this one. That holds for an application
+    just launched from its own tile and holds less for one that runs in the background processing
+    every sound on the machine -- and with a standard frame the caption text *is* the window title,
+    so it is also the taskbar and Alt-Tab label, which are the two places somebody goes looking to
+    find out what has their audio.
 
-    With a standard frame the caption text *is* the window title, so the taskbar and Alt-Tab labels
-    are blank too; separating them would mean drawing the title bar ourselves. The icon is what
-    identifies the application there instead. **Plugin editors keep their titles** -- with several
-    open at once the plugin's name is the only thing telling them apart.
+    Worth keeping for the next time a window wants no caption at all: `setWindowTitle(QString())`
+    does not achieve it, because Qt reads an empty widget title as "no preference" and substitutes
+    `QCoreApplication::applicationName()` when it creates the native window. Clearing the native
+    window text with `SetWindowTextW` afterwards is the only way to mean it, and it only holds for
+    a window whose title never changes, because a later `setWindowTitle` hands control back to Qt.
+    That was `clearTitleText` in `window_chrome.h`, removed with its last caller.
+
+    **Plugin editors keep their titles** -- with several open at once the plugin's name is the only
+    thing telling them apart.
 
 36. **`ui/` keeps its headers next to its sources**, unlike `protocol/`, `ipc/` and `engine/`, which
     all use `include/aip/<component>/`. Nothing links `ui/`; a public/private split with one side

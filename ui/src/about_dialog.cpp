@@ -41,9 +41,8 @@ QFrame* separator(QWidget* parent) {
 
 void showAboutDialog(QWidget* parent) {
     QDialog dialog(parent);
-    // Its own title, unlike the shell -- which deliberately has none (main_window.cpp) and whose
-    // `clearTitleText` is one-way. A dialog with no caption text is a dialog the user cannot name
-    // when describing what they were looking at.
+    // Its own title, not the shell's. A dialog that repeated the application name would be a
+    // dialog the user cannot name when describing what they were looking at.
     dialog.setWindowTitle(QStringLiteral("About VibeAudio"));
     // No context-help button in the caption; there is no context help.
     dialog.setWindowFlags(dialog.windowFlags() & ~Qt::WindowContextHelpButtonHint);
