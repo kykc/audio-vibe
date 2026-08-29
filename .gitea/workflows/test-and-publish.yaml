@@ -1,0 +1,204 @@
+# The suite on every push to main and every PR targeting main -- and, on a push to main only, the
+# portable package built from that same tree and published to this instance's generic package
+# registry.
+#
+# **One workflow and one job, deliberately.** The checkout below ends in `git clean -ffdx`, which
+# takes `build/` with it, so every run is a cold build of the whole tree -- the VST3 SDK included.
+# A second workflow, or a second job with `needs:`, would therefore pay for a second one: jobs do
+# not share a checkout, and handing a build tree between them needs `upload-artifact`, which is a
+# JavaScript action this runner cannot run. Keeping it in one job also keeps two runs from meeting
+# in the workspace, which is shared per repository on a self-hosted runner.
+#
+# So `pixi run package` here reuses the tree `pixi run test` just built: the packaging steps are
+# the zip and the upload, not a second compile.
+#
+# **Publishing is gated three ways** (see the `if:` on the last three steps): the event is a push,
+# the ref is main, and every earlier step succeeded. The third is what a step's `if:` means by
+# default and is written out anyway, because it is the whole reason these steps sit after the
+# suite rather than in a workflow of their own -- nothing reaches the registry from a tree whose
+# tests are red.
+#
+# The runner is a bare Windows host (labels: windows-amd64, pixi) with no Node.js, so no
+# JavaScript action can run here -- `actions/checkout` included. Every step is a plain `run:`
+# script and the checkout is done by hand with git.
+# The node has Visual Studio 18 (2026) *Build Tools* only, so every step runs in the `vs2026`
+# pixi environment: of the probes in a vs*_win-64 activation script, only the one matching its
+# own VS generation passes `vswhere -products *` and can therefore see a Build Tools install.
+# The default (vs2022) environment does not activate here.
+#
+# The publishing half is named for the registry it targets rather than for the act. If a second
+# package format ever ships -- an MSI feed, winget, Chocolatey -- it gets a workflow of its own
+# beside this one, because it would have its own trigger, versioning rules and credentials.
+name: test-and-publish
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A superseded PR run is worth cancelling; a main run is not, because cancelling one mid-upload
+# can leave a version in the registry holding no file.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-and-publish:
+    name: pixi run test, then package on main
+    runs-on: [windows-amd64, pixi]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      # Hand-rolled checkout. GITHUB_REF is refs/heads/main for a push and refs/pull/N/... for a
+      # PR; both are fetchable from the base repository, so fork PRs work too. The token is passed
+      # per-command via http.extraheader instead of being baked into the remote URL, because the
+      # workspace survives between runs on a self-hosted runner and .git/config would keep it.
+      - name: Checkout ${{ github.ref }}
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Git { git @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+
+          $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY.git"
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GITEA_TOKEN"))
+          $header = "AUTHORIZATION: basic $auth"
+
+          if (-not (Test-Path .git)) { Invoke-Git init --quiet }
+          if (git remote | Select-String -SimpleMatch origin -Quiet) {
+            Invoke-Git remote set-url origin $url
+          } else {
+            Invoke-Git remote add origin $url
+          }
+
+          Invoke-Git -c "http.extraheader=$header" fetch --force --depth=1 origin "+$($env:GITHUB_REF):refs/ci/head"
+          Invoke-Git checkout --force --detach refs/ci/head
+          # Wipe leftovers from the previous run, including ignored files -- but keep the pixi
+          # environment, which is expensive to recreate and is validated by `pixi install --locked`.
+          Invoke-Git clean -ffdx -e .pixi
+          Invoke-Git --no-pager log -1 --format='%H %s'
+
+      # --locked fails if pixi.lock does not match pixi.toml, so a manifest change without a
+      # relock is a CI error rather than a silent resolve to different dependency versions.
+      # Only the vs2026 environment is installed; the default one is never used on this node.
+      - name: Install the pixi environment
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pixi install --locked -e vs2026
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Configures and builds RelWithDebInfo via the task's depends-on chain, then runs ctest.
+      # Everything below this line depends on it having passed.
+      - name: Build and test
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pixi run --locked -e vs2026 test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Reuses the build tree the step above filled, so this is the packaging work and not a
+      # second compile: `build/package`, and `build/package.zip` beside it (design_doc.md
+      # sec. 6.8), which unpacks to a single `VibeAudio/` folder. One artifact, because there is
+      # one architecture -- ARM64 is neither built nor tracked (sec. 11.5), so there is no fan-out
+      # here and nothing to gather.
+      - name: Build the portable package
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pixi run --locked -e vs2026 package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path build/package.zip)) { throw 'build/package.zip was not produced' }
+
+      # The version is read out of the generated header rather than out of CMakeLists.txt, so the
+      # package version and the string the About box shows are the same string by construction:
+      # `0.1.0` from `project()`, and the abbreviated commit resolved at build time
+      # (cmake/write_version_header.cmake). A build from a dirty tree says so in the version, which
+      # cannot happen from this checkout and is worth seeing if it ever does.
+      - name: Work out the package version
+        id: version
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $header = 'build/generated/version/RelWithDebInfo/aip/version.h'
+          if (-not (Test-Path $header)) { throw "$header was not generated" }
+          $text = Get-Content $header -Raw
+
+          $number = [regex]::Match($text, 'kVersionNumber\s*=\s*"([^"]+)"').Groups[1].Value
+          $commit = [regex]::Match($text, 'kGitDescription\s*=\s*"([^"]+)"').Groups[1].Value
+          if (-not $number -or -not $commit) { throw "could not read the version out of $header" }
+          if ($commit -eq 'unknown') { throw 'the build could not resolve its commit; refusing to publish' }
+
+          $version = "$number-$commit"
+          $asset = "VibeAudio-$version-windows-amd64.zip"
+          Write-Host "version $version, asset $asset"
+
+          # Written through .NET with an explicit BOM-less encoding. Windows PowerShell's
+          # `Out-File -Encoding utf8` emits a BOM, and a BOM at the head of GITHUB_OUTPUT is read
+          # as part of the first key name -- which fails as an empty output rather than as an error.
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version`nasset=$asset`n", $utf8)
+
+      # PUT /api/packages/{owner}/generic/{name}/{version}/{filename}. Generic packages key on
+      # name and version separately, so the name stays bare and the commit rides in the version.
+      #
+      # `Invoke-WebRequest` rather than curl.exe: this runner is PowerShell and this is one
+      # request. `$ProgressPreference` is not cosmetic -- Windows PowerShell's progress bar makes
+      # a 27 MiB upload several times slower.
+      #
+      # A DELETE first, because the registry answers 409 for a filename that already exists: two
+      # runs of the same commit would otherwise fail the second time. A 404 there is the ordinary
+      # case and is ignored.
+      #
+      # `CI_USER` and `CI_TOKEN`, both required, and no fallback. The built-in Actions token is
+      # deliberately not accepted here: it does not carry write access to the package registry, so
+      # a run that reached for it would fail at the PUT after having done the whole build -- and
+      # would read as a broken workflow rather than as a missing secret. Failing at the top of the
+      # step, by name, is the useful behaviour.
+      #
+      # Basic auth with the token as the password is Gitea's documented form. The username has to
+      # be the token owner's, hence a secret rather than a literal: the account that publishes is
+      # infrastructure configuration and does not belong in a file in the repository.
+      - name: Upload to the generic registry
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          CI_USER: ${{ secrets.CI_USER }}
+          CI_TOKEN: ${{ secrets.CI_TOKEN }}
+          PKG_NAME: vibeaudio
+          PKG_VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.version.outputs.asset }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+
+          $missing = @()
+          if (-not $env:CI_USER)  { $missing += 'CI_USER' }
+          if (-not $env:CI_TOKEN) { $missing += 'CI_TOKEN' }
+          if ($missing.Count) {
+            throw "$($missing -join ' and ') not set on this repository; publishing needs both"
+          }
+
+          $owner = $env:GITHUB_REPOSITORY.Split('/')[0]
+          $registry = "$env:GITHUB_SERVER_URL/api/packages/$owner/generic/$env:PKG_NAME/$env:PKG_VERSION"
+          $target = "$registry/$env:ASSET"
+
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
+          $headers = @{ Authorization = "Basic $auth" }
+
+          try {
+            Invoke-WebRequest -Method Delete -Uri $target -Headers $headers -UseBasicParsing | Out-Null
+            Write-Host "removed an existing $env:ASSET from $env:PKG_VERSION"
+          } catch {
+            Write-Host "nothing to remove at $target ($($_.Exception.Response.StatusCode))"
+          }
+
+          $bytes = (Get-Item build/package.zip).Length
+          Write-Host "uploading $([math]::Round($bytes / 1MB, 1)) MiB to $target"
+          Invoke-WebRequest -Method Put -Uri $target -Headers $headers `
+            -InFile build/package.zip -ContentType 'application/octet-stream' -UseBasicParsing | Out-Null
+
+          Write-Host "published $env:PKG_NAME $env:PKG_VERSION"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          $line = "Published ``$env:PKG_NAME`` **$env:PKG_VERSION** -- [$env:ASSET]($target)`n"
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $line, $utf8)

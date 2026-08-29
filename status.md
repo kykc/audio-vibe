@@ -2639,6 +2639,76 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     previous one -- which would look current and be a build old. The folder itself needs no such
     care: it is already `REMOVE_RECURSE`d and rebuilt on every run.
 
+94. **One workflow tests every push and PR, and publishes the package on a push to main.**
+    `.gitea/workflows/test-and-publish.yaml`, asked for by the project owner on 2026-08-29. It
+    checks out, builds, runs the suite, and then -- on a push to main only -- runs
+    `pixi run package` and PUTs `build/package.zip` to
+    `/api/packages/{owner}/generic/vibeaudio/{version}/VibeAudio-{version}-windows-amd64.zip`.
+    One artifact, because there is one architecture (sec. 11.5): no fan-out, nothing to gather.
+
+    **It was two files for about an hour, and one job is the reason it is not.** The checkout ends
+    in `git clean -ffdx`, which takes `build/` with it, so every run is a cold build of the whole
+    tree including the VST3 SDK -- and a separate publishing workflow therefore paid for a second
+    one on every push to main. A second *job* with `needs:` would have paid it too: jobs do not
+    share a checkout, and handing a build tree between them wants `upload-artifact`, which is a
+    JavaScript action this runner cannot run. Merging also removes the chance of two runs meeting
+    in the workspace, which is per-repository on a self-hosted runner rather than per-run. So
+    `pixi run package` now reuses the tree `pixi run test` just built, and the packaging steps are
+    the zip and the upload rather than a second compile.
+
+    **Publishing is gated three ways**, on each of the last three steps: `github.event_name ==
+    'push'`, `github.ref == 'refs/heads/main'`, and `success()`. The last is what a step's `if:`
+    means when it is omitted, and it is written out because it is the entire reason these steps
+    live after the suite instead of in a workflow of their own -- nothing reaches the registry
+    from a tree whose tests are red.
+
+    **The version is `0.1.0-<short sha>`, read out of the generated header** rather than out of
+    `CMakeLists.txt`, so the version in the registry and the string the About box shows are the
+    same string by construction (item 89). A build that could not resolve its commit refuses to
+    publish: `unknown` in an About box is a curiosity, `vibeaudio 0.1.0-unknown` in a registry is
+    a version nobody can trace back to a source tree.
+
+    **The publishing half is named for the registry it targets** and not for the act. A second
+    package format -- an MSI feed, winget, Chocolatey -- would get a workflow of its own beside
+    this one rather than another step here: different trigger, different versioning rules,
+    different credentials.
+
+    **No JavaScript action anywhere**, `actions/checkout` included: that runner is a bare Windows
+    host with no Node.js, so the checkout is hand-rolled git and every step is a plain `run:` in
+    PowerShell. Everything runs `-e vs2026` for the reason AGENTS.md gives -- on a Build Tools
+    install only the matching generation's `vswhere` probe finds it.
+
+    Three details that are each a quiet failure otherwise. **A DELETE before the PUT**, because
+    the registry answers 409 for a filename that already exists, so a re-run of the same commit
+    would fail the second time. **`$ProgressPreference = 'SilentlyContinue'`**, because Windows
+    PowerShell's progress bar makes a 27 MiB upload several times slower. And **`GITHUB_OUTPUT` is
+    written through .NET with a BOM-less encoding**, because `Out-File -Encoding utf8` there emits
+    a BOM, which is then read as part of the first key's name and yields an empty output rather
+    than an error.
+
+    **Publishing needs `secrets.CI_USER` and `secrets.CI_TOKEN`, both of them, with no fallback.**
+    Project owner, 2026-08-29: the built-in Actions token carries no write access to the package
+    registry, so accepting it as a second-best would buy a run that does the entire build and then
+    fails at the PUT -- which reads as a broken workflow rather than as a missing secret. The step
+    checks both at its first line and names whichever is absent. The username is a secret and not
+    a literal for the same reason the token is: which account publishes is infrastructure
+    configuration, not a fact about this source tree.
+
+    The checkout step's `GITEA_TOKEN` is a different thing entirely and is unrelated: it is the
+    env name that step binds `secrets.GITHUB_TOKEN` to, the token the runner injects on its own,
+    and it is used to fetch the repository. That has been there since `8893382` (2026-08-22, the
+    first CI commit) and is untouched. There is no secret named `GITEA_TOKEN` anywhere.
+
+    While writing it, `tests/source_hygiene_test.cpp` grew `.cmake`, `.yaml` and `.yml`. Sec. 6.6
+    says every tracked text file is ASCII and names CMake explicitly; the extension set had listed
+    neither, so the packaging scripts and the workflow file were exempt from a rule they are
+    covered by. Nothing in the tree failed when they were added.
+
+    **Still cold on every run.** Adding `-e build` to that `git clean` would make each run
+    incremental, which on a self-hosted runner is the large remaining win; it is not done, because
+    a stale build tree that survives between commits is a class of CI failure nobody enjoys
+    diagnosing and nothing yet says the wall-clock is a problem.
+
 ---
 
 ## 8. Traps already paid for

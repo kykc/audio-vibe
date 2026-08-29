@@ -288,6 +288,14 @@ Registering from the shell instead (**File -> Register APO**, or `apo_admin --re
 both by copying the DLL to `%ProgramData%\VibeAudio` and registering the copy, which leaves this
 folder free to move. The shipped `README.txt` has all of it, in the order somebody needs it.
 
+Nobody has to build it to have it: **every push to `main` publishes that zip** to this instance's
+generic package registry as `vibeaudio`, versioned `<project version>-<short commit>` -- the same
+string the About box shows, so a bug report that names a version names a commit. One workflow does
+both halves, `.gitea/workflows/test-and-publish.yaml`: it runs the suite on every push and every
+PR, and packages and publishes only on a push to `main`, only after the suite is green. It needs a
+self-hosted Windows runner labelled `windows-amd64, pixi`, and it can use no JavaScript action --
+that node has no Node.js, so even the checkout is hand-rolled git.
+
 **The folder needs one thing from the machine: the [Microsoft Visual C++ 2015-2022 x64
 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).** Qt and everything under it are
 in the folder; the MSVC runtime deliberately is not (design_doc.md sec. 6.7). A copy in our own

@@ -27,8 +27,12 @@ const std::set<std::string> kSkippedDirectories = {".git", ".pixi", "build", "ou
 // `.ui` is Qt Designer's XML. It is tracked text like any other and Designer will happily write a
 // typographic character into a label -- which then reaches the user through a generated header
 // that nothing else here inspects.
+//
+// `.cmake` and `.yaml` are here because sec. 6.6 says every tracked text file and means it: a
+// packaging script writes the prose that ships in `README.txt`, and a workflow file is read by a
+// YAML parser whose behaviour on an unexpected byte is nobody's idea of obvious.
 const std::set<std::string> kCheckedExtensions = {
-    ".h", ".hpp", ".cpp", ".md", ".txt", ".json", ".toml", ".rc", ".ui"};
+    ".h", ".hpp", ".cpp", ".md", ".txt", ".json", ".toml", ".rc", ".ui", ".cmake", ".yaml", ".yml"};
 
 // Files with no extension that are still ours. `LICENSE` is here because a licence is pasted from
 // somewhere else more often than it is typed, which is exactly how a non-ASCII byte arrives.
