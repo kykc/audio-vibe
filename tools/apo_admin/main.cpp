@@ -23,6 +23,11 @@
 // It also knows about both CLSIDs, so it can switch a machine between the deployed 2013 APO and
 // the rewrite. That is the A/B test the whole APO stage is going to be checked with.
 //
+// `--register` is the one thing here that is not an endpoint change. It does what
+// `regsvr32 aip_apo.dll` does -- makes the class loadable -- having first copied the DLL somewhere
+// it can stay, which is the part `regsvr32` cannot do for you and the part a user gets wrong. See
+// `registerApo` for why that copy is not a convenience.
+//
 // Everything needs administrator rights, and the manifest asks for them.
 
 // initguid.h before mmdeviceapi.h -- see apo/src/audio_ipc_apo.cpp for why this ordering matters.
@@ -37,6 +42,12 @@
 
 #include <propidl.h>
 #include <wrl/client.h>
+
+// FOLDERID_ProgramData and SHGetKnownFolderPath. `shlobj_core.h` rather than `shlobj.h`: it is
+// the half that carries the path functions, and the other half drags in the whole shell object
+// model behind an `initguid.h` that would then define every GUID in it.
+#include <knownfolders.h>
+#include <shlobj_core.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -395,6 +406,191 @@ struct Endpoint {
     return buffer;
 }
 
+// ------------------------------------------------------------------------- making it loadable
+
+/// The folder a registered APO lives in, under `%ProgramData%`.
+///
+/// Registration writes the DLL's *current* path into `InprocServer32`, and the audio engine loads
+/// it from there ever after. So where the file is standing at that moment is a decision with a
+/// long tail, and the two ways it goes wrong are both ordinary: the folder gets moved, renamed or
+/// tidied away -- after which no APO runs and nothing anywhere says why -- or it sits somewhere
+/// under the user's profile, which `audiodg.exe` runs as a service account and cannot read, after
+/// which the APO is registered, slotted, and never loaded. The package README says both of these
+/// in words, under MOVING IT and WHERE IT CAN LIVE, and saying them is a poor substitute for not
+/// needing to.
+///
+/// `%ProgramData%` answers both: a machine-wide location nobody tidies, whose default access
+/// control grants `BUILTIN\\Users` read and execute to everything created under it.
+constexpr wchar_t kInstallFolderName[] = L"VibeAudio";
+
+/// The one file that is copied. `aip_apo.dll` is built with a static runtime precisely so that it
+/// can be one file -- a DLL loaded into the Windows audio engine cannot depend on a redistributable
+/// being present -- and a one-file install is one that cannot be half done.
+constexpr wchar_t kApoFileName[] = L"aip_apo.dll";
+
+/// An HRESULT the way everyone who is going to search for it writes it.
+[[nodiscard]] std::wstring hex(HRESULT hr) {
+    wchar_t buffer[16];
+    ::swprintf_s(buffer, L"0x%08X", static_cast<unsigned>(hr));
+    return buffer;
+}
+
+/// This executable's own directory, with a trailing backslash. Empty if it cannot be had.
+[[nodiscard]] std::wstring ownDirectory() {
+    wchar_t buffer[MAX_PATH * 4];
+    const DWORD length = ::GetModuleFileNameW(nullptr, buffer, ARRAYSIZE(buffer));
+    if (length == 0 || length >= ARRAYSIZE(buffer)) {
+        return {};
+    }
+    const std::wstring path(buffer, length);
+    const std::size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring{} : path.substr(0, slash + 1);
+}
+
+/// `%ProgramData%\VibeAudio`, from the known folder rather than from the environment variable of
+/// the same name. The variable is inherited, and therefore whatever the parent process says it is;
+/// this path is about to be written into the registry as somewhere the audio engine loads code
+/// from, which is not a thing to take on a caller's word.
+[[nodiscard]] std::wstring installDirectory() {
+    PWSTR programData = nullptr;
+    if (FAILED(::SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &programData)) || programData == nullptr) {
+        return {};
+    }
+    std::wstring path = programData;
+    ::CoTaskMemFree(programData);
+    if (path.empty()) {
+        return {};
+    }
+    if (path.back() != L'\\') {
+        path.push_back(L'\\');
+    }
+    return path + kInstallFolderName;
+}
+
+[[nodiscard]] bool fileExists(const std::wstring& path) {
+    const DWORD attributes = ::GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+/// Whether two paths name the same file, textually and after canonicalising. That is enough for
+/// the one case it exists for: `--register` run from the install folder itself, where the copy is
+/// a file onto itself. `CopyFileW` fails that, and failing there would be a baffling way to say
+/// "it is already where it belongs".
+[[nodiscard]] bool samePath(const std::wstring& a, const std::wstring& b) {
+    wchar_t left[MAX_PATH * 4];
+    wchar_t right[MAX_PATH * 4];
+    if (::GetFullPathNameW(a.c_str(), ARRAYSIZE(left), left, nullptr) == 0 ||
+        ::GetFullPathNameW(b.c_str(), ARRAYSIZE(right), right, nullptr) == 0) {
+        return false;
+    }
+    return ::_wcsicmp(left, right) == 0;
+}
+
+/// The directory part of `path`, without its trailing backslash. For a sentence, not for a path.
+[[nodiscard]] std::wstring directoryOf(const std::wstring& path) {
+    const std::size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? path : path.substr(0, slash);
+}
+
+/// Copies `source` over `target`, including when the audio engine has the old `target` loaded.
+///
+/// A DLL that `audiodg.exe` has mapped cannot be overwritten or deleted -- the copy comes back
+/// ERROR_SHARING_VIOLATION -- but it *can* be renamed, because a rename inside one volume moves a
+/// directory entry and open handles follow it. So the file in the way is moved aside and the new
+/// one put in its place. The engine goes on running the old code out of the renamed file until the
+/// audio service next restarts, which is exactly what it would have done had the file not been
+/// replaced at all; nothing is more broken for the rename having happened.
+///
+/// The displaced copy is deleted if it can be and scheduled for the next boot if it cannot, so it
+/// is never left lying in the way of the next `--register`. `detail` comes back non-empty when
+/// something happened that is worth a line but is not a failure.
+[[nodiscard]] bool copyOver(const std::wstring& source, const std::wstring& target, std::wstring& detail) {
+    detail.clear();
+    if (::CopyFileW(source.c_str(), target.c_str(), FALSE) != FALSE) {
+        return true;
+    }
+
+    const DWORD first = ::GetLastError();
+    if (first != ERROR_SHARING_VIOLATION && first != ERROR_ACCESS_DENIED && first != ERROR_USER_MAPPED_FILE) {
+        detail = L"could not copy the APO to " + target + L" (" + std::to_wstring(first) + L")";
+        return false;
+    }
+
+    const std::wstring displaced = target + L".old-" + timestamp();
+    if (::MoveFileExW(target.c_str(), displaced.c_str(), MOVEFILE_REPLACE_EXISTING) == FALSE) {
+        detail = L"the installed APO could not be replaced -- it is in use, or " + directoryOf(target) +
+            L" is not writable (" + std::to_wstring(::GetLastError()) + L")";
+        return false;
+    }
+    if (::CopyFileW(source.c_str(), target.c_str(), FALSE) == FALSE) {
+        const DWORD second = ::GetLastError();
+        // Put back what was moved. The registry names this path, and leaving nothing at it is a
+        // worse state than the one we started in.
+        (void)::MoveFileExW(displaced.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
+        detail = L"could not copy the APO to " + target + L" (" + std::to_wstring(second) + L")";
+        return false;
+    }
+    if (::DeleteFileW(displaced.c_str()) == FALSE) {
+        (void)::MoveFileExW(displaced.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+        detail = L"the previous copy is still loaded by the audio engine; it has been moved to " + displaced +
+            L" and will be removed at the next restart";
+    }
+    return true;
+}
+
+/// `DllRegisterServer`, called the way `regsvr32` calls it.
+///
+/// Loading the DLL to register it, rather than shelling out to `regsvr32`, buys one thing that
+/// matters: an HRESULT. `regsvr32` reports through a message box it puts on screen itself, which
+/// is no use at all to an elevated child whose whole job is to write down what happened for an
+/// unelevated caller to read.
+///
+/// `DllRegisterServer` takes the path out of its own loaded module (apo/src/dll_main.cpp), so the
+/// path that lands in `InprocServer32` is exactly the file loaded here -- which is the copy, which
+/// is the point of the copy.
+[[nodiscard]] HRESULT callDllRegisterServer(const std::wstring& dll, std::wstring& detail) {
+    detail.clear();
+
+    // The APO catalogue write inside `DllRegisterServer` goes through COM. Uninitialised it would
+    // fail with CO_E_NOTINITIALIZED, which is a confusing thing for a registration to say.
+    const HRESULT init = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
+        detail = L"COM would not start";
+        return init;
+    }
+
+    HRESULT hr = S_OK;
+    // ALTERED_SEARCH_PATH so anything the DLL needs is looked for beside it rather than beside
+    // this executable. `aip_apo.dll` is /MT and needs nothing outside the OS, which is why the
+    // copy can be one file -- the flag is here so that staying true is not a thing to remember.
+    const HMODULE module = ::LoadLibraryExW(dll.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (module == nullptr) {
+        const DWORD error = ::GetLastError();
+        detail = L"the APO would not load (" + std::to_wstring(error) + L")";
+        hr = HRESULT_FROM_WIN32(error);
+    } else {
+        using RegisterServer = HRESULT(__stdcall*)();
+        const auto entry = reinterpret_cast<RegisterServer>(::GetProcAddress(module, "DllRegisterServer"));
+        if (entry == nullptr) {
+            detail = L"the APO exports no DllRegisterServer; this is not the right DLL";
+            hr = HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+        } else {
+            hr = entry();
+            if (FAILED(hr)) {
+                detail = L"DllRegisterServer refused";
+            }
+        }
+        // Before returning, always: a held handle would keep the file locked against the *next*
+        // --register, turning a working command into one that only works once per run.
+        ::FreeLibrary(module);
+    }
+
+    if (SUCCEEDED(init)) {
+        ::CoUninitialize();
+    }
+    return hr;
+}
+
 /// Exports the whole render tree with `reg.exe`. Shelling out rather than walking the tree by
 /// hand because the output has to be something a person can double-click in an emergency, and
 /// `reg import` is the one restore path that works with no build tree, no tooling and no audio.
@@ -500,6 +696,12 @@ void printUsage() {
                  L"                            unplugged or absent. Indices do not change\n"
                  L"  --install [--legacy]      write our CLSID into the GFX slot, saving what was there\n"
                  L"  --uninstall               restore whatever the slot held before --install\n"
+                 L"  --register                copy the APO into %%ProgramData%%\\VibeAudio and make the\n"
+                 L"                            class loadable from there -- what regsvr32 does, plus\n"
+                 L"                            the copy that stops a moved folder silencing the\n"
+                 L"                            machine. Touches no endpoint\n"
+                 L"  --dll <path>              which APO --register copies (default: aip_apo.dll next\n"
+                 L"                            to this executable)\n"
                  L"  --endpoint <guid|index>   act on one endpoint (default: all of them). The index\n"
                  L"                            is the one --list prints; the guid is the stable one.\n"
                  L"                            Repeatable, so one run and one service restart can\n"
@@ -515,6 +717,11 @@ void printUsage() {
                  L"\n"
                  L"--install writes the rewrite's CLSID; --install --legacy writes the deployed 2013 one,\n"
                  L"which is how you switch a machine back and forth to compare them.\n"
+                 L"\n"
+                 L"--register and --install are the two halves of an installation and are independent:\n"
+                 L"registering makes the class loadable and changes nothing about what runs, and a slot\n"
+                 L"naming an unregistered class is inert rather than broken. Undo --register with\n"
+                 L"regsvr32 /u on the copy under %%ProgramData%%\\VibeAudio.\n"
                  L"\n"
                  L"Every mutation takes a .reg backup of the whole render tree first. To undo by hand:\n"
                  L"  reg import <that file>    then restart the audio service.\n");
@@ -563,6 +770,7 @@ struct Options {
     bool showAll = false;
     bool install = false;
     bool uninstall = false;
+    bool registerApo = false;
     bool legacy = false;
     bool restart = false;
     bool assumeYes = false;
@@ -572,6 +780,9 @@ struct Options {
     std::wstring backupDir = L"C:\\aip-backup";
     /// `--report`. Empty means no report is written, which is the case for every human run.
     std::wstring reportPath;
+    /// `--dll`. Empty means `aip_apo.dll` beside this executable, which is what the package
+    /// layout gives and what a caller in the build tree has to override.
+    std::wstring dllPath;
 };
 
 /// One line of the machine-readable report: a kind a caller can branch on, and the same sentence
@@ -602,6 +813,124 @@ void writeReport(const std::wstring& path, const std::vector<ReportLine>& lines,
     }
     std::fwprintf(file, L"exit\t%d\n", exitCode);
     (void)std::fclose(file);
+}
+
+/// `--register`: put the APO somewhere it can stay, and make the class loadable from there.
+///
+/// The copy is the whole reason this exists rather than a line in the README saying `regsvr32`.
+/// See `kInstallFolderName` for what registering an APO where it happens to be standing costs.
+///
+/// Deliberately *not* an endpoint change, and ordered before one when both are asked for in the
+/// same run. Registering says where the code is; until a CLSID appears in an endpoint's effect
+/// chain -- `--install`, or the shell's Audio Device Settings dialog -- this has changed what the
+/// machine *can* do and not one thing about what it does.
+[[nodiscard]] int registerApo(const Options& options, std::vector<ReportLine>& report) {
+    const auto note = [&report](const wchar_t* kind, std::wstring text) {
+        report.push_back(ReportLine{kind, std::move(text)});
+    };
+
+    std::wstring source = options.dllPath;
+    if (source.empty()) {
+        const std::wstring here = ownDirectory();
+        if (here.empty()) {
+            std::fwprintf(stderr, L"could not work out where this executable is\n");
+            note(L"fail", L"could not work out where apo_admin.exe is, so the APO beside it could not be found");
+            return 1;
+        }
+        source = here + kApoFileName;
+    }
+    if (!fileExists(source)) {
+        std::fwprintf(stderr, L"%s is not there\n", source.c_str());
+        note(L"fail", source + L" is not there; nothing was registered");
+        return 1;
+    }
+
+    const std::wstring directory = installDirectory();
+    if (directory.empty()) {
+        std::fwprintf(stderr, L"could not work out where %%ProgramData%% is\n");
+        note(L"fail", L"could not work out where %ProgramData% is; nothing was registered");
+        return 1;
+    }
+    // No ACL work here, and that is a decision rather than an omission: what is created under
+    // %ProgramData% inherits its access control, which already grants BUILTIN\Users read and
+    // execute -- and that is what the service account behind audiodg.exe reads as. A DACL written
+    // here would at best repeat that and at worst get it wrong, on a folder the audio engine has
+    // to be able to read forever.
+    if (::CreateDirectoryW(directory.c_str(), nullptr) == FALSE) {
+        const DWORD error = ::GetLastError();
+        if (error != ERROR_ALREADY_EXISTS) {
+            std::fwprintf(stderr, L"could not create %s (%lu)\n", directory.c_str(), static_cast<unsigned long>(error));
+            note(L"fail", L"could not create " + directory + L" (" + std::to_wstring(error) + L")");
+            return 1;
+        }
+    }
+
+    const std::wstring target = directory + L"\\" + kApoFileName;
+    if (samePath(source, target)) {
+        std::wprintf(L"%s is already the installed copy\n", target.c_str());
+        note(L"info", target + L" is already the installed copy; it was registered where it stands");
+    } else {
+        std::wstring detail;
+        if (!copyOver(source, target, detail)) {
+            std::fwprintf(stderr, L"%s\n", detail.c_str());
+            note(L"fail", detail + L"; nothing was registered");
+            return 1;
+        }
+        std::wprintf(L"copied %s\n    to %s\n", source.c_str(), target.c_str());
+        note(L"info", L"copied the APO to " + target);
+        if (!detail.empty()) {
+            std::wprintf(L"  %s\n", detail.c_str());
+            note(L"info", detail);
+        }
+    }
+
+    std::wstring detail;
+    const HRESULT hr = callDllRegisterServer(target, detail);
+    if (FAILED(hr)) {
+        std::fwprintf(stderr, L"registration failed: %s (hr=0x%08X)\n", detail.c_str(), static_cast<unsigned>(hr));
+        // Said in full because of what the half-done state is: the file is in place and the
+        // registry does not know about it, which looks from the outside exactly like nothing
+        // having happened.
+        note(L"fail",
+            L"the APO is at " + target + L" but could not be registered: " + detail + L" (hr=" + hex(hr) + L")");
+        return 1;
+    }
+
+    std::wprintf(L"registered %s\n", target.c_str());
+    note(L"ok", L"the APO is registered from " + target);
+    note(L"info",
+        L"registering touches no endpoint; use Audio Device Settings, or --install, to put it "
+        L"into a device's effect chain");
+    return 0;
+}
+
+/// The `--restart-audio` tail, and the sentence that explains its absence.
+///
+/// Shared, because `--register` can be the whole of a run and returns before the endpoint work
+/// below ever starts -- and a flag that silently did nothing on one of the two paths that accept
+/// it would be worse than one that was refused there.
+void applyRestart(const Options& options, std::vector<ReportLine>& report) {
+    const auto note = [&report](const wchar_t* kind, std::wstring text) {
+        report.push_back(ReportLine{kind, std::move(text)});
+    };
+
+    if (options.restart) {
+        std::wprintf(L"\nrestarting the audio service...\n");
+        if (!restartAudio()) {
+            std::fwprintf(stderr, L"the restart failed; the change takes effect at next boot\n");
+            note(L"fail", L"the audio service would not restart; the change takes effect at the next boot");
+        } else {
+            std::wprintf(L"audio service restarted\n");
+            note(L"info", L"audio service restarted");
+        }
+        return;
+    }
+
+    std::wprintf(L"\nNot restarting the audio service. The change takes effect when the\n"
+                 L"endpoint is next initialised -- pass --restart-audio to force it now.\n");
+    note(L"info",
+        L"the audio service was not restarted; the change takes effect when the endpoint "
+        L"is next initialised");
 }
 
 [[nodiscard]] bool elevated() {
@@ -636,6 +965,8 @@ int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& rep
             options.install = true;
         } else if (arg == L"--uninstall") {
             options.uninstall = true;
+        } else if (arg == L"--register") {
+            options.registerApo = true;
         } else if (arg == L"--legacy") {
             options.legacy = true;
         } else if (arg == L"--restart-audio") {
@@ -650,6 +981,8 @@ int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& rep
             options.backupDir = argv[++i];
         } else if (arg == L"--report" && hasNext) {
             options.reportPath = argv[++i];
+        } else if (arg == L"--dll" && hasNext) {
+            options.dllPath = argv[++i];
         } else {
             std::fwprintf(stderr, L"unrecognised option: %s\n", arg.c_str());
             note(L"fail", L"unrecognised option: " + arg);
@@ -657,7 +990,7 @@ int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& rep
         }
     }
 
-    if (options.help || (!options.list && !options.install && !options.uninstall)) {
+    if (options.help || (!options.list && !options.install && !options.uninstall && !options.registerApo)) {
         printUsage();
         return options.help ? 0 : 2;
     }
@@ -665,6 +998,27 @@ int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& rep
         std::fwprintf(stderr, L"--install and --uninstall are mutually exclusive\n");
         note(L"fail", L"--install and --uninstall are mutually exclusive");
         return 2;
+    }
+
+    // Before the endpoint walk, and not merely for tidiness. Registration has nothing to do with
+    // endpoints: it needs neither the enumeration below nor the backup that guards it, and it
+    // must not be refused on a machine whose render endpoints cannot be read -- the DLL is still
+    // worth putting in place there. When both are asked for in one run this is also the right
+    // order, since a slot written first would name a class that is not registered yet.
+    if (options.registerApo) {
+        if (!elevated()) {
+            std::fwprintf(stderr, L"this needs administrator rights\n");
+            note(L"fail", L"this needs administrator rights");
+            return 1;
+        }
+        const int status = registerApo(options, report);
+        if (status != 0) {
+            return status;
+        }
+        if (!options.list && !options.install && !options.uninstall) {
+            applyRestart(options, report);
+            return 0;
+        }
     }
 
     std::vector<Endpoint> endpoints = readEndpoints();
@@ -869,21 +1223,7 @@ int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& rep
         }
     }
 
-    if (options.restart) {
-        std::wprintf(L"\nrestarting the audio service...\n");
-        if (!restartAudio()) {
-            std::fwprintf(stderr, L"the restart failed; the change takes effect at next boot\n");
-            note(L"fail", L"the audio service would not restart; the change takes effect at the next boot");
-        } else {
-            std::wprintf(L"audio service restarted\n");
-            note(L"info", L"audio service restarted");
-        }
-    } else {
-        std::wprintf(L"\nNot restarting the audio service. The change takes effect when the\n"
-                     L"endpoint is next initialised -- pass --restart-audio to force it now.\n");
-        note(L"info", L"the audio service was not restarted; the change takes effect when the endpoint "
-                      L"is next initialised");
-    }
+    applyRestart(options, report);
 
     return failures == 0 ? 0 : 1;
 }

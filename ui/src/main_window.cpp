@@ -1,6 +1,7 @@
 #include "main_window.h"
 
 #include "about_dialog.h"
+#include "apo_admin_runner.h"
 #include "audio_device_dialog.h"
 #include "process_footprint.h"
 #include "qt_paths.h"
@@ -305,8 +306,16 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
 void MainWindow::buildMenuBar() {
     auto* file = menuBar()->addMenu(QStringLiteral("&File"));
 
+    // The one a user reaches for is first, and the one they touch once is under it. Not the order
+    // an installation is performed in -- registering has to happen before an effect slot means
+    // anything -- but that ordering buys nothing here: a slot naming an unregistered class is
+    // inert rather than broken, so getting the sequence wrong costs a puzzled minute and no more,
+    // while reading past Register APO to find the device list is a cost paid every time.
     QAction* deviceSettingsAction = file->addAction(QStringLiteral("&Audio Device Settings..."));
     connect(deviceSettingsAction, &QAction::triggered, this, &MainWindow::openDeviceSettings);
+
+    QAction* registerAction = file->addAction(QStringLiteral("&Register APO"));
+    connect(registerAction, &QAction::triggered, this, &MainWindow::registerApo);
     file->addSeparator();
 
     // `close()` and not `QApplication::quit()`. They look interchangeable and are not: `quit()`
@@ -320,6 +329,70 @@ void MainWindow::buildMenuBar() {
     auto* help = menuBar()->addMenu(QStringLiteral("&Help"));
     QAction* aboutAction = help->addAction(QStringLiteral("&About VibeAudio"));
     connect(aboutAction, &QAction::triggered, this, [this] { showAboutDialog(this); });
+}
+
+/// Makes the APO loadable, from a copy in `%ProgramData%\VibeAudio` rather than from wherever
+/// this folder happens to be sitting.
+///
+/// This is the step the package README spelled out as `regsvr32 aip_apo.dll` and left to an
+/// elevated prompt, and the copy is why it is worth a menu item rather than a line of
+/// documentation. Registration writes the DLL's current path into `InprocServer32` and the audio
+/// engine loads it from there ever after, so the two ordinary things a person does to a folder --
+/// move it, or leave it under their profile where a service account cannot read it -- each
+/// produce an APO that is registered, slotted, and silently never loaded. `apo_admin --register`
+/// puts the file somewhere neither happens first.
+///
+/// **Nothing is asked before the elevation prompt**, and that is not an oversight. Registering
+/// changes what the machine *can* do and not one thing about what it does: no endpoint is
+/// touched, no audio changes, and the class sits there unreferenced until Audio Device Settings
+/// names it in an effect chain. A confirmation in front of a UAC prompt, for an act that is inert
+/// until a second act, is a modal dialog protecting nothing.
+///
+/// The link is left alone for the same reason. The DLL currently loaded into `audiodg.exe` keeps
+/// running out of the file it was loaded from even when that file is replaced underneath it
+/// (`copyOver` in tools/apo_admin), so an attached shell stays attached and goes on processing.
+void MainWindow::registerApo() {
+    const QString title = QStringLiteral("Register APO");
+
+    // Passed explicitly rather than left to `apo_admin` to find beside itself: in the build tree
+    // the DLL and the tool are in different directories, and being able to register from a build
+    // tree is what makes this testable without packaging first.
+    const QString dll = apo_admin::locateApoDll();
+    if (dll.isEmpty()) {
+        const QString text = QStringLiteral("aip_apo.dll was not found next to this application, so "
+                                            "there is nothing to register");
+        log(text);
+        QMessageBox::warning(this, title, text);
+        return;
+    }
+
+    log(QStringLiteral("registering the APO from %1; asking for administrator rights").arg(dll));
+
+    const apo_admin::Result result = apo_admin::run(this, title,
+        QStringList{QStringLiteral("--register"), QStringLiteral("--dll"), dll, QStringLiteral("--yes")},
+        QStringLiteral("Copying the APO into %ProgramData%\\VibeAudio and registering it..."));
+
+    for (const QString& line : result.messages) {
+        log(line);
+    }
+    if (result.declined) {
+        // They were asked a question and answered no. Said in the log, where every other thing
+        // that did not happen is said, and nowhere else.
+        log(result.summary);
+        return;
+    }
+
+    if (result.succeeded) {
+        QMessageBox::information(this, title,
+            QStringLiteral("The APO is registered.\n\nIt is not in any device's effect chain yet -- "
+                           "use Audio Device Settings to put it there, and this folder is free to "
+                           "move now that the registered copy lives elsewhere."));
+        return;
+    }
+    log(result.summary);
+    QMessageBox::warning(this, title,
+        QStringLiteral("The APO could not be registered. The log in the main window says what "
+                       "apo_admin reported."));
 }
 
 /// The dialog still cannot be open across a live link, for the reason `refreshEndpoints` already

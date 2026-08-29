@@ -8,6 +8,7 @@ target_link_libraries(apo_admin PRIVATE
     aip_protocol   # the two CLSIDs it recognises and switches between
     advapi32       # the registry, and the elevation check
     ole32          # initguid/mmdeviceapi pull it in
+    shell32        # SHGetKnownFolderPath, for the %ProgramData% folder --register copies into
 )
 
 # Deliberately **not** manifested `requireAdministrator`, even though every mutation needs it.

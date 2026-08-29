@@ -1,26 +1,17 @@
 #include "audio_device_dialog.h"
 
+#include "apo_admin_runner.h"
+
 #include "ui_audio_device_dialog.h"
 
 #include <QAbstractButton>
-#include <QApplication>
 #include <QDialogButtonBox>
-#include <QDir>
-#include <QEventLoop>
-#include <QFile>
-#include <QFileInfo>
 #include <QHeaderView>
 #include <QMessageBox>
-#include <QProgressDialog>
 #include <QPushButton>
 #include <QStringList>
-#include <QTemporaryDir>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
-
-#include <windows.h>
-
-#include <shellapi.h>
 
 #include <cstddef>
 
@@ -47,37 +38,6 @@ QString presenceText(const ipc::RenderEndpoint& endpoint) {
     }
     return QStringLiteral("cannot be read");
 }
-
-/// `apo_admin.exe`, which does the actual mutation.
-///
-/// The sibling first, because that is what the package is: one flat folder holding the shell, the
-/// scanner and both APO tools. The build tree gives every target its own directory, so the define
-/// is what makes this work before anything is packaged. `scanner::locateChildExecutable` is the
-/// same two steps for the same reason.
-QString locateApoAdmin() {
-    wchar_t own[MAX_PATH]{};
-    const DWORD length = ::GetModuleFileNameW(nullptr, own, MAX_PATH);
-    if (length != 0 && length < MAX_PATH) {
-        const QString sibling =
-            QFileInfo(QString::fromWCharArray(own, static_cast<int>(length))).absolutePath() +
-            QStringLiteral("/apo_admin.exe");
-        if (QFile::exists(sibling)) {
-            return QDir::toNativeSeparators(sibling);
-        }
-    }
-
-#ifdef AIP_APO_ADMIN_EXECUTABLE
-    const QString configured = QString::fromUtf8(AIP_APO_ADMIN_EXECUTABLE);
-    if (QFile::exists(configured)) {
-        return QDir::toNativeSeparators(configured);
-    }
-#endif
-
-    return {};
-}
-
-/// One command-line argument, quoted the way `CommandLineToArgvW` will read it back.
-QString quoted(const QString& value) { return QStringLiteral("\"") + value + QStringLiteral("\""); }
 
 } // namespace
 
@@ -152,9 +112,9 @@ void AudioDeviceDialog::reload() {
         // endpoint on first playback, so an enumeration taken while the machine is silent -- which
         // is exactly the state just after the audio service restarts -- can come back empty from a
         // machine whose sound card is perfectly healthy.
-        ui_->statusLabel->setText(QStringLiteral(
-            "No active render endpoints. Windows creates them on first playback, so if the audio "
-            "service has just restarted, play something and press Refresh."));
+        ui_->statusLabel->setText(
+            QStringLiteral("No active render endpoints. Windows creates them on first playback, so if the audio "
+                           "service has just restarted, play something and press Refresh."));
     }
 }
 
@@ -254,155 +214,46 @@ void AudioDeviceDialog::onApply() {
 }
 
 bool AudioDeviceDialog::runApoAdmin(bool install, const QStringList& guids, bool restartAudio) {
-    const QString executable = locateApoAdmin();
-    if (executable.isEmpty()) {
-        const QString error = QStringLiteral("apo_admin.exe was not found next to this application; "
-                                             "audio devices cannot be changed from here");
-        ui_->statusLabel->setText(error);
-        emit message(error);
-        return false;
-    }
-
-    // An elevated child cannot be handed our pipes -- `ShellExecuteEx` has nowhere to put them --
-    // so the only way to learn anything beyond the exit code is to have it write a file.
-    QTemporaryDir reportDir;
-    if (!reportDir.isValid()) {
-        emit message(QStringLiteral("could not make a temporary directory for the result"));
-        return false;
-    }
-    const QString reportPath = QDir::toNativeSeparators(reportDir.filePath(QStringLiteral("apo_admin.txt")));
-
-    QString arguments = install ? QStringLiteral("--install") : QStringLiteral("--uninstall");
-    for (const QString& guid : guids) {
-        arguments += QStringLiteral(" --endpoint ") + quoted(guid);
-    }
-    arguments += QStringLiteral(" --yes --report ") + quoted(reportPath);
-    if (restartAudio) {
-        arguments += QStringLiteral(" --restart-audio");
-    }
-
     emit message(QStringLiteral("%1 this project's APO on %2 endpoint(s); asking for administrator rights")
-                     .arg(install ? QStringLiteral("installing") : QStringLiteral("removing"))
-                     .arg(guids.size()));
+            .arg(install ? QStringLiteral("installing") : QStringLiteral("removing"))
+            .arg(guids.size()));
+
+    QStringList arguments{install ? QStringLiteral("--install") : QStringLiteral("--uninstall")};
+    for (const QString& guid : guids) {
+        arguments << QStringLiteral("--endpoint") << guid;
+    }
+    arguments << QStringLiteral("--yes");
+    if (restartAudio) {
+        arguments << QStringLiteral("--restart-audio");
+    }
 
     // Two sentences: what is being done, and -- when it applies -- why the machine is about to go
     // quiet. The second is the one that stops a user reaching for the power button.
-    const QString waitLabel =
-        (install ? QStringLiteral("Adding this project's APO to %1 device(s)...")
-                 : QStringLiteral("Removing this project's APO from %1 device(s)..."))
-            .arg(guids.size()) +
+    const QString waitLabel = (install ? QStringLiteral("Adding this project's APO to %1 device(s)...")
+                                       : QStringLiteral("Removing this project's APO from %1 device(s)..."))
+                                  .arg(guids.size()) +
         (restartAudio ? QStringLiteral("\n\nRestarting the Windows audio service. Sound stops on every "
                                        "device for a few seconds.")
                       : QString());
 
-    const std::wstring file = executable.toStdWString();
-    const std::wstring parameters = arguments.toStdWString();
+    const apo_admin::Result result =
+        apo_admin::run(this, QStringLiteral("Audio Device Settings"), arguments, waitLabel);
+    for (const QString& line : result.messages) {
+        emit message(line);
+    }
 
-    SHELLEXECUTEINFOW info{};
-    info.cbSize = sizeof(info);
-    // NOCLOSEPROCESS for a handle to wait on. NOASYNC because the temporary directory the child
-    // writes into is removed as soon as this function returns, and an asynchronous launch could
-    // still be starting by then.
-    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
-    info.hwnd = reinterpret_cast<HWND>(window()->winId());
-    // The one place in this application that asks for elevation, and it asks for a *child* to be
-    // elevated. The shell itself stays unelevated: it hosts other people's plugin code all day,
-    // and a rack running as administrator is a much larger thing to be wrong about than a dialog
-    // that cannot write.
-    info.lpVerb = L"runas";
-    info.lpFile = file.c_str();
-    info.lpParameters = parameters.c_str();
-    // A console tool driven from a window. Without this the user gets a black console flashing
-    // over the dialog for the length of a service restart.
-    info.nShow = SW_HIDE;
-
-    if (::ShellExecuteExW(&info) == FALSE || info.hProcess == nullptr) {
-        const DWORD error = ::GetLastError();
-        const QString text = error == ERROR_CANCELLED
-            ? QStringLiteral("administrator rights were declined; nothing was changed")
-            : QStringLiteral("could not start apo_admin.exe (error %1)").arg(error);
-        ui_->statusLabel->setText(text);
-        emit message(text);
+    // The runner's own summary is about the run; this one is about the dialog, which has a list to
+    // read again either way. A launch that never happened -- no tool, no elevation -- has nothing
+    // to add to what it already said, so that sentence is passed straight through.
+    if (result.messages.isEmpty() && !result.succeeded) {
+        emit message(result.summary);
+        ui_->statusLabel->setText(result.summary);
         return false;
     }
-
-    // Something on screen for the wait, because the wait is long enough to be mistaken for a hang:
-    // an `Audiosrv` restart is several seconds during which every device on the machine goes
-    // silent, and a still dialog over silent speakers reads as a crash rather than as work.
-    //
-    // Indeterminate on purpose -- range `0, 0` is a busy indicator with no percentage. There is no
-    // progress to report: `apo_admin` is a child process that says nothing until it exits, and a
-    // bar that invented a number would be lying about a step it cannot see inside. Compare
-    // `PluginCatalog::run`, which *can* count plugins and so shows a real one.
-    //
-    // No Cancel. This is a registry mutation followed by a service restart, in an elevated process
-    // we have no way to signal; the only thing a Cancel could do is stop *watching*, leaving the
-    // user in front of a dialog that has quietly lost track of what it started. An honest absence
-    // beats a button that does not do what it says. Dropping `WindowCloseButtonHint` says the same
-    // thing about the caption -- on Windows that greys the close button rather than removing it,
-    // which is if anything the clearer statement.
-    QProgressDialog progress(waitLabel, QString(), 0, 0, this);
-    progress.setWindowTitle(QStringLiteral("Audio Device Settings"));
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setMinimumDuration(0);
-    progress.setAutoClose(false);
-    progress.setAutoReset(false);
-    progress.setWindowFlags(progress.windowFlags() & ~Qt::WindowCloseButtonHint);
-    progress.show();
-
-    // Pumping rather than blocking. A service restart takes seconds, and a window whose thread
-    // stops answering for that long is replaced by the grey ghost Windows paints for a hung one.
-    // User input stays excluded: the tree behind this must not be re-ticked while the registry
-    // underneath it is being rewritten.
-    while (::WaitForSingleObject(info.hProcess, 50) == WAIT_TIMEOUT) {
-        // Escape still reaches a QDialog whatever its caption offers, and hiding this one would
-        // put the user back in front of the frozen dialog it exists to explain. Cheaper to put it
-        // back than to fight the key.
-        if (!progress.isVisible()) {
-            progress.show();
-        }
-        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-    }
-    progress.close();
-
-    DWORD exitCode = 1;
-    (void)::GetExitCodeProcess(info.hProcess, &exitCode);
-    ::CloseHandle(info.hProcess);
-
-    // Everything the child had to say, in the shell's log, whether it succeeded or not.
-    int failures = 0;
-    QFile report(reportPath);
-    if (report.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QString content = QString::fromUtf8(report.readAll());
-        // `apo_admin` writes the file with a byte-order mark; nothing downstream wants it.
-        if (!content.isEmpty() && content.at(0) == QChar(0xFEFF)) {
-            content.remove(0, 1);
-        }
-        const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-        for (const QString& line : lines) {
-            const int tab = line.indexOf(QLatin1Char('\t'));
-            if (tab < 0) {
-                continue;
-            }
-            const QString kind = line.left(tab);
-            const QString text = line.mid(tab + 1).trimmed();
-            if (kind == QLatin1String("exit")) {
-                continue;
-            }
-            if (kind == QLatin1String("fail")) {
-                ++failures;
-            }
-            emit message(QStringLiteral("apo_admin: %1").arg(text));
-        }
-    } else {
-        emit message(QStringLiteral("apo_admin left no report; it exited with %1").arg(exitCode));
-    }
-
-    const bool succeeded = exitCode == 0 && failures == 0;
-    ui_->statusLabel->setText(succeeded
+    ui_->statusLabel->setText(result.succeeded
             ? QStringLiteral("Done. The device list has been read again.")
             : QStringLiteral("apo_admin reported a problem -- see the log in the main window."));
-    return succeeded;
+    return result.succeeded;
 }
 
 void AudioDeviceDialog::reject() {

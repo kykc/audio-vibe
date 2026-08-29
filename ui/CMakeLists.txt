@@ -16,6 +16,8 @@ add_executable(aip_ui WIN32
     src/main.cpp
     src/about_dialog.cpp
     src/about_dialog.h
+    src/apo_admin_runner.cpp
+    src/apo_admin_runner.h
     src/audio_device_dialog.cpp
     src/audio_device_dialog.h
     # The first Qt Designer form in the project. AUTOUIC turns it into ui_audio_device_dialog.h
@@ -87,12 +89,19 @@ target_link_libraries(aip_ui PRIVATE
 # aip_ui starts aip_scan; nothing links it, so nothing would otherwise build it first.
 add_dependencies(aip_ui aip_scan)
 
-# The same arrangement for apo_admin, which the Audio Device Settings dialog runs elevated to do
-# the one thing the shell has no rights to do itself. In the package both sit in one flat folder
-# and "next to me" finds it; in the build tree every target has its own directory, so the path is
-# compiled in as the fallback -- exactly what scanner/CMakeLists.txt does for aip_scan.
+# The same arrangement for apo_admin, which the File menu runs elevated to do the two things the
+# shell has no rights to do itself -- register the APO, and put it into an endpoint's effect chain.
+# In the package both sit in one flat folder and "next to me" finds it; in the build tree every
+# target has its own directory, so the path is compiled in as the fallback -- exactly what
+# scanner/CMakeLists.txt does for aip_scan.
 add_dependencies(aip_ui apo_admin)
 target_compile_definitions(aip_ui PRIVATE AIP_APO_ADMIN_EXECUTABLE="$<TARGET_FILE:apo_admin>")
+
+# And once more for the APO itself, which Register APO hands to apo_admin as the file to copy.
+# Nothing links it -- the shell never loads the APO, the audio engine does -- so this is purely
+# "know where it is, and build it first".
+add_dependencies(aip_ui aip_apo)
+target_compile_definitions(aip_ui PRIVATE AIP_APO_DLL="$<TARGET_FILE:aip_apo>")
 
 # Qt's platform plugin lives outside the directory Qt6Core probes by default in a conda-forge
 # layout, and without it the process dies with "could not find or load the Qt platform plugin" --

@@ -140,6 +140,12 @@ private:
     /// it is the same kind of thing: window furniture built once in the constructor.
     void buildMenuBar();
 
+    /// Copies the APO somewhere it can stay and makes the class loadable from there -- the half
+    /// of installation that `regsvr32` does, which nothing in this window offered until now. Runs
+    /// `apo_admin --register` elevated; see the definition for why it changes no endpoint and asks
+    /// nothing before the elevation prompt.
+    void registerApo();
+
     /// Opens the dialog that installs and removes this project's APO on render endpoints, and
     /// puts the link back afterwards if it can. See the definition for why it is allowed to do
     /// that to a live link rather than refusing to open on one.

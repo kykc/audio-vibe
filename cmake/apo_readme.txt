@@ -1,9 +1,11 @@
 VibeAudio -- the shell, the APO, and the tools that manage it.
 
 Running aip_ui.exe costs nothing and is undone by closing it. Everything else here -- registering
-the APO, and putting it into an endpoint's effect chain -- needs an ELEVATED command prompt and
-changes the machine, system-wide, for every application that plays audio, until it is undone. The
-one exception is `apo_admin --list`, which only reads.
+the APO, and putting it into an endpoint's effect chain -- changes the machine, system-wide, for
+every application that plays audio, until it is undone. The shell's File menu does both for you,
+asking Windows for administrator rights for that one action. The command lines below are the same
+two steps for anyone who would rather see them happen, and they want an ELEVATED prompt. The one
+exception is `apo_admin --list`, which only reads.
 
 The .exe files here need the Microsoft Visual C++ 2015-2022 x64 redistributable, which is a
 machine prerequisite for this package and is not carried in it. Almost every Windows machine
@@ -14,8 +16,8 @@ loaded into the Windows audio engine cannot depend on a redistributable being pr
 WHAT IS IN HERE
 
   aip_ui.exe      the shell: the rack, the plugin browser, and the Attach button. Needs no
-                  elevation and changes nothing outside this folder. Its File menu has an
-                  Audio Device Settings dialog that does the apo_admin step below for you,
+                  elevation and changes nothing outside this folder. Its File menu has both
+                  installation steps below -- Register APO and Audio Device Settings -- each
                   asking Windows for administrator rights for that one action only.
   LICENSE         the MIT license this software is released under. Qt, whose DLLs are in this
                   folder, is used under the LGPLv3.
@@ -31,44 +33,60 @@ WHAT IS IN HERE
   aip_config.yaml, qt.conf and plugins/ belong to aip_ui.exe. The .yaml being here is what makes
   this a portable install -- settings stay in this folder rather than in %APPDATA%.
 
-REGISTERING IT
+REGISTERING IT, from the shell
 
-  1. Put this folder where it is going to stay -- see MOVING IT below -- and open an elevated
-     prompt in it.
-  2. regsvr32 aip_apo.dll                 makes the class loadable. Touches no endpoint.
-  3. apo_admin --list                     check: the GFX slot should still be whatever it was.
-  4. apo_admin --install --restart-audio  puts the APO into the GFX slot of every render
+  1. Run aip_ui.exe. File -> Register APO copies aip_apo.dll into
+     %ProgramData%\VibeAudio and makes the class loadable from there. Touches no endpoint.
+  2. File -> Audio Device Settings, tick the device you want processed, Apply. That puts the APO
+     into its GFX slot, saving what was there, and restarts the audio service.
+  3. Play something. Then press Attach.
+
+REGISTERING IT, by hand
+
+  Same two steps, from an elevated prompt in this folder. Step 2 is what makes the folder want to
+  stay put -- see MOVING IT.
+
+  1. apo_admin --register                 copies the APO to %ProgramData%\VibeAudio and makes the
+                                          class loadable from there. Touches no endpoint.
+     regsvr32 aip_apo.dll                 the older way: registers the DLL WHERE IT IS, with no
+                                          copy. Same effect, and this folder is then pinned.
+  2. apo_admin --list                     check: the GFX slot should still be whatever it was.
+  3. apo_admin --install --restart-audio  puts the APO into the GFX slot of every render
                                           endpoint, saving what was there, and restarts the audio
                                           service so the change takes effect now rather than
                                           whenever the endpoint is next initialised.
-  5. Play something. Then run aip_ui.exe from this folder and press Attach.
 
 UNDOING IT, in this order
 
   apo_admin --uninstall --restart-audio   restores exactly what the slot held before, including
-                                          "nothing".
-  regsvr32 /u aip_apo.dll                 unregisters the class and nothing else.
+                                          "nothing". Or untick the devices in Audio Device
+                                          Settings, which is the same thing.
+  regsvr32 /u "%ProgramData%\VibeAudio\aip_apo.dll"
+                                          unregisters the class and nothing else. Point it at the
+                                          copy that was registered, which is the one --register
+                                          made -- not necessarily the one in this folder.
 
 MOVING IT
 
-Registration records THIS path: regsvr32 writes it into the registry and the audio engine loads
-the DLL from there ever after. Move or rename this folder, or let the drive letter change, and
-the engine looks for a DLL that is not there -- no APO runs, and nothing anywhere says why. Run
-regsvr32 again from the new location, or unregister before moving.
+Registration records the path of the DLL it registered, and the audio engine loads it from there
+ever after. Move or rename that folder, or let the drive letter change, and the engine looks for a
+DLL that is not there -- no APO runs, and nothing anywhere says why.
 
-Only registration cares. Before you run regsvr32, this folder is portable and can be copied
-around freely; after, it is a deployment and wants to stay put.
+Register APO (and `apo_admin --register`) is the answer to that: it registers a copy in
+%ProgramData%\VibeAudio, which nobody moves, so THIS folder stays portable and can be copied
+around freely afterwards. Registering with regsvr32 instead pins this folder, and moving it then
+means running regsvr32 again from the new location, or unregistering before the move.
 
 WHERE IT CAN LIVE
 
-The audio engine runs as a service account, not as you, so it has to be able to read this folder.
-A folder under C:\Users\<you> -- Desktop, Downloads, Documents -- does not grant that, and the APO
-will be registered, slotted, and never loaded. `icacls .` here should list BUILTIN\Users with
-(RX); somewhere like C:\aip or a folder under C:\Program Files does.
+The audio engine runs as a service account, not as you, so it has to be able to read whatever
+folder the registered DLL is in. A folder under C:\Users\<you> -- Desktop, Downloads, Documents --
+does not grant that, and the APO will be registered, slotted, and never loaded. %ProgramData% does,
+which is the other reason Register APO copies there rather than registering in place.
 
-This applies to the whole folder, not just the DLL, because they are the same folder now.
-aip_ui.exe runs as you and does not care where it is; aip_apo.dll is read by the audio engine and
-does.
+If you use regsvr32 instead, this folder is the one that has to be readable: `icacls .` here should
+list BUILTIN\Users with (RX), and somewhere like C:\aip or a folder under C:\Program Files does.
+aip_ui.exe runs as you and does not care where it is; only the DLL the audio engine reads does.
 
 IF NOTHING HAPPENS
 
