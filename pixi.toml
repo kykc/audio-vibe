@@ -56,7 +56,7 @@ configure = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --p
 build = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && cmake --build --preset dev", depends-on = ["configure"] }
 test = { cmd = "unset CMAKE_GENERATOR_PLATFORM CMAKE_GENERATOR_TOOLSET && ctest --preset dev", depends-on = ["build"] }
 probe = { cmd = "build/tools/valet_probe/RelWithDebInfo/valet_probe.exe", depends-on = ["build"] }
-ui = { cmd = "build/ui/RelWithDebInfo/aip_ui.exe", depends-on = ["build"] }
+ui = { cmd = "build/ui/RelWithDebInfo/vibeaudio.exe", depends-on = ["build"] }
 # The portable folder: build/package, which runs on a machine with no pixi, no Qt and no Visual
 # Studio -- but with the MSVC redistributable, which is a prerequisite and not a payload
 # (design_doc.md sec. 6.7). The APO and the tools that register and manage it are in it too, flat,

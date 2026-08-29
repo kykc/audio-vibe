@@ -1,10 +1,10 @@
-# The portable package: one folder that runs `aip_ui.exe` on a machine that has none of this
+# The portable package: one folder that runs `vibeaudio.exe` on a machine that has none of this
 # installed -- no pixi environment, no Qt, no Visual Studio -- and also registers and manages the
 # APO on it.
 #
 # The APO half used to live in an `apo/` subfolder, on the argument that a folder boundary is worth
 # having between running the shell and rewriting machine state. It is flat now, which costs that
-# signpost and buys two things. The first is that `regsvr32 aip_apo.dll` and `aip_ui.exe` are run
+# signpost and buys two things. The first is that `regsvr32 aip_apo.dll` and `vibeaudio.exe` are run
 # from the same directory, so the instructions have no "from the folder above" in them. The second
 # is that there is only one directory whose imports have to resolve, which is the thing Windows
 # actually cares about -- see `aip_stage_folder`.
@@ -62,14 +62,14 @@ add_custom_target(aip_package
         -D "AIP_PACKAGE_DIR=${AIP_PACKAGE_DIR}"
         # The shell, its scanner, and the two APO tools -- all four ordinary executables, all four
         # in the same directory now, so the dependency walk sees them as one set.
-        -D "AIP_PACKAGE_EXECUTABLES=$<TARGET_FILE:aip_ui>|$<TARGET_FILE:aip_scan>|$<TARGET_FILE:apo_admin>|$<TARGET_FILE:apo_host>"
+        -D "AIP_PACKAGE_EXECUTABLES=$<TARGET_FILE:vibeaudio>|$<TARGET_FILE:aip_scan>|$<TARGET_FILE:apo_admin>|$<TARGET_FILE:apo_host>"
         # `aip_apo.dll` is a MODULE to the dependency walk and not an executable -- nothing links
         # it, and `audiodg.exe` loads it by the path `regsvr32` recorded.
         -D "AIP_PACKAGE_MODULES=$<TARGET_FILE:aip_apo>"
         -D "AIP_PACKAGE_QT_PLUGIN_DIR=${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}"
         -D "AIP_PACKAGE_SEARCH_DIRS=${QT6_INSTALL_PREFIX}/bin"
         -P "${CMAKE_CURRENT_LIST_DIR}/package_impl.cmake"
-    DEPENDS aip_ui aip_scan aip_apo apo_admin apo_host
+    DEPENDS vibeaudio aip_scan aip_apo apo_admin apo_host
     COMMENT "Building the portable package in ${AIP_PACKAGE_DIR}"
     VERBATIM
     USES_TERMINAL)

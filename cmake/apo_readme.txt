@@ -1,6 +1,6 @@
 VibeAudio -- the shell, the APO, and the tools that manage it.
 
-Running aip_ui.exe costs nothing and is undone by closing it. Everything else here -- registering
+Running vibeaudio.exe costs nothing and is undone by closing it. Everything else here -- registering
 the APO, and putting it into an endpoint's effect chain -- changes the machine, system-wide, for
 every application that plays audio, until it is undone. The shell's File menu does both for you,
 asking Windows for administrator rights for that one action. The command lines below are the same
@@ -15,27 +15,27 @@ loaded into the Windows audio engine cannot depend on a redistributable being pr
 
 WHAT IS IN HERE
 
-  aip_ui.exe      the shell: the rack, the plugin browser, and the Attach button. Needs no
+  vibeaudio.exe      the shell: the rack, the plugin browser, and the Attach button. Needs no
                   elevation and changes nothing outside this folder. Its File menu has both
                   installation steps below -- Register APO and Audio Device Settings -- each
                   asking Windows for administrator rights for that one action only.
   LICENSE         the MIT license this software is released under. Qt, whose DLLs are in this
                   folder, is used under the LGPLv3.
   aip_scan.exe    scans VST3 plugins out of process, so a plugin that crashes takes the scanner
-                  with it and not the shell. Launched by aip_ui.exe; not run by hand.
+                  with it and not the shell. Launched by vibeaudio.exe; not run by hand.
   aip_apo.dll     the APO. Loaded into audiodg.exe by the Windows audio engine, and hands every
-                  block to aip_ui.exe over shared memory.
+                  block to vibeaudio.exe over shared memory.
   apo_admin.exe   what is in each endpoint's effect chain, and how to change it. Backs up what
                   it replaces, and can put it back.
   apo_host.exe    drives aip_apo.dll directly, with audiodg.exe out of the loop entirely, with a
                   bank of test signals. Nothing about the machine's audio is touched.
 
-  aip_config.yaml, qt.conf and plugins/ belong to aip_ui.exe. The .yaml being here is what makes
+  vibeaudio.yaml, qt.conf and plugins/ belong to vibeaudio.exe. The .yaml being here is what makes
   this a portable install -- settings stay in this folder rather than in %APPDATA%.
 
 REGISTERING IT, from the shell
 
-  1. Run aip_ui.exe. File -> Register APO copies aip_apo.dll into
+  1. Run vibeaudio.exe. File -> Register APO copies aip_apo.dll into
      %ProgramData%\VibeAudio and makes the class loadable from there. Touches no endpoint.
   2. File -> Audio Device Settings, tick the device you want processed, Apply. That puts the APO
      into its GFX slot, saving what was there, and restarts the audio service.
@@ -86,7 +86,7 @@ which is the other reason Register APO copies there rather than registering in p
 
 If you use regsvr32 instead, this folder is the one that has to be readable: `icacls .` here should
 list BUILTIN\Users with (RX), and somewhere like C:\aip or a folder under C:\Program Files does.
-aip_ui.exe runs as you and does not care where it is; only the DLL the audio engine reads does.
+vibeaudio.exe runs as you and does not care where it is; only the DLL the audio engine reads does.
 
 IF NOTHING HAPPENS
 
@@ -99,5 +99,5 @@ IF NOTHING HAPPENS
                                     gone. A slot written to one of those is still written, and is
                                     still there when the device comes back.
   apo_host --list-signals           proves the DLL loads and processes at all, with the audio
-  apo_host --signal sine:1000:-12   engine out of the picture. Attach aip_ui.exe to it -- it is a
+  apo_host --signal sine:1000:-12   engine out of the picture. Attach vibeaudio.exe to it -- it is a
                                     protocol v1 king like any other.

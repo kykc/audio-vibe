@@ -49,7 +49,7 @@ you have no reason to trust -- `--inspect` does the same work *in* the probe, an
 that faults there takes the probe with it. `aip_scan` is also runnable by hand on a single
 suspect bundle and prints its own wire format.
 
-`aip_ui` takes `--vst3 <path>` (repeatable), `--editors`, `--attach`, `--config <path>` and
+`vibeaudio` takes `--vst3 <path>` (repeatable), `--editors`, `--attach`, `--config <path>` and
 `--scan`, so a state can be reached without clicking through to it. It is **`--vst3`, not
 `--plugin`**, and **`--config`, not `--session`**: Qt reserves both `-plugin` and `-session`, and
 eats them out of `argv` with no diagnostic (status.md sec. 8 item 15). `--config` is also the way

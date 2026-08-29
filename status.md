@@ -203,7 +203,7 @@ that the option is `--vst3` and not `--plugin`, because `-plugin` is a reserved 
 see section 8 item 15:
 
 ```
-aip_ui --vst3 <path.vst3> --editors --attach
+vibeaudio --vst3 <path.vst3> --editors --attach
 ```
 
 Expect a line per second reading `blocks N (+~101/s) timeouts 0 malformed 0 reclaims 0
@@ -320,7 +320,7 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             editor_window (one editor, embedded per sec. 5.1),
             plug_frame (IPlugFrame), window_chrome (the application icon every window wears,
             and the shell's blank caption -- item 35),
-            aip_ui.rc + assets/ -- the application icon, declared on the executable and nowhere
+            vibeaudio.rc + assets/ -- the application icon, declared on the executable and nowhere
             else
 scanner/    both halves of the out-of-process probe, in one directory because they share a wire
             format. scan_result.h (the SDK-free report the parent deals in), scan_record
@@ -584,7 +584,7 @@ Proven against the real deployed APO on the development machine:
   passed through unprocessed, and zero dropped edits, zero malformed headers and zero format
   misses. That last number is the one worth keeping: honouring the flag is audible, and this is how
   audible.
-- **The shell does all of it, from a window.** `aip_ui` enumerated 8 render endpoints, attached to
+- **The shell does all of it, from a window.** `vibeaudio` enumerated 8 render endpoints, attached to
   the default one, built a chain for 48000 Hz x2 ch on first observation, and ran ~94 blocks/s
   through a two-plugin rack (ZL Equalizer 2 -> NeuralAmpModeler) with zero timeouts, zero malformed
   headers, zero format misses, zero dropped edits, zero stranded plugins and zero audio-thread
@@ -658,7 +658,7 @@ Proven against the real deployed APO on the development machine:
   was driven during the scan, so the tick is shown to keep *running*, not shown to still act on a
   rebuild.
 - **The shell saves a session and starts from it.** Checked end to end on 2026-08-22, driving
-  the real `aip_ui`: started with `--vst3` and a fresh `--config`, closed with a WM_CLOSE, started
+  the real `vibeaudio`: started with `--vst3` and a fresh `--config`, closed with a WM_CLOSE, started
   again with *only* `--config`, and closed again. The second file is byte-identical to the first
   -- same rack, same class id, same state blob, same window geometry, same endpoint -- which it
   could only be if the whole session had been read back into a real Engine and captured out of it
@@ -676,8 +676,8 @@ Proven against the real deployed APO on the development machine:
   happened is a *non-empty* controller blob making the round trip; see below.
 - **The portable folder runs with none of the build environment present.** `pixi run package`
   on 2026-08-22 produced 30 DLLs plus the Qt plugins, 71 MB; copied out of the build tree to a
-  temporary directory and run from a shell with *no* pixi environment on `PATH`, `aip_ui.exe`
-  came up, enumerated the endpoint and rewrote its own `aip_config.yaml` in place -- which is both
+  temporary directory and run from a shell with *no* pixi environment on `PATH`, `vibeaudio.exe`
+  came up, enumerated the endpoint and rewrote its own `vibeaudio.yaml` in place -- which is both
   halves at once, since a session file next to the executable is what portable mode means.
   `aip_scan.exe` runs from the same folder too, probing the fixture and printing its wire format,
   so the scanner has its child where it looks for it (item 42).
@@ -685,7 +685,7 @@ Proven against the real deployed APO on the development machine:
   Re-driven on 2026-08-24 after the MSVC runtime was taken out of the package (item 88): 22 DLLs
   now instead of 30, and the same test -- the folder copied out of the build tree, run from a shell
   with no pixi environment on `PATH` -- still comes up, enumerates the endpoint and restores its own
-  portable `aip_config.yaml`. `aip_scan.exe` still probes an installed plugin from there and ends
+  portable `vibeaudio.yaml`. `aip_scan.exe` still probes an installed plugin from there and ends
   `end ok`, and `apo_admin.exe` still reports the endpoint's GFX slot. All three are `/MD`, so
   what that shows is the machine's own redistributable being found in `System32` -- which is what
   design_doc.md sec. 6.7 relies on. It does *not* show what happens on a machine without it; that
@@ -769,7 +769,7 @@ Proven against the real deployed APO on the development machine:
   `setState` and comparing detects nothing here, because a plugin that could not find its model
   still faithfully remembers where it looked. See item 66.
 - **The scan report is reused instead of redone.** Measured on 2026-08-22 with the real
-  `aip_ui --scan` against this machine's plugin population: a cold start with no session file
+  `vibeaudio --scan` against this machine's plugin population: a cold start with no session file
   probed all of them and wrote 21 cached entries; a second start from that file produced the same
   21 entries with the shell alive for twelve seconds, which a full scan cannot do -- it needs
   around 124 s here, most of it the two plugins that hang. Confirmed again by the project owner
@@ -817,7 +817,7 @@ Proven against the real deployed APO on the development machine:
   modifier itself is not.** Item 86's inner-DLL path was driven end to end on this machine on
   2026-08-24, with
   `ZL Equalizer 2.vst3\Contents\x86_64-win\ZL Equalizer 2.vst3`: `aip_scan` probes it out of
-  process and reports a usable class, `aip_ui --vst3` loads it and the rack names it, the session
+  process and reports a usable class, `vibeaudio --vst3` loads it and the rack names it, the session
   file records that path with its class id and state, and the next start restores it -- "1 of 1
   plugin(s) restored". So the loader branch, the scanner, the engine and `config/` all take a file
   path, which is what the feature rests on.
@@ -1108,7 +1108,7 @@ Worth doing at some point, none of it blocking:
   two editors, two plugins and Qt itself -- measures 163 ms, and the save is a fraction of that
   against a deadline in seconds. What the item did *not* anticipate is the part that needed care,
   which is that the message arrives once per top-level window.
-- Decide whether `aip_ui` should set its own working directory. Plugins write files into it
+- Decide whether `vibeaudio` should set its own working directory. Plugins write files into it
   (trap 22 -- and the culprit is now known: NeuralAmpModeler, on instantiation), and today that is
   wherever the shell was launched -- the repository root, under `pixi run ui`, where it turns the
   ASCII hygiene test red. The scanner child was fixed this way (item 45); the shell was not, because
@@ -1450,7 +1450,7 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
 35. **The application icon is declared once and worn by every window but the editors.** Now
     normative: design_doc.md sec. 5.6, asked for by the project owner on 2026-08-24.
-    `ui/aip_ui.rc` attaches `ui/assets/mixing-table-png.ico` as resource id 1 (the shell shows the
+    `ui/vibeaudio.rc` attaches `ui/assets/mixing-table-png.ico` as resource id 1 (the shell shows the
     lowest-numbered icon resource, so the id is not arbitrary), `window_chrome.cpp` loads it back
     out of the running executable, and `main` hands it to `QApplication::setWindowIcon`. Qt gives
     its application icon to every top-level window that has not set one, so the shell, the picker,
@@ -1552,7 +1552,7 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 42. **The parent looks for `aip_scan.exe` next to the running executable first**, and only then at
     the `AIP_SCAN_EXECUTABLE` compile definition. The first is what will be true once installed;
     the second exists because Ninja Multi-Config gives every target its own output directory, so in
-    a build tree `aip_scan.exe` is not next to `aip_ui.exe`. Same escape hatch, and same reasoning,
+    a build tree `aip_scan.exe` is not next to `vibeaudio.exe`. Same escape hatch, and same reasoning,
     as `AIP_TEST_PLUGIN_PATH` in `tests/`. `locateChildExecutable` is public so the failure can be
     reported as itself: a missing scanner and a machine full of broken plugins otherwise produce
     the same report.
@@ -1720,7 +1720,7 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     every plugin on the machine as broken. A `qt.conf` pinning `Plugins = plugins`, because
     otherwise Qt falls back to the prefix compiled into `Qt6Core` -- the path this machine's
     environment happens to live at -- and a package tested here would load the developer's plugins
-    and pass while the same folder failed everywhere else. And an `aip_config.yaml`, because a
+    and pass while the same folder failed everywhere else. And an `vibeaudio.yaml`, because a
     file next to the executable *is* portable mode (item 46): a folder you carry to another
     machine should keep its settings in itself, and this is how that is said.
 
@@ -2627,7 +2627,7 @@ integration. These are the ones found while implementing. Re-discovering any is 
     Files/..."` reaches the executable as separate words, so a path with spaces arrives as an
     option value plus a handful of stray positional arguments. Fine for `pixi run ui` with no
     arguments, which is what the task is for; for anything with a path in it, put the pixi
-    environment's `Library/bin` on `PATH` and run `build/ui/RelWithDebInfo/aip_ui.exe` directly.
+    environment's `Library/bin` on `PATH` and run `build/ui/RelWithDebInfo/vibeaudio.exe` directly.
 19. **`catch_discover_tests` defaults to POST_BUILD, which is wrong in a multi-config build.** It
     writes *one* test list naming the executable of whichever configuration was built last, and
     `ctest -C <the other one>` then runs that binary instead. Build Release, then run the
@@ -2642,7 +2642,7 @@ integration. These are the ones found while implementing. Re-discovering any is 
     has hit this project (trap 4 was the first: a leading dot in a Catch2 tag kept the soak test out
     of discovery entirely). Both times the suite reported success while the most important test in
     it did not run. Treat "how many tests ran, and did any skip" as part of the result.
-21. **A GUI executable cannot tell you why it will not start.** `aip_ui` is `WIN32`, so it has no
+21. **A GUI executable cannot tell you why it will not start.** `vibeaudio` is `WIN32`, so it has no
     console: a missing Qt DLL, a missing platform plugin, or a `QCommandLineParser` error all
     produce a process that exits with a bare code or a window that never appears. Run it from a
     shell with the pixi environment active, and if it dies without saying anything, that is the
@@ -2652,7 +2652,7 @@ integration. These are the ones found while implementing. Re-discovering any is 
     On 2026-08-22 a 176-byte binary `device_info.txt` naming this machine's GPU appeared in the
     repository root and turned `ctest` red on the sec. 6.6 ASCII check -- byte 0xEA at line 1,
     column 131 of a file nobody in this project wrote. It arrived while the shell was being clicked
-    through, so the writer is a plugin loaded in-process by `aip_ui`, whose working directory is
+    through, so the writer is a plugin loaded in-process by `vibeaudio`, whose working directory is
     wherever it was started -- the repository root, under `pixi run ui`.
 
     Two things follow. First, **a red hygiene test is not necessarily your fault**; look at what

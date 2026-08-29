@@ -471,7 +471,7 @@ button of its own, and the shell's icon is the executable's.
 
 The mechanics that satisfy the rule, and the reasons they are the ones chosen:
 
-- The icon is declared **once**, as a Win32 icon resource on the executable (`ui/aip_ui.rc`,
+- The icon is declared **once**, as a Win32 icon resource on the executable (`ui/vibeaudio.rc`,
   resource id 1 -- Explorer shows the lowest-numbered icon, so the id is load-bearing). That is
   also what Explorer, the taskbar and Alt-Tab read.
 - It is handed to Qt **once**, by `QApplication::setWindowIcon` in `main`, from an icon read back
@@ -740,7 +740,7 @@ toolset the binaries were built with. The portable package does not carry it.** 
 a machine needs to *build*; this is what a machine needs to *run*, and it is the only such
 requirement -- Qt and everything under it ship in the folder.
 
-Four of the five binaries need it, because they are built `/MD`: `aip_ui.exe`, `aip_scan.exe`,
+Four of the five binaries need it, because they are built `/MD`: `vibeaudio.exe`, `aip_scan.exe`,
 `apo_admin.exe` and `apo_host.exe` import `MSVCP140.dll`, `VCRUNTIME140.dll` and
 `VCRUNTIME140_1.dll`. The fifth is the one that must not, and does not: `aip_apo.dll` is built
 `/MT` -- the static CRT that sec. 5.2's table already gives it, for this exact reason -- and

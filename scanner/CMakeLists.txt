@@ -48,7 +48,7 @@ target_link_libraries(aip_scan PRIVATE
 )
 
 # How the parent finds the child in a build tree. Ninja Multi-Config gives every target its own
-# output directory, so `aip_scan.exe` is not next to `aip_ui.exe` here even though an installed
+# output directory, so `aip_scan.exe` is not next to `vibeaudio.exe` here even though an installed
 # layout will put them side by side -- and "next to the running executable" has to stay the first
 # answer, because that is the one that will be true in the field. This is the same escape hatch
 # tests/ uses for AIP_TEST_PLUGIN_PATH: a compile definition beats a relative path that rots.

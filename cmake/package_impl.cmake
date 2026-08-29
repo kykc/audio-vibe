@@ -118,7 +118,7 @@ foreach(executable IN LISTS AIP_PACKAGE_EXECUTABLES)
     list(APPEND staged_executables "${AIP_PACKAGE_DIR}/${name}")
 endforeach()
 
-# `aip_scan.exe` next to `aip_ui.exe` is not tidiness: the scanner looks for its child beside the
+# `aip_scan.exe` next to `vibeaudio.exe` is not tidiness: the scanner looks for its child beside the
 # running executable first, and falls back to a compile-time path that names this build tree
 # (status.md sec. 7 item 42). A package without it reports every plugin on the machine as broken.
 
@@ -193,10 +193,10 @@ Plugins = plugins\n")
 # An empty session file next to the executable is how portable mode is asked for
 # (config/session_file.h). Shipping one is the point of this folder: settings stay in it rather
 # than in the AppData of whichever machine it is run on.
-file(WRITE "${AIP_PACKAGE_DIR}/aip_config.yaml"
+file(WRITE "${AIP_PACKAGE_DIR}/vibeaudio.yaml"
 "# VibeAudio portable session.\n\
 #\n\
-# This file being here, next to aip_ui.exe, is what makes this a portable install: the rack, the\n\
+# This file being here, next to vibeaudio.exe, is what makes this a portable install: the rack, the\n\
 # plugin scan and the window position are kept in it rather than in %APPDATA%. Delete it to use\n\
 # %APPDATA% instead. It is rewritten in full every time the shell closes.\n\
 version: 1\n")

@@ -45,7 +45,7 @@ apo/        the king: the APO DLL. The one target built /MT
 engine/     VST3 host -- module loading, the plugin rack, preallocated process data
 config/     the session file (YAML), presets, the scan cache
 scanner/    aip_scan.exe -- out-of-process plugin probing, so a hostile plugin costs a child
-ui/         aip_ui.exe -- the Qt 6 Widgets shell
+ui/         vibeaudio.exe -- the Qt 6 Widgets shell
 tools/      valet_probe, apo_host, apo_admin, editor_spike
 tests/      Catch2, plus the conformance harness (a synthetic king and a valet driver)
 cmake/      the two pinned third-party dependencies: the VST3 SDK and yaml-cpp
@@ -263,11 +263,11 @@ tools/valet_probe/RelWithDebInfo/valet_probe.exe
 tools/apo_host/RelWithDebInfo/apo_host.exe
 tools/apo_admin/RelWithDebInfo/apo_admin.exe
 scanner/RelWithDebInfo/aip_scan.exe
-ui/RelWithDebInfo/aip_ui.exe
+ui/RelWithDebInfo/vibeaudio.exe
 apo/RelWithDebInfo/aip_apo.dll
 ```
 
-`pixi run package` produces `build/package`: `aip_ui.exe` and `aip_scan.exe` plus their Qt
+`pixi run package` produces `build/package`: `vibeaudio.exe` and `aip_scan.exe` plus their Qt
 dependencies, and an `apo\` subfolder with **`aip_apo.dll`, `apo_admin.exe` and `apo_host.exe`** --
 enough to register the APO on a machine and manage it there, which is what the folder is for. It
 is still not a developer kit: `valet_probe` and `editor_spike` are not in it, and the installer
@@ -286,7 +286,7 @@ in the folder; the MSVC runtime deliberately is not (design_doc.md sec. 6.7). A 
 folder would be patched by nobody -- it would freeze at whatever version the build machine held,
 security fixes included -- while the redistributable puts one serviced copy in `System32` that
 Windows Update maintains and every application shares. Any machine with Visual Studio, or with
-almost any other native application installed, already has it. Without it, `aip_ui.exe` fails to
+almost any other native application installed, already has it. Without it, `vibeaudio.exe` fails to
 start with a loader dialog naming `VCRUNTIME140.dll`. Note that `aip_apo.dll` is the exception and
 needs nothing: it is built `/MT` precisely so that nothing inside `audiodg.exe` depends on a
 redistributable.
@@ -411,14 +411,14 @@ With no paths it reads the bundle list from stdin, one escaped path per line.
 
 ---
 
-## 4. The shell (`aip_ui`)
+## 4. The shell (`vibeaudio`)
 
 A Qt 6 Widgets application. One process hosts the GUI, the plugins, their editors and the valet
 thread -- VST3 editors need a UI thread in the same process as their HWND, so splitting them
 would buy nothing.
 
 ```
-aip_ui [--vst3 PATH]... [--editors] [--attach] [--config PATH] [--scan]
+vibeaudio [--vst3 PATH]... [--editors] [--attach] [--config PATH] [--scan]
 ```
 
 | Option | Meaning |
@@ -519,7 +519,7 @@ process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25
 Below that is a log view of what the shell has done.
 
 The session -- the rack, each plugin's own state, whether the chain was bypassed, the cached scan
-report, the window geometry and the last endpoint -- is one YAML file, `aip_config.yaml`, taken
+report, the window geometry and the last endpoint -- is one YAML file, `vibeaudio.yaml`, taken
 from beside the executable if there is one there and from `%APPDATA%\vibe-audio\` otherwise. It is
 saved on close *and* on `WM_QUERYENDSESSION`, so a Windows restart with the shell open does not
 throw it away.

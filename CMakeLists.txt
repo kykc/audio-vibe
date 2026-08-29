@@ -80,6 +80,6 @@ add_subdirectory(tools/valet_probe)
 add_subdirectory(tools/editor_spike)
 add_subdirectory(tests)
 
-# After the subdirectories: it names aip_ui and aip_scan, and it reads QT6_INSTALL_PREFIX, which
+# After the subdirectories: it names vibeaudio and aip_scan, and it reads QT6_INSTALL_PREFIX, which
 # ui/'s find_package sets.
 include(package)

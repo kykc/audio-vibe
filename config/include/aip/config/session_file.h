@@ -22,9 +22,10 @@
 
 namespace aip::config {
 
-/// The file name at both locations. Named for what it is rather than for the application, so
-/// that the portable copy is recognisable sitting next to the executable.
-inline constexpr const char* kSessionFileName = "aip_config.yaml";
+/// The file name at both locations. Named for the application, and deliberately: the portable
+/// copy is a file sitting loose in a folder beside the executable, where a name that described
+/// its contents rather than its owner would be one more anonymous .yaml to guess about.
+inline constexpr const char* kSessionFileName = "vibeaudio.yaml";
 
 /// The format version written into every file. Read support is exact: a file from the future is
 /// refused with a message rather than half-understood, because a partially-read session silently

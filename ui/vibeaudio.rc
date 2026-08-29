@@ -1,4 +1,4 @@
-// Win32 resources for aip_ui.
+// Win32 resources for vibeaudio.
 //
 // The icon is attached to the *executable*. That is what Explorer, the taskbar and Alt-Tab read,
 // and it is deliberately the only place an icon is declared: `window_chrome.cpp` loads it back out

@@ -8,7 +8,7 @@
 // carries it to all of them, because Qt hands its own icon to any top-level window that has not
 // set one -- so nothing below has to remember to, and a new window is covered by existing.
 //
-// The icon itself is still declared in exactly one place, `ui/aip_ui.rc`, and read back out of
+// The icon itself is still declared in exactly one place, `ui/vibeaudio.rc`, and read back out of
 // the running executable here. The alternative -- a second copy in a Qt resource -- would be two
 // files to keep in step and two copies in the binary, for a picture that Windows has already
 // loaded.
@@ -28,7 +28,7 @@ class QWidget;
 
 namespace aip::ui {
 
-/// The resource id `ui/aip_ui.rc` attaches the icon under. Not arbitrary at either end: Explorer
+/// The resource id `ui/vibeaudio.rc` attaches the icon under. Not arbitrary at either end: Explorer
 /// shows the icon with the lowest id, so the application icon has to be the lowest one in the
 /// .rc, and this is the number that has to agree with it.
 inline constexpr int kApplicationIconId = 1;

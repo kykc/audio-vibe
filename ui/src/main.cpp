@@ -5,12 +5,12 @@
 // The command line exists for verification rather than for daily use -- a shell whose only route
 // into a given state is a sequence of mouse clicks cannot be checked without a person:
 //
-//   aip_ui                                 the saved session, detached
-//   aip_ui --vst3 <path.vst3>              load into the rack at startup; repeatable
-//   aip_ui --vst3 <path> --editors         and open each one's editor
-//   aip_ui --vst3 <path> --attach          and attach to the default render endpoint
-//   aip_ui --config <path.yaml>            use this session file instead of the usual two
-//   aip_ui --scan                          bring the plugin catalog up to date and report
+//   vibeaudio                                 the saved session, detached
+//   vibeaudio --vst3 <path.vst3>              load into the rack at startup; repeatable
+//   vibeaudio --vst3 <path> --editors         and open each one's editor
+//   vibeaudio --vst3 <path> --attach          and attach to the default render endpoint
+//   vibeaudio --config <path.yaml>            use this session file instead of the usual two
+//   vibeaudio --scan                          bring the plugin catalog up to date and report
 //
 // `--config` is also the way out of a session that will not load. It is **`--config` and not the
 // obvious `--session`** for the same reason as `--vst3` below: `-session` is on Qt's reserved
