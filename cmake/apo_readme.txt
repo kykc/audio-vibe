@@ -1,5 +1,9 @@
 VibeAudio -- the shell, the APO, and the tools that manage it.
 
+If this arrived as a zip: unblock the archive before extracting it -- right-click package.zip,
+Properties, Unblock. Windows marks a downloaded archive, Explorer copies that mark onto every file
+it extracts, and you then get a warning per executable instead of one.
+
 Running vibeaudio.exe costs nothing and is undone by closing it. Everything else here -- registering
 the APO, and putting it into an endpoint's effect chain -- changes the machine, system-wide, for
 every application that plays audio, until it is undone. The shell's File menu does both for you,

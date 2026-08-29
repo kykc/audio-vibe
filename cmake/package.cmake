@@ -70,6 +70,6 @@ add_custom_target(aip_package
         -D "AIP_PACKAGE_SEARCH_DIRS=${QT6_INSTALL_PREFIX}/bin"
         -P "${CMAKE_CURRENT_LIST_DIR}/package_impl.cmake"
     DEPENDS vibeaudio aip_scan aip_apo apo_admin apo_host
-    COMMENT "Building the portable package in ${AIP_PACKAGE_DIR}"
+    COMMENT "Building the portable package in ${AIP_PACKAGE_DIR}, and ${AIP_PACKAGE_DIR}.zip beside it"
     VERBATIM
     USES_TERMINAL)

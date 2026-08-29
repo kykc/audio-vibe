@@ -207,3 +207,54 @@ file(GLOB packaged_exes "${AIP_PACKAGE_DIR}/*.exe")
 list(LENGTH packaged_exes exe_count)
 message(STATUS "Packaged ${exe_count} executable(s) and ${dll_count} DLL(s)"
                " into ${AIP_PACKAGE_DIR}")
+
+# ------------------------------------------------------------------------------------ the archive
+
+# The zip is the thing that ships (design_doc.md sec. 6.8), so the build makes it rather than
+# leaving it to whoever is doing the shipping: a folder zipped by hand is a folder somebody can zip
+# wrongly -- at the archive root, or out of a tree somebody edited by hand. The folder is rewritten
+# from scratch on every run (the REMOVE_RECURSE above), and the archive is now made from it in the
+# same breath, so the two cannot disagree about what shipped.
+#
+# `cmake -E tar` and not `file(ARCHIVE_CREATE)`, because the entry names inside the archive are the
+# paths as they were given and nothing else decides them -- so the only thing that sets the layout
+# is the directory the command runs from, which `execute_process` can set and `ARCHIVE_CREATE`
+# cannot.
+#
+# **Exactly one top-level directory inside, named `VibeAudio`**, so that extracting the archive
+# gives the user a folder with the product's name on it rather than fifty DLLs in whatever
+# directory they happened to be in. The build folder is called `package` and stays called that --
+# every path in this repository and its documentation names it -- so the name is put on it for the
+# length of the tar and taken off again: a rename inside `build/`, which is one directory entry and
+# no copying, into a staging folder of our own so that nothing outside `build/` can be in the way.
+#
+# The rename back is unconditional, before the result is checked, which is the whole reason
+# `execute_process` is not allowed to be fatal here: a failed tar must not leave the package folder
+# parked under a different name.
+get_filename_component(package_parent "${AIP_PACKAGE_DIR}" DIRECTORY)
+get_filename_component(package_name "${AIP_PACKAGE_DIR}" NAME)
+set(package_archive "${package_parent}/${package_name}.zip")
+set(archive_root_name "VibeAudio")
+set(archive_stage "${package_parent}/_archive_stage")
+
+# Removed first so that a failed run leaves no archive at all rather than the previous one, which
+# would look current and be a build old.
+file(REMOVE "${package_archive}")
+
+file(REMOVE_RECURSE "${archive_stage}")
+file(MAKE_DIRECTORY "${archive_stage}")
+file(RENAME "${AIP_PACKAGE_DIR}" "${archive_stage}/${archive_root_name}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E tar cf "${package_archive}" --format=zip "${archive_root_name}"
+    WORKING_DIRECTORY "${archive_stage}"
+    RESULT_VARIABLE archive_result)
+file(RENAME "${archive_stage}/${archive_root_name}" "${AIP_PACKAGE_DIR}")
+file(REMOVE_RECURSE "${archive_stage}")
+
+if(NOT archive_result EQUAL 0)
+    message(FATAL_ERROR "could not write ${package_archive} (${archive_result})")
+endif()
+
+file(SIZE "${package_archive}" archive_bytes)
+math(EXPR archive_mib "${archive_bytes} / 1048576")
+message(STATUS "Wrote ${package_archive} (${archive_mib} MiB), unpacking to ${archive_root_name}/")

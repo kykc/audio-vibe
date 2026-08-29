@@ -405,7 +405,7 @@ This single requirement, not aesthetics, determines the stack.
 | Plugin format | **VST3 SDK 3.8.1**, MIT | Use `public.sdk/source/vst/hosting` (`module.h`, `PlugProvider`, host classes). |
 | Plugin scanning | **Separate short-lived probe process** | Fixes sec. 3.7.7 -- a malformed plugin can no longer take down the GUI. |
 | Audio thread | Own valet thread + `AvSetMmThreadCharacteristics("Pro Audio")` | Per sec. 4.6. No audio framework needed. |
-| Future APO | C++20, no CLR, **static CRT**, x64 + ARM64 | Static CRT avoids a VC++ redistributable dependency inside `audiodg.exe`. Links the SDK's `audiobaseprocessingobject.lib`. |
+| Future APO | C++20, no CLR, **static CRT**, x64 (ARM64 not built -- sec. 11.5) | Static CRT avoids a VC++ redistributable dependency inside `audiodg.exe`. Links the SDK's `audiobaseprocessingobject.lib`. |
 | Protocol | Header-only C++20 library, single source of truth | Shared verbatim by client, future APO and the conformance harness. |
 
 **Licensing outcome:** Qt under LGPLv3 (dynamic linking, Qt DLLs shipped alongside) plus a
@@ -555,7 +555,7 @@ no client attached, say. "We could write a nicer one" is not such a trigger.
 | Third-party source deps | **`FetchContent` only.** No git submodules, no vcpkg, no Conan |
 | VST3 SDK | `FetchContent` from the pinned official release archive + `URL_HASH` |
 | Windows SDK | 10.0.26100 (already installed) |
-| Architectures | x64 primary, ARM64 supported (sec. 3.7.6) |
+| Architectures | **x64 only.** ARM64 is not built and not tracked (sec. 11.5), even though the Windows SDK would cost nothing to add it (sec. 3.7.6) |
 | Distribution | **A zip of the portable folder** -- no installer until one is proven necessary (sec. 6.8). WiX v7 remains the choice if that changes |
 | Qt deployment | `windeployqt6` / `qt_generate_deploy_app_script` |
 | Tests | Catch2 v3 + `ctest` |
@@ -825,15 +825,16 @@ searches, so without it they would be resolved and copied in regardless of inten
 
 ### 6.8 No installer until one is proven necessary (normative)
 
-**The product is distributed as a zip of the portable folder that `pixi run package` already
-builds. No installer is written until something is shown to require one.** Project owner,
-2026-08-29. Sec. 6.1 keeps WiX v7 as the choice for the day that changes; it is not scheduled,
-and sec. 7.1's component tree no longer lists an `installer/`.
+**The product is distributed as `build/package.zip`, which `pixi run package` writes from the
+portable folder beside it. No installer is written until something is shown to require one.**
+Project owner, 2026-08-29. Sec. 6.1 keeps WiX v7 as the choice for the day that changes; it is not
+scheduled, and sec. 7.1's component tree no longer lists an `installer/`.
 
 The whole job is done from the shell, in the order a first-time user meets it:
 
-1. **Unzip anywhere and run `vibeaudio.exe`.** No pixi, no Qt, no Visual Studio, and exactly one
-   machine prerequisite (sec. 6.7).
+1. **Unzip anywhere and run `vibeaudio.exe`.** The archive holds one directory, `VibeAudio`, so it
+   extracts as a folder and not as a heap of files. No pixi, no Qt, no Visual Studio, and exactly
+   one machine prerequisite (sec. 6.7).
 2. **File -> Register APO.** Elevates once, copies `aip_apo.dll` into `%ProgramData%\VibeAudio`,
    and makes the class loadable from there. It changes what the machine *can* do and nothing
    about what it does.
@@ -873,8 +874,8 @@ Two costs, accepted and written down rather than papered over:
   to delete. What is left behind if nobody does it is inert -- a COM class nothing references and
   a DLL nothing loads -- which is why this is a cost and not a defect.
 - **Mark-of-the-Web rides on a downloaded archive** and Explorer propagates it to every extracted
-  file. Unblocking the zip before extracting is a line the shipped `README.txt` has to carry, and
-  is the sort of instruction an installer would not have needed.
+  file. The shipped `README.txt` opens by saying to unblock the archive before extracting -- the
+  sort of instruction an installer would not have needed.
 
 **What would reopen this**, any one of them sufficient: distribution to people who will not
 unzip a folder; a requirement to start with Windows or to run as a service; an updater; a
@@ -1312,7 +1313,7 @@ they are documented as prerequisites rather than left to be discovered during im
 | 2 | Confirm minimum OS floor (sec. 8.1) | project owner | APO stage | **Closed** 2026-08-23: Windows 11, unenforced |
 | 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage | **Closed** 2026-08-23: GFX `,2` only; the either/or rule confirmed directly, see sec. 8.2 |
 | 4 | Staged porting plan | project owner | -- | Open |
-| 5 | ARM64 support | project owner | -- | Deferred 2026-08-23. The APO must be ARM64 on Windows-on-ARM (`audiodg.exe` is native and an in-process DLL must match); the client should stay x64 under emulation, since conda-forge has no `qt6-main` for win-arm64 and the VST3 population is x64. Cross-compilation is available (`vs2026_win-arm64` exists in the win-64 subdir) but the local MSVC install has no ARM64 target tools, and nothing here can test the result |
+| 5 | ARM64 support | project owner | -- | **Closed as untracked** 2026-08-29: deferred until there is demand for it, and not carried as an item until then. The author has no ARM64 Windows machine, so a build could not be tested even if it were produced. The facts, for whoever picks it up: the APO must be ARM64 on Windows-on-ARM (`audiodg.exe` is native and an in-process DLL must match); the client can stay x64 under emulation, since conda-forge has no `qt6-main` for win-arm64 and the VST3 population is x64; cross-compilation is available (`vs2026_win-arm64` exists in the win-64 subdir) but the local MSVC install has no ARM64 target tools; and `tests/fixtures/aip_test_plugin` hard-codes `x86_64-win` in its bundle layout |
 | 6 | Port the in-house parametric EQ (`ParametricEqVst`, `PeqControl`) | project owner | -- | **Closed** 2026-08-29: not ported, and no DSP of our own is written at all (sec. 5.7) |
 | 7 | Build the WiX installer | project owner | -- | **Postponed** 2026-08-29 until one is proven necessary; the product ships as a zip of the portable folder (sec. 6.8) |
 

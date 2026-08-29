@@ -84,7 +84,8 @@ pixi run build        # RelWithDebInfo
 pixi run test         # ctest
 pixi run package      # build/package -- a portable folder needing no pixi, Qt or VS
                       # (one prerequisite: the MSVC redistributable -- sec. 6.7),
-                      # with the APO and its tools in it, beside the shell
+                      # with the APO and its tools in it, beside the shell,
+                      # and build/package.zip, which is what ships (sec. 6.8)
 ```
 
 **The first build downloads about 124 MB** (the VST3 SDK archive) and compiles five SDK
@@ -160,10 +161,14 @@ Two separate acts, deliberately, because they have completely different blast ra
 ```
 regsvr32 aip_apo.dll        # elevated
 regsvr32 /u aip_apo.dll     # removes exactly what the above added, and nothing else
+apo_admin --register        # copy to %ProgramData%\VibeAudio and register the copy instead
 ```
 
 Copy the DLL somewhere stable first (`C:\aip\` works). `audiodg.exe` holds it open once loaded,
-which would block rebuilds if you registered it out of the build tree.
+which would block rebuilds if you registered it out of the build tree. `apo_admin --register` is
+that copy-then-register as one step, and is what the shell's **File -> Register APO** runs -- it
+takes the DLL out of the build tree by construction, so the path recorded in `InprocServer32` is
+one nothing here moves.
 
 **Two: put it in an endpoint's effect chain.** This can silence the machine, so it is a separate
 tool that takes a `.reg` backup of the whole render tree before every mutation.
@@ -268,18 +273,20 @@ ui/RelWithDebInfo/vibeaudio.exe
 apo/RelWithDebInfo/aip_apo.dll
 ```
 
-`pixi run package` produces `build/package`: `vibeaudio.exe` and `aip_scan.exe` plus their Qt
-dependencies, and an `apo\` subfolder with **`aip_apo.dll`, `apo_admin.exe` and `apo_host.exe`** --
+`pixi run package` produces `build/package`: one flat folder with `vibeaudio.exe`, `aip_scan.exe`
+and their Qt dependencies, and **`aip_apo.dll`, `apo_admin.exe` and `apo_host.exe`** beside them --
 enough to register the APO on a machine and manage it there, which is what the folder is for. It
 is still not a developer kit: `valet_probe` and `editor_spike` are not in it. Nor is there an
-installer that would replace it: sec. 6.8 makes a zip of this folder the way the product ships.
+installer that would replace it (sec. 6.8): the same target also writes `build/package.zip`, which
+holds the same folder as a single top-level `VibeAudio/` directory, and that archive is what ships.
 
-`apo\` is a separate folder because it is a separate act. Running the shell costs nothing and ends
-when it is closed; putting the APO into an endpoint's effect chain rewrites machine state, needs
-elevation, and stays until it is undone. It ships a `README.txt` with the commands in order, and
-with the two ways the whole thing silently does nothing -- registration records the path the DLL
-was registered from, and the audio engine, running as a service account, cannot read a folder under
-your user profile.
+Flat, and that is worth knowing before the folder is put anywhere. `regsvr32` records the DLL's
+path in `InprocServer32` and the audio engine loads it from there ever after, so a folder
+registered that way is a deployment location and not a staging area: it has to stay where it is,
+and stay readable by the audio service account -- which a folder under your user profile is not.
+Registering from the shell instead (**File -> Register APO**, or `apo_admin --register`) sidesteps
+both by copying the DLL to `%ProgramData%\VibeAudio` and registering the copy, which leaves this
+folder free to move. The shipped `README.txt` has all of it, in the order somebody needs it.
 
 **The folder needs one thing from the machine: the [Microsoft Visual C++ 2015-2022 x64
 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).** Qt and everything under it are

@@ -1,5 +1,15 @@
 # Project status
 
+**Updated:** 2026-08-29, later. **Three decisions closed, and the first audio-quality pass is done.**
+No DSP of our own: the predecessor's parametric EQ is not reimplemented, because ZL Equalizer 2 --
+free, and open source -- already does that job and is the plugin everything here was verified
+against (design_doc.md sec. 5.7). No installer: the product ships as a zip of the portable folder,
+and the whole install is in the shell -- Register APO, Audio Device Settings, Attach (sec. 6.8).
+And the system has run as this machine's audio path for a week with nothing found: processing
+stable, memory footprint constant, no crash and no hang. What turns up from here is a defect,
+handled as one, not a milestone waiting to be finished (section 4). ARM64 is deferred and no
+longer tracked either (sec. 11.5): there is no ARM64 Windows machine here to test a build on.
+
 **Updated:** 2026-08-29. **The shell has a menu bar, an About box that names the commit it was
 built from, and an Audio Device Settings dialog** -- so installing the APO on an endpoint no
 longer needs an elevated console. The dialog is the project's first Qt Designer `.ui` file, a
@@ -7,7 +17,9 @@ deliberate trial on the one form dense enough to justify one, and it does the mu
 `apo_admin` elevated rather than touching the registry itself. `apo_admin` grew a repeatable
 `--endpoint` and a `--report <path>` to make that possible. The product name is now **VibeAudio**,
 the settings folder is `%APPDATA%\vibe-audio\` with no migration from the old one, and there is a
-root `LICENSE` (MIT). See section 7 items 89-91. 156 tests.
+root `LICENSE` (MIT). **File -> Register APO** completes the pair: it copies `aip_apo.dll` into
+`%ProgramData%\VibeAudio` and registers the copy, so the folder the user unzipped is free to move
+afterwards. See section 7 items 89-92. 156 tests.
 
 **Updated:** 2026-08-23, late. **The APO stage has started and `apo/` exists.** A drop-in
 replacement for the deployed 2013 binary: same protocol v1 wire behaviour, new CLSID
@@ -196,6 +208,8 @@ To hand the thing to someone who has none of this installed:
 pixi run package       # build/package -- a folder that runs on a machine with no pixi,
                        # no Qt and no Visual Studio. Copy it anywhere. The APO and the
                        # tools that register and manage it are in it too (item 88).
+                       # Also build/package.zip -- one VibeAudio/ folder inside,
+                       # and that archive is what ships (sec. 6.8).
 ```
 
 The shell also takes a command line, for checking a state without clicking through to it. Note
@@ -793,12 +807,23 @@ Proven against the real deployed APO on the development machine:
   1.7 s, ghosted at 5.8 s, drawn at 6.2 s. Warm starts on either build are 150-400 ms with both
   plugins loaded, which is why the defect read as intermittent and as "two plugins, never one".
 
+- **Audio quality: the initial pass is done, and it was a week of use rather than a bench test.**
+  Project owner, 2026-08-29. The system ran as this machine's audio path for the week from
+  2026-08-22, through whatever was played and whatever formats Windows chose, and produced
+  nothing to chase: no defect found, processing stable throughout, the memory footprint constant,
+  no crash and no hang.
+
+  What that is and what it is not. It is exposure -- every application on the machine, every day,
+  for a week -- and that is a wider net than the bench pass this item used to ask for. It is not a
+  null test against a reference, and no separate check was made for clicks at a rebuild or a
+  bypass toggle. The item closes on the exposure, not on the measurement.
+
+  **Anything found from here is a defect, handled as one.** No second quality pass is pending and
+  nothing waits on one: a fault that turns up gets diagnosed and fixed like any other, rather than
+  reopening this.
+
 **Not** proven -- do not assume any of these:
 
-- **Audio quality.** A single EQ move sounded right at first glance (see above), which establishes
-  that the chain is audible and not obviously broken. It says nothing about correctness: no null
-  test against a reference, no check for clicks at a rebuild or a bypass toggle, no sustained
-  listening. The project owner has this queued as a separate extensive pass.
 - A parameter gesture on a plugin *other than* ZL Equalizer 2. One real editor is now checked (see
   above); NeuralAmpModeler and anything iPlug2-wrapped is not.
 - That the two plugins which timed out would ever have finished. **Answered on 2026-08-23 by the
@@ -961,10 +986,13 @@ Proven against the real deployed APO on the development machine:
   harness.
 - Takeover between two real client processes. The `Stolen` path is covered only by the harness
   forging a foreign valet id.
-- A long soak (hours) against the real APO. The longest so far is a few minutes, from the shell.
-  The shell is the natural place to run one now, because it shows the allocation counters live.
-- ARM64. Declared supported in sec. 6.1, never built. Note that
-  `tests/fixtures/aip_test_plugin` hard-codes `x86_64-win` in its bundle layout.
+- ~~A long soak (hours) against the real APO.~~ **Answered by use, 2026-08-22 to 2026-08-29:** a
+  week as this machine's audio path, with processing stable, the footprint constant and no crash
+  and no hang (section 4). What is still absent is an *instrumented* soak -- nobody watched the
+  allocation counters for hours at a stretch -- but the exposure was far wider than one.
+- ARM64, which is now neither built nor tracked (sec. 11.5): there is no ARM64 Windows machine
+  here, so a cross-compiled binary could be produced and not tested. Note for whoever revisits it
+  that `tests/fixtures/aip_test_plugin` hard-codes `x86_64-win` in its bundle layout.
 
 ---
 
@@ -1001,9 +1029,10 @@ What the shell shows continuously, and what each number means when it moves:
 
 What `pixi run ui` does **not** cover, and so must not be mistaken for a clean bill of health:
 
-- **Resident set.** The sec. 7.4.3 criterion is zero allocations *and* flat RSS. The shell shows
-  the first and not the second, so a long soak still needs an external watch on the process's
-  working set. Making the shell show it is the obvious small improvement and is not done.
+- **Resident set across restarts.** The sec. 7.4.3 criterion is zero allocations *and* flat RSS,
+  and since item 75 the shell shows both on one line, so the external watch this used to need is
+  gone. What the line cannot do is remember: it starts again at every launch, so a drift that only
+  shows over days is read by comparing figures somebody wrote down.
 - **Anything but steady state on one endpoint at one format.** Everything in the "not proven" list
   above stays unproven no matter how long the window is left open: no format change, no endpoint
   switch, no takeover, no rack mutation while attached.
@@ -1088,7 +1117,8 @@ UI work still outstanding, none of it blocking:
   alongside them, so a soak run documents itself.~~ **Both done on 2026-08-23**, as one line --
   `process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25` -- directly under the audio-thread
   counters, which is where the two halves of the criterion are read together. See sec. 7 item 75
-  and section 4. What is left of the item is that nobody has yet run the soak it exists for.
+  and section 4. The soak it was built for has since happened by being used rather than by being
+  run: a week of daily use with the figure constant throughout (section 4).
 - ~~Say which endpoints have the APO, and stop the user attaching to the ones that do not.~~
   **Done on 2026-08-23** (sec. 7 item 77, and section 4). What is left of it is a machine with
   more than one usable endpoint to check the sorting against.
@@ -1115,13 +1145,12 @@ Worth doing at some point, none of it blocking:
   ASCII hygiene test red. The scanner child was fixed this way (item 45); the shell was not, because
   `--vst3` accepts a relative path and moving the current directory would quietly change what one
   resolves to. Doing it after argument parsing is the obvious answer if it is worth doing.
-- Add `clang-format` to `pixi.toml` with a `format` task. It is listed as project hygiene in
-  sec. 6.1 but is not in the toolchain, so the 100-column limit is currently hand-maintained.
-- Produce the zip, not just the folder. Sec. 6.8 makes a zip of `build/package` the way this ships,
-  and `pixi run package` stops at the folder -- `cmake -E tar cf ... --format=zip` is the whole of
-  the missing step. `cmake/apo_readme.txt` already covers the rest of what sec. 6.8 leans on
-  (Register APO, where the folder can live, how to undo it); the one line it does not have yet is
-  to unblock the archive before extracting, which only matters once there is an archive.
+- ~~Add `clang-format` to `pixi.toml` with a `format` task.~~ **Done:** `pixi run format` rewrites
+  and `pixi run format-check` reports, both taking their file list from `git ls-files` so nothing
+  under `build/` is touched. The 100-column limit is no longer hand-maintained.
+- ~~Produce the zip, not just the folder.~~ **Done on 2026-08-29** (item 93): `pixi run package`
+  now writes `build/package.zip` beside the folder, and `cmake/apo_readme.txt` gained the one line
+  it was missing -- unblock the archive before extracting, or Explorer marks every file in it.
 - Exercise the probe against a second endpoint and across a Windows-driven format change.
 - Decide whether `ValetSupervisor` should expose endpoint hot-swap, which the UI will want.
 - sec. 9.6 -- replace the SDK's CMake with an in-house static library. Much less urgent now that
@@ -1158,7 +1187,7 @@ with that change stashed:
 | 1 | Minimum OS floor | project owner | APO rewrite | **Closed** 2026-08-23: Windows 11, as a support statement rather than an enforced gate (sec. 8.1) |
 | 2 | GFX vs modern registration slots | project owner | APO rewrite | **Closed** 2026-08-23: GFX `,2` only, and the either/or rule confirmed the hard way (sec. 8.2) |
 | 3 | Staged porting plan (sec. 11.4) | project owner | -- | Open |
-| 4 | ARM64 | project owner | -- | Deferred in full (sec. 11.5) |
+| 4 | ARM64 | project owner | -- | **Closed as untracked** 2026-08-29: deferred until there is demand, and not tracked until then -- there is no ARM64 Windows machine here to test a build on (sec. 11.5) |
 | 5 | Reimplement the predecessor's parametric EQ | project owner | -- | **Closed** 2026-08-29: not reimplemented, and no DSP of our own is written at all (sec. 5.7) |
 | 6 | Build an installer | project owner | -- | **Postponed** 2026-08-29 until one is proven necessary; a zip of the portable folder, installed from the shell (sec. 6.8) |
 
@@ -2404,28 +2433,29 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     zero across the four transitions. The `Ctrl` in "Ctrl+Editor" is the one part that could not be
     driven from here -- see sec. 4 and sec. 8 item 32.
 
-88. **The portable folder carries the APO in an `apo/` subfolder, self-contained rather than
-    sharing.** Asked for by the project owner on 2026-08-24: the package should be able to register
-    and manage the APO on the machine it is copied to. So `aip_apo.dll`, `apo_admin.exe` and
-    `apo_host.exe` go in, and item 57's dependency walk is now run once per folder rather than once
-    for the package.
+88. **The portable folder carries the APO, flat, beside the shell.** Asked for by the project
+    owner on 2026-08-24: the package should be able to register and manage the APO on the machine
+    it is copied to. So `aip_apo.dll`, `apo_admin.exe` and `apo_host.exe` go in.
 
-    **A subfolder and not the root**, which was the alternative and is what "next to the shell"
-    would have meant. Running the shell costs nothing and is undone by closing it. Putting a CLSID
-    into an endpoint's GFX slot rewrites machine state, needs elevation, and can silence the machine
-    until it is put back -- and the folder boundary is the cheapest possible way to say that the
-    two are not the same act. It is also where the shipped `README.txt` can sit without being read
-    as instructions for the shell.
+    **It was an `apo/` subfolder first, and was flattened the same day.** The subfolder said, with
+    a folder boundary, that the two acts are not the same one: running the shell costs nothing and
+    is undone by closing it, while putting a CLSID into an endpoint's GFX slot rewrites machine
+    state, needs elevation, and can silence the machine until it is put back. What overruled that
+    is the recorded path. `regsvr32` writes the DLL's location into `InprocServer32` and the audio
+    engine loads it from there ever after, so wherever the DLL sits is a deployment location and
+    not a staging area -- and a deployment location one directory below the shell's is two things
+    to keep in step instead of one. Flat means the whole package has to stay where it was
+    registered and stay readable by the audio service account, and `README.txt` says both.
+    `cmake/package_impl.cmake` carries that reasoning beside the copy that does it.
 
-    **The dependency walk runs once per folder**, because Windows resolves an executable's imports
-    against its own directory and never against the parent's: a DLL `apo\apo_admin.exe` needs has
-    to be in `apo\`, not merely somewhere in the package. As it turns out the two folders need
-    disjoint sets and `apo/` comes out with nothing but its own three files -- measured rather than
-    assumed: `apo_admin.exe` and `apo_host.exe` import `MSVCP140`, `VCRUNTIME140` and
-    `VCRUNTIME140_1`, which the machine provides (design_doc.md sec. 6.7, and the paragraph below);
-    `aip_apo.dll` imports `AVRT`, `ole32`, `ADVAPI32` and `KERNEL32` and nothing else, which is the
-    static CRT in `apo/CMakeLists.txt` doing exactly what it is there for. The per-folder walk stays
-    because that outcome is a property of what these five binaries link today, not a rule.
+    **So the dependency walk is one walk again**, over one directory, rather than the once-per-
+    folder it briefly needed -- Windows resolves an executable's imports against its own directory
+    and never against the parent's, which is what made two folders cost two walks. The measurement
+    that mattered survived the change: `apo_admin.exe` and `apo_host.exe` import `MSVCP140`,
+    `VCRUNTIME140` and `VCRUNTIME140_1`, which the machine provides (design_doc.md sec. 6.7, and
+    the paragraph below); `aip_apo.dll` imports `AVRT`, `ole32`, `ADVAPI32` and `KERNEL32` and
+    nothing else, so it joins the folder as the 23rd file and adds not one DLL to the 22 already
+    there. That is the static CRT in `apo/CMakeLists.txt` doing exactly what it is there for.
 
     **The MSVC runtime came out of the package the same day it went in**, on the project owner's
     instruction: it is a machine prerequisite, and the decision is normative in design_doc.md
@@ -2450,6 +2480,12 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     only, while the path this project actually deploys to -- `C:\aip`, per the live registration --
     grants `BUILTIN\Users:(RX)`. A package unzipped onto the desktop would register, slot, and never
     load.
+
+    **Both of those are now sidestepped rather than merely documented** (item 92): `apo_admin
+    --register`, which is what the shell's File menu runs, registers a *copy* in
+    `%ProgramData%\VibeAudio` -- machine-wide and readable by `BUILTIN\Users` -- so the folder is
+    free to move afterwards and never has to be somewhere the service account can read. The two
+    warnings still hold for the `regsvr32` route, which registers the DLL where it is.
 
     `apo_host.exe` is in there with the two management commands even though it manages nothing. It
     is the one tool that proves the DLL loads and processes with `audiodg.exe` out of the loop, so
@@ -2544,6 +2580,64 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     because `apo_admin` refuses both verbs in one run; the dialog says so before the first prompt
     rather than letting the second be a surprise. The clean fix, if that ever grates, is a single
     `--plan <file>` mode -- deliberately not built.
+
+92. **Register APO is in the File menu, and it registers a copy rather than the DLL in the
+    folder.** Added on 2026-08-29, after item 91 had made the *slot* half of an installation a
+    menu item and left the *loadable* half to an elevated prompt and a line of documentation.
+    `MainWindow::registerApo` runs `apo_admin --register --dll <path> --yes` through the same
+    elevated runner the settings dialog uses (`ui/src/apo_admin_runner.h`).
+
+    **The copy is the point, not a convenience.** Registration records the DLL's current path in
+    `InprocServer32`, so the two ordinary things a person does to a downloaded folder each produce
+    an APO that is registered, slotted and silently never loaded: move it, and the recorded path
+    names nothing; leave it under a user profile, and the service account behind `audiodg.exe`
+    cannot read it (item 88). `--register` copies into `%ProgramData%\VibeAudio` -- located
+    through `FOLDERID_ProgramData` rather than the environment variable -- whose inherited ACL
+    already grants `BUILTIN\Users` read, and registers *that*. The unzipped folder is then free to
+    move, which is what design_doc.md sec. 6.8 rests on.
+
+    **Nothing is asked before the elevation prompt**, and that is deliberate. Registering changes
+    what the machine *can* do and nothing about what it does: no endpoint is touched, and the class
+    sits unreferenced until Audio Device Settings names it in a chain. A confirmation in front of a
+    UAC prompt, for an act that is inert until a second act, protects nothing. The dialog that
+    follows says the APO is not in any device's chain yet, which is the sentence that needs saying.
+
+    **The DLL path is passed explicitly** rather than left to `apo_admin` to find beside itself:
+    in the build tree the tool and the DLL are in different directories, and registering from a
+    build tree is what makes this testable without packaging first.
+
+    **Re-registering over a live APO is safe.** `copyOver` replaces the file underneath the DLL
+    `audiodg.exe` already holds open, and the loaded copy goes on running out of the file it was
+    loaded from -- so an attached shell stays attached and keeps processing across a re-register.
+
+93. **`pixi run package` writes the archive as well as the folder.** Asked for by the project
+    owner on 2026-08-29, the day design_doc.md sec. 6.8 made a zip the way this ships: an artifact
+    that ships should be built by the build, not zipped by hand afterwards.
+    `cmake/package_impl.cmake` ends with a `cmake -E tar cf ... --format=zip`, and the run reports
+    `Wrote .../build/package.zip (27 MiB)` next to the file counts. 52 entries here.
+
+    **Exactly one top-level directory inside, and it is called `VibeAudio`.** Archiving the
+    contents instead would extract fifty files into whatever directory the user happened to be in,
+    and this is a folder that has to stay together -- an APO registered out of it records its path
+    (item 88). The name is the product's rather than the build tree's, project owner 2026-08-29:
+    what a person extracts should say what it is, and `package/` on a desktop says nothing.
+
+    **The build folder is still `build/package`** -- every path in this repository and its
+    documentation names it -- so `VibeAudio` is put on it for the length of the `tar` and taken off
+    again. A `file(RENAME)` inside `build/`, into a staging folder of our own, which is one
+    directory entry and copies nothing; the alternative was copying 27 MiB on every package run to
+    get a different name on the same bytes.
+
+    The rename back is unconditional and happens *before* the result is checked, which is why the
+    `execute_process` is not allowed to be fatal: a failed `tar` must not leave the package folder
+    parked under another name. `cmake -E tar` rather than `file(ARCHIVE_CREATE)` for the same
+    family of reason -- the names stored in the archive are the paths as passed, so the only thing
+    that decides the layout is the working directory, which `execute_process` can set and
+    `file(ARCHIVE_CREATE)` cannot.
+
+    The archive is deleted before it is written, so a failed run leaves no zip rather than the
+    previous one -- which would look current and be a build old. The folder itself needs no such
+    care: it is already `REMOVE_RECURSE`d and rebuilt on every run.
 
 ---
 
