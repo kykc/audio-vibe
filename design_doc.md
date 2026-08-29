@@ -830,10 +830,10 @@ portable folder beside it. No installer is written until something is shown to r
 Project owner, 2026-08-29. Sec. 6.1 keeps WiX v7 as the choice for the day that changes; it is not
 scheduled, and sec. 7.1's component tree no longer lists an `installer/`.
 
-Every push to main publishes that archive to this instance's generic package registry as
-`vibeaudio` `<project version>-<short commit>`, once the suite is green on the same build --
-`.gitea/workflows/test-and-publish.yaml`, and status.md sec. 7 item 94. So "the current build" is
-a URL rather than a folder somebody has to be sent.
+Every push to main publishes that archive to the instance's `audist` package organisation as the
+generic package `vibeaudio`, versioned `<project version>-<short commit>`, once the suite is green
+on the same build -- `.gitea/workflows/test-and-publish.yaml`, and status.md sec. 7 item 94. So
+"the current build" is a URL rather than a folder somebody has to be sent.
 
 The whole job is done from the shell, in the order a first-time user meets it:
 

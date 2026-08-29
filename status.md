@@ -2643,8 +2643,10 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     `.gitea/workflows/test-and-publish.yaml`, asked for by the project owner on 2026-08-29. It
     checks out, builds, runs the suite, and then -- on a push to main only -- runs
     `pixi run package` and PUTs `build/package.zip` to
-    `/api/packages/{owner}/generic/vibeaudio/{version}/VibeAudio-{version}-windows-amd64.zip`.
-    One artifact, because there is one architecture (sec. 11.5): no fan-out, nothing to gather.
+    `/api/packages/audist/generic/vibeaudio/{version}/VibeAudio-{version}-windows-amd64.zip`.
+    `audist` is the organisation every package on this instance lives under, whatever repository
+    built it, so it is a literal here and not this repository's owner. One artifact, because there
+    is one architecture (sec. 11.5): no fan-out, nothing to gather.
 
     **It was two files for about an hour, and one job is the reason it is not.** The checkout ends
     in `git clean -ffdx`, which takes `build/` with it, so every run is a cold build of the whole

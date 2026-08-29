@@ -140,7 +140,7 @@ jobs:
           $utf8 = New-Object System.Text.UTF8Encoding $false
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version`nasset=$asset`n", $utf8)
 
-      # PUT /api/packages/{owner}/generic/{name}/{version}/{filename}. Generic packages key on
+      # PUT /api/packages/audist/generic/{name}/{version}/{filename}. Generic packages key on
       # name and version separately, so the name stays bare and the commit rides in the version.
       #
       # `Invoke-WebRequest` rather than curl.exe: this runner is PowerShell and this is one
@@ -165,6 +165,11 @@ jobs:
         env:
           CI_USER: ${{ secrets.CI_USER }}
           CI_TOKEN: ${{ secrets.CI_TOKEN }}
+          # Every package on this instance lives under `audist`, whatever repository built it, so
+          # this is that organisation literally and not the repository's own owner. CI_USER is
+          # assumed to hold write access to it -- if it does not, the PUT is a 403 and the fix is
+          # to the account, not to this file.
+          PKG_OWNER: audist
           PKG_NAME: vibeaudio
           PKG_VERSION: ${{ steps.version.outputs.version }}
           ASSET: ${{ steps.version.outputs.asset }}
@@ -179,8 +184,7 @@ jobs:
             throw "$($missing -join ' and ') not set on this repository; publishing needs both"
           }
 
-          $owner = $env:GITHUB_REPOSITORY.Split('/')[0]
-          $registry = "$env:GITHUB_SERVER_URL/api/packages/$owner/generic/$env:PKG_NAME/$env:PKG_VERSION"
+          $registry = "$env:GITHUB_SERVER_URL/api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME/$env:PKG_VERSION"
           $target = "$registry/$env:ASSET"
 
           $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
