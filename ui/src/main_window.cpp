@@ -305,8 +305,8 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
 void MainWindow::buildMenuBar() {
     auto* file = menuBar()->addMenu(QStringLiteral("&File"));
 
-    deviceSettingsAction_ = file->addAction(QStringLiteral("&Audio Device Settings..."));
-    connect(deviceSettingsAction_, &QAction::triggered, this, &MainWindow::openDeviceSettings);
+    QAction* deviceSettingsAction = file->addAction(QStringLiteral("&Audio Device Settings..."));
+    connect(deviceSettingsAction, &QAction::triggered, this, &MainWindow::openDeviceSettings);
     file->addSeparator();
 
     // `close()` and not `QApplication::quit()`. They look interchangeable and are not: `quit()`
@@ -320,34 +320,91 @@ void MainWindow::buildMenuBar() {
     auto* help = menuBar()->addMenu(QStringLiteral("&Help"));
     QAction* aboutAction = help->addAction(QStringLiteral("&About VibeAudio"));
     connect(aboutAction, &QAction::triggered, this, [this] { showAboutDialog(this); });
-
-    syncDeviceSettingsAction();
 }
 
-/// Available only while detached, and that is not caution -- it is the same rule
-/// `refreshEndpoints` already keeps. Applying a change restarts `Audiosrv`, which tears down
-/// `audiodg.exe` and with it the king this valet is attached to; and re-enumerating underneath a
-/// live link would leave the combo box and the supervisor disagreeing about which endpoint is in
-/// use. Both are avoided by not opening the dialog at all, with the reason on the item.
-void MainWindow::syncDeviceSettingsAction() {
-    if (deviceSettingsAction_ == nullptr) {
+/// The dialog still cannot be open across a live link, for the reason `refreshEndpoints` already
+/// keeps: applying a change restarts `Audiosrv`, which tears down `audiodg.exe` and with it the
+/// king this valet is attached to, and re-enumerating underneath a live link would leave the combo
+/// box and the supervisor disagreeing about which endpoint is in use. What changed is who does
+/// something about it. Greying the item out enforced the rule by handing the user a dead menu
+/// entry and a detach to perform by hand; this enforces it by performing the detach -- after
+/// saying so, because taking the machine's processed audio away is not something to do quietly --
+/// and by putting the link back afterwards.
+///
+/// "Afterwards" is conditional, and silent when it does not happen. This dialog is where the APO
+/// is installed and removed, so the endpoint we detached from is precisely the one the user may
+/// have just taken it off; an endpoint that has become unattachable is a thing they chose a moment
+/// ago, and reporting it back at them would read as a failure rather than as their own edit taking
+/// effect. Only a reattach that was meant to work and did not says anything, through
+/// `toggleAttach`.
+void MainWindow::openDeviceSettings() {
+    // Taken before anything detaches, and by GUID rather than by row: the dialog re-enumerates,
+    // and `refreshEndpoints` orders the list by whether the APO is installed -- so which row this
+    // endpoint sits on is one of the things the dialog can change.
+    std::wstring reattachGuid;
+
+    if (host_.attached()) {
+        const QString endpointName = host_.status().endpointName;
+
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(QStringLiteral("Audio Device Settings"));
+        box.setText(endpointName.isEmpty() ? QStringLiteral("Opening this will detach from the current endpoint.")
+                                           : QStringLiteral("Opening this will detach from %1.").arg(endpointName));
+        box.setInformativeText(QStringLiteral("Installing or removing the APO restarts the Windows audio service, "
+                                              "which ends the link. Sound keeps playing on the endpoint, unprocessed, "
+                                              "and the rack is untouched. This shell attaches again when you close "
+                                              "the dialog, provided the APO is still installed on that endpoint."));
+        QPushButton* proceed = box.addButton(QStringLiteral("Detach and Continue"), QMessageBox::AcceptRole);
+        // Cancel is the default and the escape route: the answer that costs the user their audio
+        // should not be the one a stray Return press gives.
+        box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+        box.exec();
+        if (box.clickedButton() != proceed) {
+            return;
+        }
+
+        const int index = endpointBox_->currentIndex();
+        if (index >= 0 && static_cast<std::size_t>(index) < endpoints_.size()) {
+            reattachGuid = endpoints_[static_cast<std::size_t>(index)].guid;
+        }
+        // Through the toggle rather than `host_.detach()`, so that the log line, the attach mark
+        // and the buttons all come along with it.
+        toggleAttach();
+    }
+
+    {
+        AudioDeviceDialog dialog(this);
+        connect(&dialog, &AudioDeviceDialog::message, this, &MainWindow::log);
+        // Everything that decides whether an endpoint can be attached to reads `ApoRegistration`,
+        // and all of it is stale the moment the dialog changes one -- the combo box, the Attach
+        // button and the greyed-out ordering. One re-enumeration puts all three right.
+        connect(&dialog, &AudioDeviceDialog::registrationChanged, this, &MainWindow::refreshEndpoints);
+        dialog.exec();
+    }
+
+    if (reattachGuid.empty()) {
         return;
     }
-    const bool attached = host_.attached();
-    deviceSettingsAction_->setEnabled(!attached);
-    deviceSettingsAction_->setToolTip(attached
-            ? QStringLiteral("Detach first: changing this restarts the Windows audio service")
-            : QString());
-}
 
-void MainWindow::openDeviceSettings() {
-    AudioDeviceDialog dialog(this);
-    connect(&dialog, &AudioDeviceDialog::message, this, &MainWindow::log);
-    // Everything that decides whether an endpoint can be attached to reads `ApoRegistration`, and
-    // all of it is stale the moment the dialog changes one -- the combo box, the Attach button
-    // and the greyed-out ordering. One re-enumeration puts all three right.
-    connect(&dialog, &AudioDeviceDialog::registrationChanged, this, &MainWindow::refreshEndpoints);
-    dialog.exec();
+    // Unconditionally, and not only when the dialog reported a change: `apo_admin` restarts
+    // `Audiosrv` on its own account, and what the registry says about an endpoint is worth reading
+    // again afterwards whether or not this window was told anything.
+    refreshEndpoints();
+
+    for (std::size_t i = 0; i < endpoints_.size(); ++i) {
+        if (endpoints_[i].guid != reattachGuid) {
+            continue;
+        }
+        if (!ipc::attachable(endpoints_[i].apo.presence)) {
+            return;
+        }
+        endpointBox_->setCurrentIndex(static_cast<int>(i));
+        toggleAttach();
+        return;
+    }
+    // The endpoint has left the list entirely -- unplugged, or disabled while the dialog was open.
+    // Nothing to attach to, and nothing the user did not just watch happen.
 }
 
 QWidget* MainWindow::buildLinkGroup() {
@@ -852,9 +909,6 @@ void MainWindow::updateStatus() {
     attachButton_->setEnabled(status.attached || currentEndpointAttachable());
     endpointBox_->setEnabled(!status.attached);
     refreshButton_->setEnabled(!status.attached);
-    // Alongside the two above, and for the same reason: this is where the attached state is
-    // noticed however it changed, including the ways nobody pressed anything for.
-    syncDeviceSettingsAction();
 
     QString link = QStringLiteral("%1").arg(QLatin1String(linkStateName(status.linkState)));
     if (status.idle) {
