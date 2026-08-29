@@ -101,9 +101,15 @@ void showAboutDialog(QWidget* parent) {
         QStringLiteral("Built with Qt 6 (LGPLv3), the Steinberg VST3 SDK 3.8.1 (MIT) and "
                        "yaml-cpp (MIT). VST is a trademark of Steinberg Media Technologies GmbH.")));
 
+    // The wording and the link the icon's author asks for, rather than a credit of our own
+    // choosing: Flaticon's free tier is conditional on the attribution naming the creator and
+    // pointing at the icon's page, so this line is a licence term and not a courtesy. It is the
+    // same picture as the one in the caption and the taskbar (design_doc.md sec. 5.6).
     layout->addWidget(prose(&dialog,
-        QStringLiteral("Application icon: \"mixing table\" from "
-                       "<a href=\"https://www.flaticon.com/free-icon/mixing-table_5903291\">Flaticon</a>.")));
+        QStringLiteral("Application icon: "
+                       "<a href=\"https://www.flaticon.com/free-icons/mixing-table\" "
+                       "title=\"mixing table icons\">"
+                       "Mixing table icons created by Magnific - Flaticon</a>.")));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);

@@ -21,7 +21,9 @@ This document covers:
 It also freezes the **v1 IPC protocol** as a normative specification, so that the userspace
 client and the APO can be rewritten independently and sequentially.
 
-Out of scope for this document: the staged porting plan, UI design, and DSP feature set.
+Out of scope for this document: the staged porting plan and UI design. So is the DSP feature set,
+with the one exception that had to be settled to size the rest -- there is no DSP of our own at
+all (sec. 5.7).
 
 ### 1.1 Rewrite motivations
 
@@ -489,6 +491,53 @@ those four steps are what the editor exemption above still uses; the reasoning i
 sec. 7 item 35. The caption *text* of the shell's own window is `VibeAudio` (project owner,
 2026-08-29) -- that is a separate decision and is not affected by this one.
 
+### 5.7 No in-house DSP -- the parametric EQ is not ported (normative)
+
+**`ParametricEqVst` (sec. 2) is not ported, and nothing is written in its place.** This project
+is a host. The equalizer comes from a plugin the user installs, and the reference one is **ZL
+Equalizer 2** -- free, and source-available under AGPLv3 at `github.com/ZL-Audio/ZLEqualizer`.
+Project owner, 2026-08-29. (The bundle installed here names itself `ZL Equalizer 2` and reports
+version 1.3.1: the 2 belongs to the product name, not to the version.)
+
+**Why the predecessor's decision does not carry over.** The in-house EQ was written for a
+2013-era product, the better part of fifteen years ago, when a free parametric EQ that a host
+could simply load was not something one could count on. Today it is. ZL Equalizer 2 is a dynamic
+EQ with more capability than the predecessor's had, it costs nothing, its source is public, and
+it is already the plugin against which this project's editor hosting (sec. 10), parameter
+delivery, state persistence and real-APO runs were verified (status.md sec. 4). What a port
+would reimplement is not merely available; it is the thing installed on the development machine
+and used as the yardstick daily.
+
+**Not-invented-here is not a reason.** None of the rewrite motivations in sec. 1.1 concerns the
+DSP; every one of them concerns the stack around it. An in-house EQ would add a permanent
+maintenance surface -- filter design, coefficient smoothing, an editor, a preset format, and its
+own bugs -- carried forever, for output a listener cannot tell from what a better-maintained
+plugin already produces, while sec. 9.1 (the one real defect in this design: a stalled userspace
+process blocking the audio engine's real-time thread) stays unfixed. The budget is finite, and
+this is not where it goes.
+
+Consequences:
+
+- **`PeqControl` (sec. 2, `Tomatl`) is not ported either.** A curve editor with no EQ behind it
+  has nothing to draw. Sec. 5.2's Qt rationale names `Plot`/`PeqControl` as a `QPainter` port
+  target; the `Plot` half stands -- metering and analysis are ours -- and the `PeqControl` half
+  is moot. The stack decision does not rest on it; sec. 5.1 does.
+- **No DSP of our own ships at all**, EQ or otherwise. The rack is third-party plugins end to
+  end. Processing of our own would be a new decision needing its own justification, not this one
+  lapsing.
+- **Nothing third-party is redistributed.** The user installs the plugin; the host loads it at
+  run time through VST3 interfaces and knows nothing else about it. The licence of any given
+  plugin is therefore the user's affair, and this project's MIT release (sec. 5.2) is untouched.
+  Putting a copyleft plugin *into* the installer is an entirely different question and must not
+  be done as a packaging convenience without answering it first.
+- **ZL Equalizer 2 stays a test specimen, not a dependency.** No build step, test or runtime
+  path may require it to be present. Where the suite needs a plugin it can count on, that is
+  `tests/fixtures/aip_test_plugin` (and `aip_hostile_plugin` for the failure paths).
+
+Reopen this only on a concrete trigger: no maintained free EQ plugin that works in this host, or
+a requirement that a hosted plugin structurally cannot serve -- processing inside the APO with
+no client attached, say. "We could write a nicer one" is not such a trigger.
+
 ---
 
 ## 6. Toolchain and dependencies
@@ -507,7 +556,7 @@ sec. 7 item 35. The caption *text* of the shell's own window is `VibeAudio` (pro
 | VST3 SDK | `FetchContent` from the pinned official release archive + `URL_HASH` |
 | Windows SDK | 10.0.26100 (already installed) |
 | Architectures | x64 primary, ARM64 supported (sec. 3.7.6) |
-| Installer | **WiX v7** (.NET tool / MSBuild SDK) |
+| Distribution | **A zip of the portable folder** -- no installer until one is proven necessary (sec. 6.8). WiX v7 remains the choice if that changes |
 | Qt deployment | `windeployqt6` / `qt_generate_deploy_app_script` |
 | Tests | Catch2 v3 + `ctest` |
 | Hygiene | `clang-format`, `clang-tidy`, `/W4 /permissive-`, `/analyze` on the APO, ASCII-only sources (sec. 6.6) |
@@ -774,6 +823,66 @@ The dependency walk that builds the package therefore excludes the whole `msvcp1
 belt-and-braces: conda-forge's Qt ships its own copies of those DLLs in the directory the walk
 searches, so without it they would be resolved and copied in regardless of intent.
 
+### 6.8 No installer until one is proven necessary (normative)
+
+**The product is distributed as a zip of the portable folder that `pixi run package` already
+builds. No installer is written until something is shown to require one.** Project owner,
+2026-08-29. Sec. 6.1 keeps WiX v7 as the choice for the day that changes; it is not scheduled,
+and sec. 7.1's component tree no longer lists an `installer/`.
+
+The whole job is done from the shell, in the order a first-time user meets it:
+
+1. **Unzip anywhere and run `vibeaudio.exe`.** No pixi, no Qt, no Visual Studio, and exactly one
+   machine prerequisite (sec. 6.7).
+2. **File -> Register APO.** Elevates once, copies `aip_apo.dll` into `%ProgramData%\VibeAudio`,
+   and makes the class loadable from there. It changes what the machine *can* do and nothing
+   about what it does.
+3. **Audio Device Settings.** Puts the CLSID into the chosen endpoint's GFX slot, backing up what
+   the slot held, and restarts `Audiosrv` (sec. 8.2).
+4. **Attach, then add plugins to the rack.** The rack, each plugin's own state and the endpoint
+   come back by themselves on the next start.
+
+**What the installer was actually for, and what happened to it.** The argument was never
+shortcuts or a progress bar -- it was the install *path*. `regsvr32` records the DLL's current
+path in `InprocServer32` and the audio engine loads it from there ever after, so the two ordinary
+things a person does with a downloaded folder each produce an APO that is registered, slotted and
+silently never loaded: move the folder, and the recorded path names nothing; leave it under
+`C:\Users\<name>`, and the service account behind `audiodg.exe` cannot read it (status.md sec. 8
+item 88). `apo_admin --register` copying into `%ProgramData%\VibeAudio` -- machine-wide, and
+readable by `BUILTIN\Users` through inheritance -- retires both failures, and the unzipped folder
+is free to move afterwards. That was the one job only an installer looked able to do, and it is
+done by the act that needed it rather than by a separate program.
+
+The remaining arguments do not survive contact:
+
+- **Elevation.** It is needed twice, for two distinct acts, and each asks for it where it
+  happens. An installer would take it once, up front, for a session that also does things needing
+  no privilege at all -- more privilege at a worse moment -- and device settings would still ask
+  again later.
+- **A fixed location and an Add/Remove Programs entry.** Administrative tidiness for a payload
+  that is one folder the user placed and one `%ProgramData%` copy.
+- **SmartScreen.** This is what people actually reach for an installer to fix, and an MSI does
+  not fix it: an unsigned MSI is warned about exactly like an unsigned executable. A signature
+  fixes it, and a signature applies to the files in the zip.
+
+Two costs, accepted and written down rather than papered over:
+
+- **Removal is not entirely in the UI.** Audio Device Settings takes the CLSID back out of the
+  slot, which is the half that changes what the machine does; unregistering is still
+  `regsvr32 /u "%ProgramData%\VibeAudio\aip_apo.dll"` by hand, after which the folder is a folder
+  to delete. What is left behind if nobody does it is inert -- a COM class nothing references and
+  a DLL nothing loads -- which is why this is a cost and not a defect.
+- **Mark-of-the-Web rides on a downloaded archive** and Explorer propagates it to every extracted
+  file. Unblocking the zip before extracting is a line the shipped `README.txt` has to carry, and
+  is the sort of instruction an installer would not have needed.
+
+**What would reopen this**, any one of them sufficient: distribution to people who will not
+unzip a folder; a requirement to start with Windows or to run as a service; an updater; a
+per-user/per-machine split that needs an authority the shell does not have; or a second thing to
+register somewhere `--register` does not reach. None of those exists today. The predecessor's
+answer to the same problem was a hand-written WinForms installer (sec. 2) -- a whole component to
+maintain, in the stack this rewrite exists to leave behind.
+
 ---
 
 ## 7. Target architecture
@@ -786,10 +895,9 @@ audio-ipc2/
   ipc/             BufferValet implementation, valet thread, thread promotion (sec. 4.6)
   engine/          VST3 host: module loading, plugin chain, state, processing graph
   scanner/         separate executable -- out-of-process plugin probing
-  ui/              Qt 6 Widgets shell, plugin rack, editor hosting, EQ/plot widgets
+  ui/              Qt 6 Widgets shell, plugin rack, editor hosting, plot widgets (no EQ, sec. 5.7)
   apo/             (later stage) the rewritten APO
   tests/           Catch2: protocol conformance (sec. 4.7), engine, scanner
-  installer/       WiX v7
 ```
 
 ### 7.2 Process model
@@ -1205,6 +1313,8 @@ they are documented as prerequisites rather than left to be discovered during im
 | 3 | Independently verify GFX vs modern slot behaviour (sec. 8.2) | project owner | APO stage | **Closed** 2026-08-23: GFX `,2` only; the either/or rule confirmed directly, see sec. 8.2 |
 | 4 | Staged porting plan | project owner | -- | Open |
 | 5 | ARM64 support | project owner | -- | Deferred 2026-08-23. The APO must be ARM64 on Windows-on-ARM (`audiodg.exe` is native and an in-process DLL must match); the client should stay x64 under emulation, since conda-forge has no `qt6-main` for win-arm64 and the VST3 population is x64. Cross-compilation is available (`vs2026_win-arm64` exists in the win-64 subdir) but the local MSVC install has no ARM64 target tools, and nothing here can test the result |
+| 6 | Port the in-house parametric EQ (`ParametricEqVst`, `PeqControl`) | project owner | -- | **Closed** 2026-08-29: not ported, and no DSP of our own is written at all (sec. 5.7) |
+| 7 | Build the WiX installer | project owner | -- | **Postponed** 2026-08-29 until one is proven necessary; the product ships as a zip of the portable folder (sec. 6.8) |
 
 ---
 
@@ -1224,3 +1334,5 @@ they are documented as prerequisites rather than left to be discovered during im
 - [Qt6 status in conda-forge](https://conda-forge.org/blog/2026/07/01/qt6-status-in-conda-forge/)
 - [WiX Toolset release notes](https://docs.firegiant.com/wix/whatsnew/releasenotes/)
 - [JUCE 8 licence](https://juce.com/legal/juce-8-licence/)
+- [ZL Equalizer -- source, AGPLv3](https://github.com/ZL-Audio/ZLEqualizer)
+- [ZL Equalizer 2 product page](https://zl-audio.github.io/plugins/zlequalizer2/)

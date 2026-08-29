@@ -20,7 +20,8 @@ Two halves, named after their roles in the IPC protocol:
 - **Valet** -- the userspace client (`ipc/`, `engine/`, `ui/`). Consumer. Opens what the king made.
 
 This README is for a **developer working on the project**. End-user documentation and the
-installer are deliberately out of scope: the installer's shape is not decided yet.
+installer are out of scope -- and there is no installer: the product ships as a zip of the
+portable folder, installed from the shell itself (sec. 6.8).
 
 Three other documents, and none of them repeats another:
 
@@ -270,8 +271,8 @@ apo/RelWithDebInfo/aip_apo.dll
 `pixi run package` produces `build/package`: `vibeaudio.exe` and `aip_scan.exe` plus their Qt
 dependencies, and an `apo\` subfolder with **`aip_apo.dll`, `apo_admin.exe` and `apo_host.exe`** --
 enough to register the APO on a machine and manage it there, which is what the folder is for. It
-is still not a developer kit: `valet_probe` and `editor_spike` are not in it, and the installer
-that would replace this folder does not exist yet.
+is still not a developer kit: `valet_probe` and `editor_spike` are not in it. Nor is there an
+installer that would replace it: sec. 6.8 makes a zip of this folder the way the product ships.
 
 `apo\` is a separate folder because it is a separate act. Running the shell costs nothing and ends
 when it is closed; putting the APO into an endpoint's effect chain rewrites machine state, needs

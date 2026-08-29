@@ -175,10 +175,9 @@ engine/     VST3 host: module loading, plugin chain, state, processing graph
 config/     the session file: the rack, plugin state, the scan cache, window, endpoint. YAML,
             no Qt
 scanner/    separate executable -- out-of-process plugin probing (crash isolation)
-ui/         Qt 6 Widgets shell, plugin rack, editor hosting, EQ/plot widgets
+ui/         Qt 6 Widgets shell, plugin rack, editor hosting, plot widgets (no EQ -- sec. 5.7)
 apo/        the rewritten APO -- a /MT DLL, the only target built that way
 tests/      Catch2: protocol conformance, engine, scanner
-installer/  WiX v7
 ```
 
 One userspace process hosts GUI + plugins + editors + valet thread (plugin editors need a UI

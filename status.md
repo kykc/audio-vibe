@@ -239,7 +239,7 @@ components rather than numbered, so the two schemes cannot be confused.
 | **UI** | **`ui/` -- Qt 6 Widgets shell: endpoint attach, plugin rack, multi-editor hosting** | **Done for a first cut; verified against the real APO with two real plugins** |
 | **Scanner** | **`scanner/` -- out-of-process plugin probing: a resumable child, crash and hang isolation, a line-record wire format; wired in behind the shell's plugin picker** | **Done for a first cut; verified against this machine's entire plugin population, and the picker given a surface pass. Scanned once while attached, with no dropouts** |
 | **Session** | **`config/` -- one YAML file: the rack, each plugin's own state, the cached scan report, the window, the last endpoint; portable next to the exe, AppData otherwise. Chain presets are the rack alone, in a file the user names** | **Done for a first cut; round-tripped through the real shell, and through the suite with a fixture that persists state and refuses a foreign blob. Neither half of a plugin that kills the shell -- while loading, or while processing -- survives into the next start** |
-| Installer | `installer/` -- WiX v7 | Not started, and deliberately out of scope for the APO stage. `pixi run package` already produces the payload one would carry: a self-contained portable folder |
+| Installer | -- | **Postponed 2026-08-29 until proven necessary (sec. 6.8).** The product ships as a zip of the folder `pixi run package` builds, and the whole install is in the shell: Register APO, then Audio Device Settings, then Attach. WiX v7 stays the choice if a reason to build one ever turns up |
 | **APO rewrite** | **`apo/` -- the rewritten APO, plus `tools/apo_host` and `tools/apo_admin`** | **Done for a first cut: 1208 blocks through a live `audiodg.exe` from the real client, and driven out of process against both this APO and the deployed 2013 one** |
 
 "Done for a single linear chain, mutable while running" is deliberate: the engine holds an
@@ -1097,8 +1097,9 @@ UI work still outstanding, none of it blocking:
 - Drag-and-drop reordering, and dropping a `.vst3` onto the window to add it. A preset file
   dropped on the rack is the same gesture and now has somewhere to go (items 70-72).
 - Endpoint hot-swap while attached, which needs `ValetSupervisor` to grow it (see below).
-- The sec. 5.2 "EQ/plot widgets" the design document mentions for `ui/`. Nothing needs them yet;
-  they belong with whatever the project's own processing turns out to be, not with plugin hosting.
+- The plot half of the sec. 5.2 "EQ/plot widgets" the design document mentions for `ui/`. Nothing
+  needs it yet, and the EQ half is settled rather than pending: sec. 5.7 says there is no DSP of
+  our own to draw a curve for.
 
 Worth doing at some point, none of it blocking:
 
@@ -1116,6 +1117,11 @@ Worth doing at some point, none of it blocking:
   resolves to. Doing it after argument parsing is the obvious answer if it is worth doing.
 - Add `clang-format` to `pixi.toml` with a `format` task. It is listed as project hygiene in
   sec. 6.1 but is not in the toolchain, so the 100-column limit is currently hand-maintained.
+- Produce the zip, not just the folder. Sec. 6.8 makes a zip of `build/package` the way this ships,
+  and `pixi run package` stops at the folder -- `cmake -E tar cf ... --format=zip` is the whole of
+  the missing step. `cmake/apo_readme.txt` already covers the rest of what sec. 6.8 leans on
+  (Register APO, where the folder can live, how to undo it); the one line it does not have yet is
+  to unblock the archive before extracting, which only matters once there is an archive.
 - Exercise the probe against a second endpoint and across a Windows-driven format change.
 - Decide whether `ValetSupervisor` should expose endpoint hot-swap, which the UI will want.
 - sec. 9.6 -- replace the SDK's CMake with an in-house static library. Much less urgent now that
@@ -1153,6 +1159,8 @@ with that change stashed:
 | 2 | GFX vs modern registration slots | project owner | APO rewrite | **Closed** 2026-08-23: GFX `,2` only, and the either/or rule confirmed the hard way (sec. 8.2) |
 | 3 | Staged porting plan (sec. 11.4) | project owner | -- | Open |
 | 4 | ARM64 | project owner | -- | Deferred in full (sec. 11.5) |
+| 5 | Reimplement the predecessor's parametric EQ | project owner | -- | **Closed** 2026-08-29: not reimplemented, and no DSP of our own is written at all (sec. 5.7) |
+| 6 | Build an installer | project owner | -- | **Postponed** 2026-08-29 until one is proven necessary; a zip of the portable folder, installed from the shell (sec. 6.8) |
 
 Nothing is blocking. The APO runs inside a live `audiodg.exe` -- see section 4a.
 
