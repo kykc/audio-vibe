@@ -153,7 +153,7 @@ bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool 
             error = "cannot write " + temporary.string();
             return false;
         }
-        file << "# audio-ipc2 chain preset: the chain, and nothing else about the shell.\n";
+        file << "# VibeAudio chain preset: the chain, and nothing else about the shell.\n";
         file << "# Load it from the Rack panel's Load Preset button, which replaces whatever is\n";
         file << "# in the rack with what is written here.\n";
         file << out.c_str() << '\n';

@@ -14,6 +14,13 @@ add_executable(aip_ui WIN32
     # executable so that there is no second copy of the picture to keep in step.
     aip_ui.rc
     src/main.cpp
+    src/about_dialog.cpp
+    src/about_dialog.h
+    src/audio_device_dialog.cpp
+    src/audio_device_dialog.h
+    # The first Qt Designer form in the project. AUTOUIC turns it into ui_audio_device_dialog.h
+    # in the build tree; nothing includes it but src/audio_device_dialog.cpp.
+    src/audio_device_dialog.ui
     src/main_window.cpp
     src/main_window.h
     src/session_end_filter.cpp
@@ -45,12 +52,22 @@ add_executable(aip_ui WIN32
     src/window_placement.h
 )
 
-set_target_properties(aip_ui PROPERTIES AUTOMOC ON)
+# AUTOUIC as well as AUTOMOC now: `src/audio_device_dialog.ui` is the first form laid out in
+# Designer rather than in C++ (see the header for why that one and not the others). uic puts
+# `ui_audio_device_dialog.h` in the build tree and on the include path, so there is nothing else
+# to declare -- and nothing generated ever lands in the source tree.
+set_target_properties(aip_ui PROPERTIES AUTOMOC ON AUTOUIC ON)
 
 # For the resource compiler, not for the C++ sources: rc.exe resolves a relative path in a .rc
 # against its include path, not against the .rc file's own directory, so without this the icon is
 # reported as missing.
 target_include_directories(aip_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# `aip/version.h`, which the About box reads. Written on every build rather than at configure time
+# so that the commit it names is the commit the binary came from -- cmake/version.cmake says why
+# that distinction is worth a target.
+target_include_directories(aip_ui PRIVATE ${AIP_VERSION_INCLUDE_DIR})
+add_dependencies(aip_ui aip_version_header)
 
 target_link_libraries(aip_ui PRIVATE
     aip_common
@@ -69,6 +86,13 @@ target_link_libraries(aip_ui PRIVATE
 
 # aip_ui starts aip_scan; nothing links it, so nothing would otherwise build it first.
 add_dependencies(aip_ui aip_scan)
+
+# The same arrangement for apo_admin, which the Audio Device Settings dialog runs elevated to do
+# the one thing the shell has no rights to do itself. In the package both sit in one flat folder
+# and "next to me" finds it; in the build tree every target has its own directory, so the path is
+# compiled in as the fallback -- exactly what scanner/CMakeLists.txt does for aip_scan.
+add_dependencies(aip_ui apo_admin)
+target_compile_definitions(aip_ui PRIVATE AIP_APO_ADMIN_EXECUTABLE="$<TARGET_FILE:apo_admin>")
 
 # Qt's platform plugin lives outside the directory Qt6Core probes by default in a conda-forge
 # layout, and without it the process dies with "could not find or load the Qt platform plugin" --

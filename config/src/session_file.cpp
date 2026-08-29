@@ -135,7 +135,7 @@ SessionPaths sessionPaths() {
 
     const fs::path appData = roamingAppDataDirectory();
     if (!appData.empty()) {
-        paths.appData = appData / "audio-ipc2" / kSessionFileName;
+        paths.appData = appData / "vibe-audio" / kSessionFileName;
     }
 
     return paths;
@@ -349,7 +349,7 @@ bool writeSession(const fs::path& path, const Session& session, std::string& err
             error = "cannot write " + temporary.string();
             return false;
         }
-        file << "# audio-ipc2 session. Rewritten in full when the shell closes.\n";
+        file << "# VibeAudio session. Rewritten in full when the shell closes.\n";
         file << "# A copy of this file next to the executable takes precedence over the one in\n";
         file << "# AppData, which is how portable mode is asked for.\n";
         file << out.c_str() << '\n';

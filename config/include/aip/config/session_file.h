@@ -6,7 +6,7 @@
 //   next to the executable   portable. Put a config there and it wins, which is the whole
 //                            mechanism -- a stick with the app and its settings on it works
 //                            without anything being installed or configured to make it work.
-//   %APPDATA%/audio-ipc2/    the default, and where a clean install saves for the first time.
+//   %APPDATA%/vibe-audio/    the default, and where a clean install saves for the first time.
 //
 // Loading takes the portable one if it exists, otherwise the AppData one. Saving goes back to
 // whichever file was loaded, and to AppData when nothing was loaded at all. So the default is

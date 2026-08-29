@@ -44,6 +44,7 @@
 #include <utility>
 #include <vector>
 
+class QAction;
 class QCloseEvent;
 class QComboBox;
 class QLabel;
@@ -135,6 +136,17 @@ private:
     /// is also what suppresses the reattach -- see the note at the top of this file.
     [[nodiscard]] bool selectSavedEndpoint(const std::string& endpointId, const std::string& endpointName);
 
+    /// The menu bar. Unlike the three below it returns nothing and adds nothing to the central
+    /// layout -- `QMainWindow::menuBar()` owns and places it -- but it is here with them because
+    /// it is the same kind of thing: window furniture built once in the constructor.
+    void buildMenuBar();
+
+    /// Opens the dialog that installs and removes this project's APO on render endpoints.
+    void openDeviceSettings();
+
+    /// Enables or disables that menu item from the link state. Called whenever the link changes.
+    void syncDeviceSettingsAction();
+
     QWidget* buildLinkGroup();
     QWidget* buildRackGroup();
     QWidget* buildCountersGroup();
@@ -177,6 +189,9 @@ private:
     bool sessionEndSaved_ = false;
 
     std::vector<ipc::RenderEndpoint> endpoints_;
+
+    /// The one menu item whose availability depends on the link state; see `syncDeviceSettingsAction`.
+    QAction* deviceSettingsAction_ = nullptr;
 
     QComboBox* endpointBox_ = nullptr;
     QPushButton* refreshButton_ = nullptr;

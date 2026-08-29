@@ -1,4 +1,13 @@
-# audio-ipc2
+# VibeAudio
+
+**VibeAudio** is the product name; `audio_ipc2` remains the CMake project, the repository and the
+target prefix, and there is no plan to rename those -- they are build identifiers, and renaming
+them would churn every path in this document for nothing. The name reaches the user in three
+places: the About box, `%APPDATA%\vibe-audio\`, and the header of a saved session or preset.
+
+Released under the MIT license (`LICENSE`). Qt 6 is used under the LGPLv3, which is why it is
+linked dynamically and its DLLs ship beside the executable rather than inside it; the VST3 SDK
+and yaml-cpp are MIT (design_doc.md sec. 5.2).
 
 A Windows-only system-wide audio processor. A user-mode **APO** inside `audiodg.exe` intercepts
 every audio block from the Windows audio engine and hands it, through shared memory, to a
@@ -95,7 +104,7 @@ pixi run -- ctest --preset release
 ### Reading the test results
 
 ```
-pixi run test    # expect: 100% tests passed out of 153, and NOTHING skipped
+pixi run test    # expect: 100% tests passed out of 156, and NOTHING skipped
 ```
 
 **Read the skip count, not just the pass line.** RelWithDebInfo must skip nothing. `Release`
@@ -371,7 +380,7 @@ flag to skip it.
 
 ```
 apo_admin [--list] [--install [--legacy]] [--uninstall] [--endpoint GUID|N]
-          [--backup-dir PATH] [--restart-audio] [--yes]
+          [--backup-dir PATH] [--report PATH] [--restart-audio] [--yes]
 ```
 
 | Option | Meaning |
@@ -380,8 +389,9 @@ apo_admin [--list] [--install [--legacy]] [--uninstall] [--endpoint GUID|N]
 | `--install` | write our CLSID to the GFX slot, saving what was there to `OriginalGfxApo`, and clear the modern slots |
 | `--install --legacy` | the same with the deployed 2013 CLSID -- how you switch a machine back and forth to compare |
 | `--uninstall` | restore whatever was there before, modern slots included |
-| `--endpoint GUID\|N` | act on one endpoint. Default: all of them |
+| `--endpoint GUID\|N` | act on one endpoint. Default: all of them. **Repeatable**, so several devices cost one run and one service restart |
 | `--backup-dir PATH` | where the `.reg` goes. Default `C:\aip-backup` |
+| `--report PATH` | also write the outcome to this file, one `kind<tab>sentence` per line. For a caller that cannot read our console -- an elevated child has no way to hand one back, which is how the shell reads it |
 | `--restart-audio` | restart `Audiosrv` afterwards, so the change takes effect now |
 | `--yes` | skip the confirmation prompt |
 
@@ -426,7 +436,28 @@ run the executable directly rather than through `pixi run ui`.
 
 ### What is on screen
 
-Three groups, top to bottom.
+A menu bar, and three groups below it.
+
+**File -> Audio Device Settings...** is the only way to install or remove the APO without a
+console. It lists the active render endpoints with a tick box each, stages what you tick, and on
+`Apply` runs `apo_admin` **elevated** -- so the shell itself never needs administrator rights and
+never writes the registry. Everything the tool says lands in the shell's log view; the backup, the
+modern-slot policy and the service restart stay in `apo_admin`, which is the only place they are
+implemented. The item is **disabled while attached**: applying restarts `Audiosrv`, which would
+take the live link down under you.
+
+Ticking one device and unticking another in the same batch costs **two** elevation prompts --
+`apo_admin` refuses `--install` and `--uninstall` in one run -- and the dialog says so before the
+first one. While the tool runs, a modal busy indicator covers the wait: no percentage, because the
+child reports nothing until it exits, and no Cancel, because there is nothing a cancel could stop.
+It is there so that the several seconds of silence while `Audiosrv` restarts do not read as a
+crash.
+
+**File -> Exit** goes through the same path as the window's close button, so the session is saved.
+**Help -> About VibeAudio** carries the version: the project version and the commit the binary was
+built from, `-dirty` when the tree had uncommitted changes. That string is resolved at build time
+(`cmake/version.cmake`), so it names the binary in front of you rather than whatever was checked
+out when CMake last ran. Quote it in a defect report; the label is selectable for that reason.
 
 **Link.** An endpoint combo box, `Refresh`, and `Attach`. Endpoints without this project's APO
 registered are greyed out, sorted to the bottom, and cannot be selected -- attaching to one can
@@ -488,9 +519,14 @@ process: resident 90.6 MiB   peak 93.8 MiB   up 0:00:25
 Below that is a log view of what the shell has done.
 
 The session -- the rack, each plugin's own state, whether the chain was bypassed, the cached scan
-report, the window geometry and the last endpoint -- is one YAML file, written next to the executable if that directory is
-writable and in AppData otherwise. It is saved on close *and* on `WM_QUERYENDSESSION`, so a
-Windows restart with the shell open does not throw it away.
+report, the window geometry and the last endpoint -- is one YAML file, `aip_config.yaml`, taken
+from beside the executable if there is one there and from `%APPDATA%\vibe-audio\` otherwise. It is
+saved on close *and* on `WM_QUERYENDSESSION`, so a Windows restart with the shell open does not
+throw it away.
+
+That folder was `audio-ipc2` until the rename and there is **no migration**: nothing has shipped,
+so a development machine simply starts with an empty rack once and the old folder is left where it
+is. Delete it by hand if it bothers you.
 
 ---
 

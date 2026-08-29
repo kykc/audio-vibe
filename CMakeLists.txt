@@ -59,6 +59,10 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(vst3sdk)
 include(yamlcpp)
 
+# Not a third-party pin like the two above, but included alongside them for the same reason: it
+# is a decision about what a number means, and it has to be made before any target that shows it.
+include(version)
+
 add_subdirectory(protocol)
 add_subdirectory(rt)
 add_subdirectory(ipc)

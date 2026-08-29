@@ -1,4 +1,4 @@
-audio-ipc2 -- the shell, the APO, and the tools that manage it.
+VibeAudio -- the shell, the APO, and the tools that manage it.
 
 Running aip_ui.exe costs nothing and is undone by closing it. Everything else here -- registering
 the APO, and putting it into an endpoint's effect chain -- needs an ELEVATED command prompt and
@@ -14,7 +14,11 @@ loaded into the Windows audio engine cannot depend on a redistributable being pr
 WHAT IS IN HERE
 
   aip_ui.exe      the shell: the rack, the plugin browser, and the Attach button. Needs no
-                  elevation and changes nothing outside this folder.
+                  elevation and changes nothing outside this folder. Its File menu has an
+                  Audio Device Settings dialog that does the apo_admin step below for you,
+                  asking Windows for administrator rights for that one action only.
+  LICENSE         the MIT license this software is released under. Qt, whose DLLs are in this
+                  folder, is used under the LGPLv3.
   aip_scan.exe    scans VST3 plugins out of process, so a plugin that crashes takes the scanner
                   with it and not the shell. Launched by aip_ui.exe; not run by hand.
   aip_apo.dll     the APO. Loaded into audiodg.exe by the Windows audio engine, and hands every

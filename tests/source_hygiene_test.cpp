@@ -24,10 +24,15 @@ namespace {
 // third-party headers), and build output.
 const std::set<std::string> kSkippedDirectories = {".git", ".pixi", "build", "out"};
 
-const std::set<std::string> kCheckedExtensions = {".h", ".hpp", ".cpp", ".md", ".txt", ".json", ".toml", ".rc"};
+// `.ui` is Qt Designer's XML. It is tracked text like any other and Designer will happily write a
+// typographic character into a label -- which then reaches the user through a generated header
+// that nothing else here inspects.
+const std::set<std::string> kCheckedExtensions = {
+    ".h", ".hpp", ".cpp", ".md", ".txt", ".json", ".toml", ".rc", ".ui"};
 
-// Dotfiles have no extension but are still ours.
-const std::set<std::string> kCheckedNames = {".clang-format", ".gitignore", ".gitattributes"};
+// Files with no extension that are still ours. `LICENSE` is here because a licence is pasted from
+// somewhere else more often than it is typed, which is exactly how a non-ASCII byte arrives.
+const std::set<std::string> kCheckedNames = {".clang-format", ".gitignore", ".gitattributes", "LICENSE"};
 
 bool isChecked(const fs::path& path) {
     const std::string name = path.filename().string();

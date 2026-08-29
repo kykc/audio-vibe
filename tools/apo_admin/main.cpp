@@ -501,8 +501,13 @@ void printUsage() {
                  L"  --install [--legacy]      write our CLSID into the GFX slot, saving what was there\n"
                  L"  --uninstall               restore whatever the slot held before --install\n"
                  L"  --endpoint <guid|index>   act on one endpoint (default: all of them). The index\n"
-                 L"                            is the one --list prints; the guid is the stable one\n"
+                 L"                            is the one --list prints; the guid is the stable one.\n"
+                 L"                            Repeatable, so one run and one service restart can\n"
+                 L"                            cover several devices\n"
                  L"  --backup-dir <path>       where the .reg backup goes (default C:\\aip-backup)\n"
+                 L"  --report <path>           also write what happened to this file, one line per\n"
+                 L"                            outcome. For a caller that cannot read our console --\n"
+                 L"                            an elevated child has no way to hand one back\n"
                  L"  --restart-audio           restart the audio service afterwards, so the change takes\n"
                  L"                            effect. Without it nothing happens until the endpoint is\n"
                  L"                            next initialised\n"
@@ -562,9 +567,42 @@ struct Options {
     bool restart = false;
     bool assumeYes = false;
     bool help = false;
-    std::wstring endpoint;
+    /// Repeatable. Empty still means every endpoint -- see the note where the targets are chosen.
+    std::vector<std::wstring> endpoints;
     std::wstring backupDir = L"C:\\aip-backup";
+    /// `--report`. Empty means no report is written, which is the case for every human run.
+    std::wstring reportPath;
 };
+
+/// One line of the machine-readable report: a kind a caller can branch on, and the same sentence
+/// a person reading the console would have seen.
+struct ReportLine {
+    const wchar_t* kind;
+    std::wstring text;
+};
+
+/// The report `--report` asks for.
+///
+/// This exists for the GUI and for nothing else. `ShellExecuteEx` is the only way to launch a
+/// child *elevated*, and it cannot redirect standard output -- so an unelevated caller that
+/// spawns this tool to do the one thing that needs administrator rights has no way at all to find
+/// out what happened beyond the exit code. A file is the way back.
+///
+/// The format is deliberately dull: a version line, then one `kind<tab>text` per line, then the
+/// exit code. `text` is the sentence the console got, so a caller that understands nothing else
+/// can still put it in front of the user verbatim.
+void writeReport(const std::wstring& path, const std::vector<ReportLine>& lines, int exitCode) {
+    FILE* file = nullptr;
+    if (::_wfopen_s(&file, path.c_str(), L"w, ccs=UTF-8") != 0 || file == nullptr) {
+        return;
+    }
+    std::fwprintf(file, L"apo_admin-report 1\n");
+    for (const ReportLine& line : lines) {
+        std::fwprintf(file, L"%s\t%s\n", line.kind, line.text.c_str());
+    }
+    std::fwprintf(file, L"exit\t%d\n", exitCode);
+    (void)std::fclose(file);
+}
 
 [[nodiscard]] bool elevated() {
     HANDLE token = nullptr;
@@ -578,10 +616,15 @@ struct Options {
     return ok && elevation.TokenIsElevated != 0;
 }
 
-} // namespace
+/// Everything the tool does.
+///
+/// Split out of `wmain` only so that the report is written on every way out. There are eight
+/// returns below, and the one that forgot would be the one a caller hit.
+int run(int argc, wchar_t** argv, Options& options, std::vector<ReportLine>& report) {
+    const auto note = [&report](const wchar_t* kind, std::wstring text) {
+        report.push_back(ReportLine{kind, std::move(text)});
+    };
 
-int wmain(int argc, wchar_t** argv) {
-    Options options;
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
         const bool hasNext = i + 1 < argc;
@@ -602,11 +645,14 @@ int wmain(int argc, wchar_t** argv) {
         } else if (arg == L"--help" || arg == L"-h") {
             options.help = true;
         } else if (arg == L"--endpoint" && hasNext) {
-            options.endpoint = argv[++i];
+            options.endpoints.emplace_back(argv[++i]);
         } else if (arg == L"--backup-dir" && hasNext) {
             options.backupDir = argv[++i];
+        } else if (arg == L"--report" && hasNext) {
+            options.reportPath = argv[++i];
         } else {
             std::fwprintf(stderr, L"unrecognised option: %s\n", arg.c_str());
+            note(L"fail", L"unrecognised option: " + arg);
             return 2;
         }
     }
@@ -617,12 +663,14 @@ int wmain(int argc, wchar_t** argv) {
     }
     if (options.install && options.uninstall) {
         std::fwprintf(stderr, L"--install and --uninstall are mutually exclusive\n");
+        note(L"fail", L"--install and --uninstall are mutually exclusive");
         return 2;
     }
 
     std::vector<Endpoint> endpoints = readEndpoints();
     if (endpoints.empty()) {
         std::fwprintf(stderr, L"no render endpoints found under HKLM\\%s\n", kRenderPath);
+        note(L"fail", L"no render endpoints found in the registry");
         return 1;
     }
 
@@ -633,6 +681,7 @@ int wmain(int argc, wchar_t** argv) {
 
     if (!elevated()) {
         std::fwprintf(stderr, L"this needs administrator rights\n");
+        note(L"fail", L"this needs administrator rights");
         return 1;
     }
 
@@ -643,27 +692,41 @@ int wmain(int argc, wchar_t** argv) {
     // That asymmetry is deliberate: a disabled endpoint's GFX slot is still written, still there
     // when it comes back, and leaving it out of an uninstall is how a machine ends up with our
     // CLSID in a slot nobody remembers.
+    //
+    // `--endpoint` repeats, and that is not a convenience: every mutation restarts the audio
+    // service, and a caller with three devices to change should pay that once rather than three
+    // times. It also means a GUI can do a batch behind a single elevation prompt.
     std::vector<Endpoint*> targets;
-    if (options.endpoint.empty()) {
+    if (options.endpoints.empty()) {
         for (Endpoint& endpoint : endpoints) {
             targets.push_back(&endpoint);
         }
-    } else if (options.endpoint.front() != L'{') {
-        const int index = ::_wtoi(options.endpoint.c_str());
-        if (index < 0 || static_cast<std::size_t>(index) >= endpoints.size()) {
-            std::fwprintf(stderr, L"no endpoint at index %s\n", options.endpoint.c_str());
-            return 1;
-        }
-        targets.push_back(&endpoints[static_cast<std::size_t>(index)]);
     } else {
-        for (Endpoint& endpoint : endpoints) {
-            if (::_wcsicmp(endpoint.guid.c_str(), options.endpoint.c_str()) == 0) {
-                targets.push_back(&endpoint);
+        for (const std::wstring& wanted : options.endpoints) {
+            const std::size_t before = targets.size();
+            if (wanted.empty()) {
+                continue;
             }
-        }
-        if (targets.empty()) {
-            std::fwprintf(stderr, L"no endpoint with guid %s\n", options.endpoint.c_str());
-            return 1;
+            if (wanted.front() != L'{') {
+                const int index = ::_wtoi(wanted.c_str());
+                if (index < 0 || static_cast<std::size_t>(index) >= endpoints.size()) {
+                    std::fwprintf(stderr, L"no endpoint at index %s\n", wanted.c_str());
+                    note(L"fail", L"no endpoint at index " + wanted);
+                    return 1;
+                }
+                targets.push_back(&endpoints[static_cast<std::size_t>(index)]);
+            } else {
+                for (Endpoint& endpoint : endpoints) {
+                    if (::_wcsicmp(endpoint.guid.c_str(), wanted.c_str()) == 0) {
+                        targets.push_back(&endpoint);
+                    }
+                }
+            }
+            if (targets.size() == before) {
+                std::fwprintf(stderr, L"no endpoint with guid %s\n", wanted.c_str());
+                note(L"fail", L"no endpoint with guid " + wanted);
+                return 1;
+            }
         }
     }
 
@@ -684,6 +747,7 @@ int wmain(int argc, wchar_t** argv) {
         wchar_t answer[8]{};
         if (std::fgetws(answer, ARRAYSIZE(answer), stdin) == nullptr || (answer[0] != L'y' && answer[0] != L'Y')) {
             std::wprintf(L"nothing was changed\n");
+            note(L"info", L"declined at the prompt; nothing was changed");
             return 0;
         }
     }
@@ -693,17 +757,24 @@ int wmain(int argc, wchar_t** argv) {
         // Hard failure, not a warning. The backup is the whole reason this is safe to run, and
         // proceeding without one to save a few seconds is how a machine ends up unrecoverable.
         std::fwprintf(stderr, L"could not write a backup to %s -- refusing to continue\n", options.backupDir.c_str());
+        note(L"fail", L"could not write a registry backup to " + options.backupDir + L"; nothing was changed");
         return 1;
     }
     std::wprintf(L"\nbackup: %s\n", backupFile.c_str());
+    note(L"info", L"registry backup written to " + backupFile);
 
     int failures = 0;
     for (Endpoint* endpoint : targets) {
         const std::wstring fx = std::wstring(kRenderPath) + L"\\" + endpoint->guid + L"\\FxProperties";
+        // The name for the report, which is read by somebody looking at a list of devices rather
+        // than at a registry. The console keeps printing the GUID, because that is what a second
+        // command has to be given.
+        const std::wstring label = endpoint->friendlyName.empty() ? endpoint->guid : endpoint->friendlyName;
 
         if (options.install) {
             if (::_wcsicmp(endpoint->currentGfx.c_str(), ours.c_str()) == 0) {
                 std::wprintf(L"  %s: already ours, left alone\n", endpoint->guid.c_str());
+                note(L"ok", label + L": already installed, left alone");
                 continue;
             }
             // Save what is being displaced *before* displacing it, and only when it is not
@@ -718,6 +789,7 @@ int wmain(int argc, wchar_t** argv) {
                 if (saved != ERROR_SUCCESS) {
                     std::fwprintf(stderr, L"  %s: could not save the previous value (%lu)\n", endpoint->guid.c_str(),
                         static_cast<unsigned long>(saved));
+                    note(L"fail", label + L": could not save the effect already in the slot, so nothing was changed");
                     ++failures;
                     continue;
                 }
@@ -726,6 +798,7 @@ int wmain(int argc, wchar_t** argv) {
             if (status != ERROR_SUCCESS) {
                 std::fwprintf(
                     stderr, L"  %s: write failed (%lu)\n", endpoint->guid.c_str(), static_cast<unsigned long>(status));
+                note(L"fail", label + L": could not write the effect slot");
                 ++failures;
                 continue;
             }
@@ -747,14 +820,19 @@ int wmain(int argc, wchar_t** argv) {
                 }
                 std::wprintf(L"  %s: cleared %s (was %s)\n", endpoint->guid.c_str(), kModernSlots[s].label,
                     endpoint->modern[s].c_str());
+                note(L"info",
+                    label + L": cleared the " + kModernSlots[s].label +
+                        L" slot, which would otherwise have shadowed ours");
             }
             std::wprintf(L"  %s: installed\n", endpoint->guid.c_str());
+            note(L"ok", label + L": installed");
         } else {
             const bool isOurs =
                 ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kApoClsid).c_str()) == 0 ||
                 ::_wcsicmp(endpoint->currentGfx.c_str(), std::wstring(protocol::kLegacyApoClsid).c_str()) == 0;
             if (!isOurs) {
                 std::wprintf(L"  %s: not ours, left alone\n", endpoint->guid.c_str());
+                note(L"ok", label + L": nothing of ours here, left alone");
                 continue;
             }
             // Restore what was there, which may legitimately be nothing.
@@ -762,6 +840,7 @@ int wmain(int argc, wchar_t** argv) {
             if (status != ERROR_SUCCESS) {
                 std::fwprintf(stderr, L"  %s: restore failed (%lu)\n", endpoint->guid.c_str(),
                     static_cast<unsigned long>(status));
+                note(L"fail", label + L": could not restore the effect slot");
                 ++failures;
                 continue;
             }
@@ -784,6 +863,9 @@ int wmain(int argc, wchar_t** argv) {
 
             std::wprintf(L"  %s: restored to %s\n", endpoint->guid.c_str(),
                 endpoint->originalGfx.empty() ? L"(none)" : endpoint->originalGfx.c_str());
+            note(L"ok",
+                label + L": removed, and the slot put back to " +
+                    (endpoint->originalGfx.empty() ? std::wstring(L"empty") : endpoint->originalGfx));
         }
     }
 
@@ -791,13 +873,29 @@ int wmain(int argc, wchar_t** argv) {
         std::wprintf(L"\nrestarting the audio service...\n");
         if (!restartAudio()) {
             std::fwprintf(stderr, L"the restart failed; the change takes effect at next boot\n");
+            note(L"fail", L"the audio service would not restart; the change takes effect at the next boot");
         } else {
             std::wprintf(L"audio service restarted\n");
+            note(L"info", L"audio service restarted");
         }
     } else {
         std::wprintf(L"\nNot restarting the audio service. The change takes effect when the\n"
                      L"endpoint is next initialised -- pass --restart-audio to force it now.\n");
+        note(L"info", L"the audio service was not restarted; the change takes effect when the endpoint "
+                      L"is next initialised");
     }
 
     return failures == 0 ? 0 : 1;
+}
+
+} // namespace
+
+int wmain(int argc, wchar_t** argv) {
+    Options options;
+    std::vector<ReportLine> report;
+    const int code = run(argc, argv, options, report);
+    if (!options.reportPath.empty()) {
+        writeReport(options.reportPath, report, code);
+    }
+    return code;
 }

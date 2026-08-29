@@ -1,5 +1,14 @@
 # Project status
 
+**Updated:** 2026-08-29. **The shell has a menu bar, an About box that names the commit it was
+built from, and an Audio Device Settings dialog** -- so installing the APO on an endpoint no
+longer needs an elevated console. The dialog is the project's first Qt Designer `.ui` file, a
+deliberate trial on the one form dense enough to justify one, and it does the mutation by running
+`apo_admin` elevated rather than touching the registry itself. `apo_admin` grew a repeatable
+`--endpoint` and a `--report <path>` to make that possible. The product name is now **VibeAudio**,
+the settings folder is `%APPDATA%\vibe-audio\` with no migration from the old one, and there is a
+root `LICENSE` (MIT). See section 7 items 89-91. 156 tests.
+
 **Updated:** 2026-08-23, late. **The APO stage has started and `apo/` exists.** A drop-in
 replacement for the deployed 2013 binary: same protocol v1 wire behaviour, new CLSID
 `{C6A6A861-...}`, static CRT, `smartOpen`'s `&&` bug fixed, child-APO chaining dropped, and
@@ -2433,6 +2442,95 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     is the one tool that proves the DLL loads and processes with `audiodg.exe` out of the loop, so
     on a machine where nothing is happening it is the difference between a diagnosis and a guess --
     which is also why `apo/README.md` lists it beside `regsvr32` and `apo_admin`.
+
+89. **The version in the About box is resolved at build time, not at configure time.** Asked for
+    by the project owner on 2026-08-29, together with the menu bar that reaches it. Before this
+    there was no version string anywhere in the running program: `project(... VERSION 0.1.0)` was
+    the only one in the tree and it never reached C++.
+
+    `cmake/version.cmake` declares an always-run target that shells out to
+    `cmake/write_version_header.cmake`, which runs `git rev-parse --short HEAD`, appends `-dirty`
+    when `git status --porcelain -uno` is non-empty, and `copy_if_different`s the result into
+    `aip/version.h` in the build tree. The obvious alternative -- `execute_process` at configure
+    time -- captures the hash **once**, so the next commit and rebuild produce a binary that
+    confidently names the previous commit. That is worse than naming none, because the only
+    question the string exists to answer is which build the user is running.
+
+    Three details that are load-bearing rather than tidy. `-uno` means dirty is *tracked files
+    differ*, so a scratch file in the tree does not brand the build modified. Everything degrades
+    to `unknown` -- no git, no repository, git erroring -- because building from an exported
+    archive is a real case and must not fail. And the header is written per configuration, into
+    `generated/version/$<CONFIG>/`: Ninja Multi-Config declares this target once per config
+    against one binary directory, and two configs writing one path is a race and the same shape of
+    duplicate-output failure that `CMAKE_CXX_SCAN_FOR_MODULES OFF` exists to avoid.
+
+    Exit on the File menu is `close()` and deliberately not `QApplication::quit()`. `quit()`
+    returns from `exec()` without delivering a close event, so `closeEvent` -- the session save and
+    the attach-mark clear -- would not run, and the *next* start would report an unclean attach
+    that never happened.
+
+90. **VibeAudio is the product name; `audio_ipc2` stays the build identifier.** Project owner,
+    2026-08-29. `QApplication::setApplicationName`, the About box, the headers written into saved
+    sessions and presets, and the settings folder -- which is now `%APPDATA%\vibe-audio\`. The
+    CMake project, the target prefix, the pixi package and the test plugin's vendor string are
+    unchanged: they are not user-visible, and renaming them churns every path in the documentation
+    for nothing.
+
+    **The settings folder moved with no migration and no fallback**, which the project owner asked
+    for explicitly: nothing has shipped, so a development machine comes up once with an empty rack
+    and the old `audio-ipc2` folder is simply left where it is. Worth knowing before the first run
+    after pulling this, because the symptom is indistinguishable from a session that failed to
+    load. Note the folder name is a literal in `config/src/session_file.cpp` and never came from
+    `applicationName()`, so the rename and the move are two separate edits, not one consequence of
+    the other.
+
+91. **Audio Device Settings is the first `.ui` file, and it runs `apo_admin` elevated rather than
+    writing the registry itself.** Project owner, 2026-08-29, as the first step of moving UI layout
+    out of C++.
+
+    Two decisions are worth keeping. The first is *which* dialog: `.ui` earns its place on a form
+    that is control-dense and static, and every other window in `ui/` is either three widgets or
+    built at run time from a plugin's parameters. Layout in this project is also a small fraction
+    of the code -- under eighty lines across the whole shell -- and it is the part carrying the
+    most commentary, which Designer XML cannot hold. So this is a trial on the one form that fits,
+    not a migration.
+
+    The second is elevation. The shell hosts other people's plugin code all day and must stay
+    unelevated; `apo_admin` already implements the backup, the either/or modern-slot policy
+    (sec. 8.2) and the `Audiosrv`-only restart. So the dialog spawns it with `ShellExecuteEx` and
+    `runas` -- the first `runas` in this project -- and passes `--yes`. `ShellExecuteEx` cannot
+    redirect standard output, which is why `apo_admin` grew `--report <path>`: a file is the only
+    way an unelevated parent can learn anything from an elevated child beyond its exit code.
+    `--endpoint` also became repeatable, so a batch costs one prompt and one service restart
+    instead of one per device.
+
+    Three things the calling code must get right, each of which fails quietly. **Always pass
+    explicit endpoints:** `apo_admin --install` with no `--endpoint` means *every* endpoint on the
+    machine. **Pass GUIDs, never indices:** `apo_admin` numbers a registry walk that includes
+    disabled and unplugged endpoints, the dialog lists MMDevice active-only endpoints, and the two
+    index spaces do not correspond. **Pump the message loop while waiting:** a service restart
+    takes seconds and a window that stops answering for that long is replaced by the grey ghost
+    (item 73).
+
+    **The wait is behind an indeterminate modal**, asked for by the project owner the same day and
+    for the reason the dialog exists at all: an `Audiosrv` restart is several seconds during which
+    every device on the machine goes silent, and a still window over silent speakers reads as a
+    crash. Range `0, 0` -- a busy indicator with no percentage -- because there is genuinely no
+    progress to report: the child says nothing until it exits, and a bar that invented a number
+    would be lying about a step it cannot see inside. `PluginCatalog::run` shows a real bar because
+    it really can count plugins; the two are not the same case. No Cancel button, for the same
+    reason: the only thing it could do is stop watching a mutation that carries on regardless.
+
+    It goes up *after* `ShellExecuteEx` returns, not before. That call blocks until the consent
+    prompt is answered, and the prompt is on the secure desktop -- so a dialog shown earlier would
+    spend that whole time unable to paint, behind something covering it anyway.
+
+    The item is disabled while attached, for the same reason `refreshEndpoints` refuses to
+    re-enumerate then: applying restarts `Audiosrv`, which tears down the `audiodg.exe` this valet
+    is attached to. And a batch mixing installs with removals costs **two** elevation prompts,
+    because `apo_admin` refuses both verbs in one run; the dialog says so before the first prompt
+    rather than letting the second be a surprise. The clean fix, if that ever grates, is a single
+    `--plan <file>` mode -- deliberately not built.
 
 ---
 

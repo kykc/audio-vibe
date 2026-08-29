@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     int result = 0;
     {
         QApplication app(argc, argv);
-        QApplication::setApplicationName(QStringLiteral("audio-ipc2"));
+        QApplication::setApplicationName(QStringLiteral("VibeAudio"));
         // Every window this process opens, in one line: Qt gives its own icon to any top-level
         // window that has not set one, so the shell, the picker, the progress dialogs and every
         // message box are all identified the same way (design_doc.md sec. 5.6). A window added

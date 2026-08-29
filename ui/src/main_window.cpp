@@ -1,5 +1,7 @@
 #include "main_window.h"
 
+#include "about_dialog.h"
+#include "audio_device_dialog.h"
 #include "process_footprint.h"
 #include "qt_paths.h"
 #include "window_chrome.h"
@@ -10,6 +12,7 @@
 
 #include "aip/scanner/scan_result.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -17,6 +20,8 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -130,6 +135,11 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
     layout->addWidget(buildCountersGroup());
     setCentralWidget(central);
 
+    // After the groups, not before. Nothing in here logs today, but `log()` writes straight into
+    // `logView_` without checking it exists, so anything built ahead of `buildCountersGroup` is
+    // one added log line away from a null dereference at startup.
+    buildMenuBar();
+
     connect(&host_, &EngineHost::serviced, this, &MainWindow::updateStatus);
     connect(&host_, &EngineHost::linkStateChanged, this, &MainWindow::onLinkStateChanged);
     connect(&host_, &EngineHost::chainBuilt, this,
@@ -212,7 +222,11 @@ MainWindow::MainWindow(const QString& configPath, QWidget* parent)
 
     refreshEndpoints();
     updateStatus();
-    resize(760, 620);
+    // 620 plus the menu bar. `resize` sets the whole window, so without the extra the three groups
+    // get less room than they were tuned for. A session saved before the menu bar existed restores
+    // its old height and loses that strip; one press of the frame puts it back, which is not worth
+    // a migration.
+    resize(760, 620 + menuBar()->sizeHint().height());
 
     // Last, and deliberately so: it reports through the log view, selects an entry in the endpoint
     // combo box, and overrides the default size above -- none of which exist until here.
@@ -285,6 +299,56 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
 }
 
 // ------------------------------------------------------------------------------------ the link
+
+// ------------------------------------------------------------------------------- the menu bar
+
+void MainWindow::buildMenuBar() {
+    auto* file = menuBar()->addMenu(QStringLiteral("&File"));
+
+    deviceSettingsAction_ = file->addAction(QStringLiteral("&Audio Device Settings..."));
+    connect(deviceSettingsAction_, &QAction::triggered, this, &MainWindow::openDeviceSettings);
+    file->addSeparator();
+
+    // `close()` and not `QApplication::quit()`. They look interchangeable and are not: `quit()`
+    // returns from `exec()` without ever delivering a close event, so `closeEvent` -- which saves
+    // the session and clears the attach mark -- would simply not run. The rack, the window
+    // geometry and the endpoint would be lost, and the *next* start would report an unclean
+    // attach that never happened.
+    QAction* exitAction = file->addAction(QStringLiteral("E&xit"));
+    connect(exitAction, &QAction::triggered, this, [this] { close(); });
+
+    auto* help = menuBar()->addMenu(QStringLiteral("&Help"));
+    QAction* aboutAction = help->addAction(QStringLiteral("&About VibeAudio"));
+    connect(aboutAction, &QAction::triggered, this, [this] { showAboutDialog(this); });
+
+    syncDeviceSettingsAction();
+}
+
+/// Available only while detached, and that is not caution -- it is the same rule
+/// `refreshEndpoints` already keeps. Applying a change restarts `Audiosrv`, which tears down
+/// `audiodg.exe` and with it the king this valet is attached to; and re-enumerating underneath a
+/// live link would leave the combo box and the supervisor disagreeing about which endpoint is in
+/// use. Both are avoided by not opening the dialog at all, with the reason on the item.
+void MainWindow::syncDeviceSettingsAction() {
+    if (deviceSettingsAction_ == nullptr) {
+        return;
+    }
+    const bool attached = host_.attached();
+    deviceSettingsAction_->setEnabled(!attached);
+    deviceSettingsAction_->setToolTip(attached
+            ? QStringLiteral("Detach first: changing this restarts the Windows audio service")
+            : QString());
+}
+
+void MainWindow::openDeviceSettings() {
+    AudioDeviceDialog dialog(this);
+    connect(&dialog, &AudioDeviceDialog::message, this, &MainWindow::log);
+    // Everything that decides whether an endpoint can be attached to reads `ApoRegistration`, and
+    // all of it is stale the moment the dialog changes one -- the combo box, the Attach button
+    // and the greyed-out ordering. One re-enumeration puts all three right.
+    connect(&dialog, &AudioDeviceDialog::registrationChanged, this, &MainWindow::refreshEndpoints);
+    dialog.exec();
+}
 
 QWidget* MainWindow::buildLinkGroup() {
     auto* group = new QGroupBox(QStringLiteral("Link"), this);
@@ -788,6 +852,9 @@ void MainWindow::updateStatus() {
     attachButton_->setEnabled(status.attached || currentEndpointAttachable());
     endpointBox_->setEnabled(!status.attached);
     refreshButton_->setEnabled(!status.attached);
+    // Alongside the two above, and for the same reason: this is where the attached state is
+    // noticed however it changed, including the ways nobody pressed anything for.
+    syncDeviceSettingsAction();
 
     QString link = QStringLiteral("%1").arg(QLatin1String(linkStateName(status.linkState)));
     if (status.idle) {

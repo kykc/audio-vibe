@@ -174,6 +174,11 @@ aip_stage_folder("${AIP_PACKAGE_DIR}"
 # thing silently does nothing.
 configure_file("${CMAKE_CURRENT_LIST_DIR}/apo_readme.txt" "${AIP_PACKAGE_DIR}/README.txt" COPYONLY)
 
+# The license, beside the software it covers. MIT asks for the notice to travel with the software,
+# and a portable folder somebody was handed on a stick is exactly the case that has nothing else
+# to read. (Qt ships here under the LGPLv3 and its own license text is not in the folder yet.)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/../LICENSE" "${AIP_PACKAGE_DIR}/LICENSE" COPYONLY)
+
 # ------------------------------------------------------------------------------------ the settings
 
 # Pins Qt to this folder. Without it Qt falls back to the prefix compiled into Qt6Core, which is
@@ -189,7 +194,7 @@ Plugins = plugins\n")
 # (config/session_file.h). Shipping one is the point of this folder: settings stay in it rather
 # than in the AppData of whichever machine it is run on.
 file(WRITE "${AIP_PACKAGE_DIR}/aip_config.yaml"
-"# audio-ipc2 portable session.\n\
+"# VibeAudio portable session.\n\
 #\n\
 # This file being here, next to aip_ui.exe, is what makes this a portable install: the rack, the\n\
 # plugin scan and the window position are kept in it rather than in %APPDATA%. Delete it to use\n\
