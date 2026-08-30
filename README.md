@@ -67,6 +67,8 @@ As I did not want to use something like MFC for the GUI part, the tech stack tha
 
 Now, many years later, this became a burden to support this thing even for myself. And I had another brilliant idea: what if I feed an LLM my old code, make a thorough design doc with all the "important knowledge" I gathered when originally doing this, and let the LLM write the code, saving me the time? The result of this experiment is right before your eyes. Not a single line of code was written by me directly here.
 
+There was another part of this project which I abandoned completely: a self-written parametric EQ. At the time I could not find a free/FOSS solution, so I wrote one myself. However, these days there is the wonderful ZL Equalizer 2, which is free, FOSS and does its job perfectly well (see honorable mentions).
+
 Apart from me, there was another constant user of this "product" all these years: my father. He was an avid music lover and needed compensation for the headphones just like me, and later on also for his declining hearing as he became older. He often said to me: "Why don't you release DeRack publicly? Other people might find it very useful as well". Sadly, my father died last year, before I found time/courage to release this, but I did not forget his words. So, I'm dedicating this to you, Father.
 
 ## Author's design goals
@@ -92,6 +94,7 @@ Is available as a separate [document](DEVELOPER.md), as it is rather long.
 * [Mixing table icons created by Magnific - Flaticon](https://www.flaticon.com/free-icons/mixing-table)
 * [VST3 - property of Steinberg](https://github.com/steinbergmedia/vst3sdk) - MIT
 * [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) - honorable mention, used as an inspiration 15 years ago
+* [ZL Equalizer 2](https://github.com/ZL-Audio/ZLEqualizer) - honorable mention, if you think that spending money on a parametric EQ is ridiculous in 2026 - grab this one
 
 ## Liability waiver
 
