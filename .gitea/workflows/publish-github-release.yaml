@@ -110,23 +110,31 @@ jobs:
 
           # Resolves whatever was typed -- a branch, a tag, a full or abbreviated sha -- to the one
           # commit it means, and yields the *full* sha, which matters twice below.
-          # Not URI-escaped: the ref is the last path segment and escaping would turn the slash
-          # of a branch like `topic/thing` into `%2F`, which this route does not decode. A branch
-          # name containing a slash is the one thing that does not work here.
+          #
+          # The *list* endpoint with `sha=`, and not `/commits/{ref}`: that path is a GitHub route
+          # that Gitea has no equivalent of, so run 908 got a 404 for a `main` that plainly exists.
+          # Here `sha` is documented as "SHA or branch to start listing commits from", takes a ref
+          # of any kind, and the first entry is the commit it resolved to. Being a query parameter
+          # it also survives escaping, which a path segment holding `topic/thing` would not.
+          # `stat`/`files`/`verification` are off because this wants one field out of it.
+          $query = "sha=$([uri]::EscapeDataString($ref))&limit=1&stat=false&files=false&verification=false"
           try {
-            $commit = Invoke-RestMethod -Headers $gitea `
-              -Uri "$api/repos/$env:GITHUB_REPOSITORY/commits/$ref"
+            $found = @(Invoke-RestMethod -Headers $gitea `
+              -Uri "$api/repos/$env:GITHUB_REPOSITORY/commits?$query")
           } catch {
             # Compared as a number, everywhere in this file. `HttpStatusCode` on .NET Framework --
             # which is what Windows PowerShell 5.1 runs on -- has no member for 422, so comparing
             # the enum against a name fails as a type conversion error and hides the real status.
             # `[int]` is also $null-safe: a connection that never got a response gives 0, matches
             # nothing, and rethrows, which is what should happen to it.
-            if ([int]$_.Exception.Response.StatusCode -eq 404) {
-              throw "no commit '$ref' in $env:GITHUB_REPOSITORY; expected a branch, a tag or a commit sha"
-            }
-            throw
+            $code = [int]$_.Exception.Response.StatusCode
+            if ($code -ne 404 -and $code -ne 422) { throw }
+            $found = @()
           }
+          if ($found.Count -eq 0) {
+            throw "no commit '$ref' in $env:GITHUB_REPOSITORY; expected a branch, a tag or a commit sha"
+          }
+          $commit = $found[0]
           $sha = $commit.sha
           Write-Host "$ref is $sha"
 

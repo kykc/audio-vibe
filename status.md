@@ -2780,7 +2780,16 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     `ref`** -- the branch the workflow is run from -- and an input of that name is silently
     overwritten by it: run 906 reached the job with `main` turned into `refs/heads/main`, which the
     commit endpoint then refused. The value is stripped of a `refs/heads/` or `refs/tags/` prefix
-    anyway, so a ref pasted out of a git output also works. The version is then **looked up in the registry rather than recomputed**: rebuilding it
+    anyway, so a ref pasted out of a git output also works.
+
+    **Resolving that ref is `GET /repos/{owner}/{repo}/commits?sha=<ref>`, not
+    `/repos/{owner}/{repo}/commits/{ref}`.** The second is a GitHub route with no Gitea equivalent,
+    and run 908 spent itself on a 404 for a `main` that plainly exists. On the list endpoint `sha`
+    is documented as "SHA or branch to start listing commits from", so it takes a ref of any kind
+    and the first entry is what it resolved to. Being a query parameter it survives escaping, which
+    a path segment holding a branch name with a slash in it would not. The general lesson, having
+    now paid for it twice in one file: the two APIs this workflow speaks are *not* the same API, and
+    a GitHub path guessed at Gitea fails as a 404 that reads like a missing branch. The version is then **looked up in the registry rather than recomputed**: rebuilding it
     would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
     whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
     automatic and grows with the object count. It is 7 today; a release workflow is the worst place
