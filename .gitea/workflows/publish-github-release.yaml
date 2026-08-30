@@ -143,15 +143,23 @@ jobs:
           # characters the abbreviation has. Paged because the listing is newest-first and a commit
           # worth releasing is not always a recent one; bounded because an unbounded loop against a
           # paginated API is how a workflow hangs.
+          #
+          # `/packages/{owner}` with filters, because Gitea has no route that lists the versions of
+          # one package: `/packages/{owner}/{type}/{name}` answers `GetPackageByName: package does
+          # not exist` (run 910), which reads like the package is missing and means the path is.
+          # This one returns an entry per name-and-version pair, so `q` narrows it and the name is
+          # then checked exactly -- `q` is a substring search across an organisation that holds
+          # every package on the instance, and a future `vibeaudio-something` would match it.
           $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
           $registry = @{ Authorization = "Basic $auth" }
           $version = $null
           $pages = 20
           for ($page = 1; $page -le $pages -and -not $version; $page++) {
             $batch = @(Invoke-RestMethod -Headers $registry `
-              -Uri "$api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME?page=$page&limit=50")
+              -Uri "$api/packages/$($env:PKG_OWNER)?type=generic&q=$($env:PKG_NAME)&page=$page&limit=50")
             if ($batch.Count -eq 0) { break }
             foreach ($published in $batch) {
+              if ($published.name -ne $env:PKG_NAME) { continue }
               $suffix = $published.version -replace '^\d+\.\d+\.\d+-', ''
               # The length floor rejects a version with no commit suffix at all, and `StartsWith`
               # rejects `-dirty` and `unknown` without naming either.

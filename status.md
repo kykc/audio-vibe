@@ -2787,9 +2787,19 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     and run 908 spent itself on a 404 for a `main` that plainly exists. On the list endpoint `sha`
     is documented as "SHA or branch to start listing commits from", so it takes a ref of any kind
     and the first entry is what it resolved to. Being a query parameter it survives escaping, which
-    a path segment holding a branch name with a slash in it would not. The general lesson, having
-    now paid for it twice in one file: the two APIs this workflow speaks are *not* the same API, and
-    a GitHub path guessed at Gitea fails as a 404 that reads like a missing branch. The version is then **looked up in the registry rather than recomputed**: rebuilding it
+    a path segment holding a branch name with a slash in it would not.
+
+    **And the version listing is `GET /packages/{owner}` with `type` and `q`**, because Gitea has no
+    route that lists the versions of one package either: `/packages/{owner}/{type}/{name}` answers
+    `GetPackageByName: package does not exist` (run 910), which reads like a missing package and
+    means a missing path. That endpoint returns an entry per name-and-version pair, so `q` narrows
+    it and the name is then compared exactly -- `q` is a substring search across an organisation
+    that holds every package on the instance.
+
+    The general lesson, having now paid for it three times in one file: the two APIs this workflow
+    speaks are *not* the same API, and a route guessed from one at the other fails as a 404 or an
+    "it does not exist" that reads like missing data rather than a missing path. Check the swagger,
+    or call it once before writing it down. The version is then **looked up in the registry rather than recomputed**: rebuilding it
     would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
     whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
     automatic and grows with the object count. It is 7 today; a release workflow is the worst place
