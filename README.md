@@ -33,7 +33,8 @@ NOTE: currently, by enabling VibeAudio you will lose all built-in audio "enhance
 
 Wiring into an arbitrary audio device can be somewhat messy, so here I will collect a list of known gotchas:
 
-1. Make sure audio enhancements are enabled on your device (accessible only in the "old" control panel AFAIK)
+1. Make sure you have [MSVC++ Redistributable](https://aka.ms/vc14/vc_redist.x64.exe) installed
+2. Make sure audio enhancements are enabled on your device (accessible only in the "old" control panel AFAIK)
    ![control_panel_enhancements](screenshots/control_panel_enhancements.png)
 
 ## History

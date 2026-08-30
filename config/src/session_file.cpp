@@ -1,6 +1,7 @@
 #include "aip/config/session_file.h"
 
 #include "rack_yaml.h"
+#include "replace_file.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -338,9 +339,9 @@ bool writeSession(const fs::path& path, const Session& session, std::string& err
         return false;
     }
 
-    // Written beside the target and renamed over it. The rack is the user's own work and this
-    // file is the only copy of it, so the failure mode worth designing out is a save interrupted
-    // half way leaving neither the old config nor a complete new one.
+    // Written beside the target and then put in place (see replace_file.h). The rack is the
+    // user's own work and this file is the only copy of it, so the failure mode worth designing
+    // out is a save interrupted half way leaving neither the old config nor a complete new one.
     fs::path temporary = path;
     temporary += ".tmp";
     {
@@ -359,13 +360,7 @@ bool writeSession(const fs::path& path, const Session& session, std::string& err
         }
     }
 
-    fs::rename(temporary, path, ec);
-    if (ec) {
-        error = "cannot replace " + path.string() + ": " + ec.message();
-        fs::remove(temporary, ec);
-        return false;
-    }
-    return true;
+    return replaceWithTemporary(temporary, path, error);
 }
 
 } // namespace aip::config

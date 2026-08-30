@@ -10,6 +10,7 @@ add_library(aip_config STATIC
     src/load_guard.cpp
     src/preset_file.cpp
     src/rack_yaml.h
+    src/replace_file.h
     src/session.cpp
     src/session_file.cpp
 )

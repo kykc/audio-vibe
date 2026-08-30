@@ -297,6 +297,38 @@ TEST_CASE("a missing session file is an error, an absent one is not", "[config]"
     REQUIRE_FALSE(error.empty());
 }
 
+TEST_CASE("saving keeps the other names the config file has", "[config]") {
+    const TempDir dir("hard_linked");
+
+    // What a packaged install looks like: Scoop's `persist` hard-links the config in the app
+    // folder to the copy it restores from on the next upgrade, so the two paths are one file. A
+    // save that replaced the name rather than the file would leave the persisted copy behind,
+    // still holding the first save forever, and the upgrade would hand it back.
+    const std::filesystem::path persisted = dir.path() / "persisted.yaml";
+
+    config::Session first;
+    first.endpointName = "before";
+    std::string error;
+    REQUIRE(config::writeSession(dir.file(), first, error));
+
+    std::error_code ec;
+    std::filesystem::create_hard_link(dir.file(), persisted, ec);
+    if (ec) {
+        SUCCEED("the test filesystem does not do hard links");
+        return;
+    }
+
+    config::Session second;
+    second.endpointName = "after";
+    REQUIRE(config::writeSession(dir.file(), second, error));
+
+    REQUIRE(std::filesystem::hard_link_count(dir.file()) == 2);
+
+    config::Session read;
+    REQUIRE(config::readSession(persisted, read, error));
+    REQUIRE(read.endpointName == "after");
+}
+
 // -------------------------------------------------------------------------------- the preset
 
 TEST_CASE("a preset survives being written and read back", "[config]") {

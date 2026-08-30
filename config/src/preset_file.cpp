@@ -1,6 +1,7 @@
 #include "aip/config/preset_file.h"
 
 #include "rack_yaml.h"
+#include "replace_file.h"
 
 #include <yaml-cpp/yaml.h>
 
@@ -143,8 +144,9 @@ bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool 
         return false;
     }
 
-    // Beside the target and renamed over it, for the same reason the session file is: a preset
-    // the user is overwriting is a preset they still have until the rename lands.
+    // Beside the target and then put in place (see replace_file.h), for the same reason the
+    // session file is: a preset the user is overwriting is a preset they still have until the
+    // new one lands whole.
     fs::path temporary = path;
     temporary += ".tmp";
     {
@@ -163,13 +165,7 @@ bool writePreset(const fs::path& path, const std::vector<RackEntry>& rack, bool 
         }
     }
 
-    fs::rename(temporary, path, ec);
-    if (ec) {
-        error = "cannot replace " + path.string() + ": " + ec.message();
-        fs::remove(temporary, ec);
-        return false;
-    }
-    return true;
+    return replaceWithTemporary(temporary, path, error);
 }
 
 } // namespace aip::config
