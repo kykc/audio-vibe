@@ -75,6 +75,11 @@ Apart from me, there was another constant user of this "product" all these years
   minimal bundle size, no "web tech" (more harm than good as native UI is inevitable due to VST3 internals)
 * Native/modern look with HiDPI support and light/dark theming
 * Rock-solid performance: supposed to be able to run for days and days without any interruptions and/or crashes and/or audible glitches
+* Zero added latency. Despite all the processing and IPC involved, everything should be fast enough to always fit into the 10 ms
+  timeframe defined by WASAPI
+
+NOTE: as this is a strictly real-time processing scenario, there is no way to compensate for the latency introduced by the loaded
+plugin, if it uses look-ahead, linear-phase filtering or any other DSP technique that results in additional [latency](https://steinbergmedia.github.io/vst3_doc/vstinterfaces/classSteinberg_1_1Vst_1_1IAudioProcessor.html#af8884671ccefe68e0a86e72413a0fcf8).
 
 ## Developer guide
 
