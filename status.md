@@ -2687,7 +2687,8 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     `pixi run package` now reuses the tree `pixi run test` just built, and the packaging steps are
     the zip and the upload rather than a second compile.
 
-    **Publishing is gated three ways**, on each of the last three steps: `github.event_name ==
+    **Publishing is gated three ways**, on each of the last four steps (three, when this was
+    written; the GitHub mirror step of item 95 joined them): `github.event_name ==
     'push'`, `github.ref == 'refs/heads/main'`, and `success()`. The last is what a step's `if:`
     means when it is omitted, and it is written out because it is the entire reason these steps
     live after the suite instead of in a workflow of their own -- nothing reaches the registry
@@ -2739,6 +2740,79 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     incremental, which on a self-hosted runner is the large remaining win; it is not done, because
     a stale build tree that survives between commits is a class of CI failure nobody enjoys
     diagnosing and nothing yet says the wall-clock is a problem.
+
+95. **`main` is pushed to the public GitHub mirror by CI, and a public release is a second
+    workflow run by hand.** Project owner, 2026-08-30. Development is on the internal Gitea
+    instance and `github.com/kykc/audio-vibe` is a mirror of it, kept current until now by
+    remembering a second `git push` -- which had already stopped happening: `origin/main` was at
+    `939f330` while `gh/main` sat a commit behind at `3313cac`. Both existing releases were made
+    through the GitHub web UI, by downloading the zip out of the generic registry and uploading it
+    again by hand.
+
+    **The mirror is one refspec at the end of `test-and-publish.yaml`, and deliberately not one of
+    Gitea's own push mirrors.** A push mirror takes no ref filter: it force-pushes every ref and
+    prunes what this side does not have, so every work-in-progress branch would become public the
+    moment it was pushed internally, and `prepare-for-general-public` would have become public
+    immediately. Asked for by the project owner on exactly that ground -- a secret committed to a
+    side branch by accident should stay on the internal instance until somebody decides to merge
+    it. `git push <remote> HEAD:refs/heads/main` publishes the commit that was just tested and
+    nothing else: no other branch, no tag, no deletion. No `--force` either, because nothing but
+    that step writes to that branch, so a rejected non-fast-forward means the public repository
+    has diverged and is worth stopping for. It carries the same three-way gate as the two
+    publishing steps and is last, so the mirror never shows a commit whose package failed to reach
+    the registry, and a red `main` does not reach GitHub at all.
+
+    **That is why the checkout fetch is no longer `--depth=1`.** A server refuses a push out of a
+    shallow repository outright -- `shallow update not allowed` -- and this job has exactly one
+    clone. Only the first run after the change pays for the history: `git clean -ffdx -e .pixi`
+    leaves `.git` alone, so the workspace keeps the objects and every later fetch is incremental.
+
+    **The release workflow is separate because it meets the test the sibling file already states
+    for splitting one off**: its own trigger, its own versioning rule, its own credential.
+    `.gitea/workflows/publish-github-release.yaml`, `workflow_dispatch`, one required input -- the
+    version string of a package already in the registry. Cutting a release is a decision and not a
+    consequence of pushing: every push to `main` publishes a package, and only some are worth
+    announcing (`939f330`, a README-only commit, is not).
+
+    **It builds nothing.** The zip it attaches is fetched back out of
+    `audist/generic/vibeaudio`, so what ships is byte for byte the artifact its suite was green
+    on, and a release cannot quietly differ from what was tested. It has no checkout and runs no
+    git at all -- there is nothing in the tree it needs, and a checkout like the sibling's ends in
+    `git clean -ffdx`, which on a workspace that is per-repository rather than per-run would
+    delete a concurrent build.
+
+    **Neither end pushes refs at the other.** The workflow tags the commit on Gitea through the
+    API -- provenance, because the internal repository held no record of what had been released;
+    `git tag -l` on it was empty while GitHub carried two -- and GitHub's release call creates the
+    GitHub-side tag itself from the same `target_commitish`. Both ends agree without a `git push
+    --tags` anywhere. The commit is on GitHub because the mirror step put it there, and the
+    workflow checks that first: `target_commitish` naming a commit GitHub has never seen comes
+    back as an unexplained 422, so it is caught as "the mirror has not run for it" instead.
+
+    **Both halves are idempotent**, for the same reason the registry upload is: the release for a
+    tag is reused rather than duplicated, an existing asset of the same name is deleted before the
+    upload, and an existing Gitea tag is accepted if it points at the same commit and is a hard
+    error if it does not -- a tag that moved means a version string that no longer identifies one
+    commit.
+
+    Three details that are each a quiet failure otherwise. **Every HTTP status is compared as
+    `[int]`**, because `HttpStatusCode` on .NET Framework -- which is what Windows PowerShell 5.1
+    runs on -- has no member for 422, so comparing the enum against a name fails as a type
+    conversion error and hides the real status; `[int]` is also `$null`-safe for a request that
+    never got a response. **`SecurityProtocol` is set to `Tls12` in every step that talks to
+    github.com**, because 5.1 still negotiates TLS 1.0 by default and github.com refuses anything
+    below 1.2 -- which surfaces as a connection reset rather than a status code and reads like a
+    network fault. This never bit the registry half because that host is not so strict. And **the
+    GitHub API rejects a request with no `User-Agent`**, so every call sets one.
+
+    **One new secret, `GH_TOKEN`**, a fine-grained GitHub token with `Contents: read and write` on
+    `kykc/audio-vibe`, used by both the mirror step and the release workflow. Checked by name at
+    the first line of each step that needs it, for the reason `CI_USER`/`CI_TOKEN` are.
+
+    The two releases that predate this were tagged on Gitea by hand on 2026-08-30 --
+    `v0.1.0-202d05e` and `v0.1.0-3313cac`, at the commits their GitHub tags already point at -- so
+    that the internal instance is the complete record from here rather than from the next release.
+
 
 ---
 

@@ -6,7 +6,7 @@
 +* Rename current README.md -> DEVELOPER.md
 +* Author new README.md which will provide guidance for end-user
 * Reconsider README.txt contents from the package
-* Extend gitea workflow to automatically push to remote git repo and pre-release with zip?
++* Extend gitea workflow to automatically push to remote git repo and pre-release with zip?
 * Pick a username for github publish (merge two if possible?)
 
 ## Postponed, but somewhat still relevant

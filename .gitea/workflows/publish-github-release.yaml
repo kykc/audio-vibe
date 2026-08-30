@@ -1,0 +1,308 @@
+# A public release on github.com/kykc/audio-vibe: a tag, and the portable zip that
+# `test-and-publish.yaml` already built and published to this instance's generic registry.
+#
+# **Nothing is built here.** The zip that ships is byte for byte the one the suite was green on --
+# it is fetched back out of `audist/generic/vibeaudio` rather than produced again, so a release
+# cannot quietly differ from the artifact that was tested. That is also why this is a workflow of
+# its own and not more steps on the push path: it has its own trigger, its own input, and its own
+# credential, which is the test `test-and-publish.yaml` states for splitting a workflow off.
+#
+# **Cutting a release is a decision, so the trigger is a dispatch.** Every push to main publishes a
+# package; only some of those are worth a release (939f330, a README-only commit, is not). So this
+# takes the version to release as an input -- the string the registry and the About box both show,
+# `<project version>-<short commit>` -- rather than firing on its own.
+#
+# **No checkout, and no git.** Nothing here needs the tree, and the workspace on this self-hosted
+# runner is shared per repository: a checkout like the sibling workflow's ends in `git clean -ffdx`,
+# which would delete a concurrent build out from under it. Everything downloaded goes to
+# RUNNER_TEMP. The GitHub-side tag is made server-side by the release API from the commit sha,
+# which is on GitHub because the mirror step of the sibling workflow pushed it there.
+#
+# The runner is a bare Windows host with no Node.js, so no JavaScript action can run here and every
+# step is a plain `run:`. It needs no pixi environment, hence the single label.
+name: publish-github-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version to release, e.g. 0.1.0-3313cac'
+        required: true
+      prerelease:
+        description: 'Mark the release as a pre-release'
+        type: boolean
+        default: false
+      notes:
+        description: 'Release body (default: the subject of the commit being released)'
+        required: false
+
+# Serialised against itself, and never cancelled: cancelling between "release created" and "asset
+# uploaded" leaves a release on GitHub holding no download.
+concurrency:
+  group: release-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: release a published package on GitHub
+    runs-on: [windows-amd64]
+    defaults:
+      run:
+        shell: powershell
+
+    env:
+      # Literals, like PKG_OWNER/PKG_NAME in the sibling workflow: the public mirror is one
+      # repository and naming it here beats a secret nobody can read back.
+      GH_REPO: kykc/audio-vibe
+      GH_API: https://api.github.com
+      GH_UPLOADS: https://uploads.github.com
+
+    steps:
+      # `inputs.*` is the modern context; if this instance ever answers it empty, the equivalent is
+      # `github.event.inputs.*`, which has meant the same thing for longer.
+      - name: Work out what is being released
+        id: release
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Exactly the shape write_version_header.cmake produces and the sibling workflow
+          # publishes: a three-part project version, then the abbreviated commit. Anything else is
+          # rejected here rather than three requests later -- which also catches the two strings
+          # that must never reach a release, `-dirty` and `unknown`.
+          $version = "$env:VERSION".Trim()
+          $m = [regex]::Match($version, '^(\d+\.\d+\.\d+)-([0-9a-f]{7,40})$')
+          if (-not $m.Success) {
+            throw "'$version' is not a package version; expected <major>.<minor>.<patch>-<short commit>, e.g. 0.1.0-3313cac"
+          }
+          $sha = $m.Groups[2].Value
+          $tag = "v$version"
+          # The same expression the sibling workflow builds when it uploads. One architecture, so
+          # one asset (design_doc.md sec. 11.5).
+          $asset = "VibeAudio-$version-windows-amd64.zip"
+          Write-Host "version $version, commit $sha, tag $tag, asset $asset"
+
+          # Written through .NET with an explicit BOM-less encoding. Windows PowerShell's
+          # `Out-File -Encoding utf8` emits a BOM, and a BOM at the head of GITHUB_OUTPUT is read
+          # as part of the first key name -- which fails as an empty output rather than as an error.
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT,
+            "version=$version`nsha=$sha`ntag=$tag`nasset=$asset`n", $utf8)
+
+      # Proves the version exists as much as it fetches it: a 404 here is the whole answer to "why
+      # did my release fail", so it is reported as itself and not as a transport error.
+      #
+      # CI_USER and CI_TOKEN, both required and with no fallback, for the reason the sibling
+      # workflow spells out at its upload step: the built-in Actions token carries no package
+      # registry access, so a run that reached for it would fail confusingly rather than by name.
+      - name: Fetch the package from the generic registry
+        id: package
+        env:
+          CI_USER: ${{ secrets.CI_USER }}
+          CI_TOKEN: ${{ secrets.CI_TOKEN }}
+          PKG_OWNER: audist
+          PKG_NAME: vibeaudio
+          PKG_VERSION: ${{ steps.release.outputs.version }}
+          ASSET: ${{ steps.release.outputs.asset }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Not cosmetic: Windows PowerShell's progress bar makes a 28 MiB transfer several times
+          # slower.
+          $ProgressPreference = 'SilentlyContinue'
+
+          $missing = @()
+          if (-not $env:CI_USER)  { $missing += 'CI_USER' }
+          if (-not $env:CI_TOKEN) { $missing += 'CI_TOKEN' }
+          if ($missing.Count) {
+            throw "$($missing -join ' and ') not set on this repository; reading the registry needs both"
+          }
+
+          $source = "$env:GITHUB_SERVER_URL/api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME/$env:PKG_VERSION/$env:ASSET"
+          $path = Join-Path $env:RUNNER_TEMP $env:ASSET
+          if (Test-Path $path) { Remove-Item $path -Force }
+
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
+          $headers = @{ Authorization = "Basic $auth" }
+
+          Write-Host "fetching $source"
+          try {
+            Invoke-WebRequest -Uri $source -Headers $headers -OutFile $path -UseBasicParsing
+          } catch {
+            # Compared as a number, everywhere in this file. `HttpStatusCode` on .NET Framework --
+            # which is what Windows PowerShell 5.1 runs on -- has no member for 422, so comparing
+            # the enum against a name fails as a type conversion error and hides the real status.
+            # `[int]` is also $null-safe: a connection that never got a response gives 0, matches
+            # nothing, and rethrows, which is what should happen to it.
+            if ([int]$_.Exception.Response.StatusCode -eq 404) {
+              throw "no $env:PKG_NAME $env:PKG_VERSION in the generic registry; only versions a green push to main published can be released"
+            }
+            throw
+          }
+
+          # A registry that answers an HTML error page with a 200 would otherwise be discovered by
+          # somebody downloading the release. Two bytes are enough to tell a zip from one.
+          $bytes = (Get-Item $path).Length
+          if ($bytes -lt 1024) { throw "$path is $bytes bytes; that is not the package" }
+          $stream = [System.IO.File]::OpenRead($path)
+          try { $b0 = $stream.ReadByte(); $b1 = $stream.ReadByte() } finally { $stream.Dispose() }
+          if ($b0 -ne 0x50 -or $b1 -ne 0x4B) { throw "$path does not begin 'PK'; not a zip" }
+
+          Write-Host "fetched $([math]::Round($bytes / 1MB, 1)) MiB to $path"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT, "path=$path`n", $utf8)
+
+      # Provenance, and only that: the internal repository is where the history lives, and until now
+      # it held no record of which commits were ever released -- `git tag -l` on it was empty while
+      # GitHub carried two. This tag is deliberately not pushed to GitHub; the release call below
+      # creates the GitHub-side one from the same sha, so both ends agree without either pushing
+      # refs at the other.
+      #
+      # The built-in Actions token, not CI_TOKEN: this is a write to the repository the workflow is
+      # running in, which is exactly what that token is for.
+      - name: Tag the commit on Gitea
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $api = "$env:GITHUB_SERVER_URL/api/v1/repos/$env:GITHUB_REPOSITORY/tags"
+          $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
+
+          try {
+            $body = @{ tag_name = $env:TAG; target = $env:SHA } | ConvertTo-Json -Compress
+            Invoke-RestMethod -Method Post -Uri $api -Headers $headers `
+              -ContentType 'application/json' -Body $body | Out-Null
+            Write-Host "tagged $env:SHA as $env:TAG"
+          } catch {
+            $code = [int]$_.Exception.Response.StatusCode
+            if ($code -ne 409 -and $code -ne 422) { throw }
+            # Already tagged -- a re-run, or a release cut twice. Fine if it means the same thing,
+            # and a hard stop if it does not: a tag that moved is somebody releasing a version
+            # string that no longer identifies one commit.
+            $existing = Invoke-RestMethod -Uri "$api/$([uri]::EscapeDataString($env:TAG))" -Headers $headers
+            if ($existing.commit.sha -notlike "$env:SHA*") {
+              throw "$env:TAG already exists on Gitea at $($existing.commit.sha), not at $env:SHA"
+            }
+            Write-Host "$env:TAG already points at $env:SHA"
+          }
+
+      # Idempotent by construction: an existing release for this tag is reused rather than
+      # duplicated, so re-running a dispatch that failed at the upload does the right thing.
+      #
+      # The mirror check is the first thing here because its failure has a fix nothing else does:
+      # `target_commitish` naming a commit GitHub has never seen comes back as an unexplained 422,
+      # and the actual answer is that main has not been pushed yet.
+      - name: Create or reuse the GitHub release
+        id: gh
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Windows PowerShell 5.1 still negotiates TLS 1.0 by default and github.com refuses
+          # anything below 1.2 -- which surfaces as a connection reset, not as a status code, and
+          # reads like a network fault. Every step here that talks to github.com sets this first.
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          if (-not $env:GH_TOKEN) { throw 'GH_TOKEN not set on this repository; releasing needs it' }
+
+          # The API rejects a request with no User-Agent, and pins its own version by header.
+          $headers = @{
+            Authorization          = "Bearer $env:GH_TOKEN"
+            Accept                 = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+            'User-Agent'           = 'audio-vibe-gitea-actions'
+          }
+          $repo = "$env:GH_API/repos/$env:GH_REPO"
+          $tagPath = [uri]::EscapeDataString($env:TAG)
+
+          try {
+            $commit = Invoke-RestMethod -Uri "$repo/commits/$env:SHA" -Headers $headers
+          } catch {
+            if ([int]$_.Exception.Response.StatusCode -eq 404) {
+              throw "github.com/$env:GH_REPO has no commit $env:SHA; the mirror step of test-and-publish has not run for it, so there is nothing to release yet"
+            }
+            throw
+          }
+
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Uri "$repo/releases/tags/$tagPath" -Headers $headers
+            Write-Host "reusing release $($release.id) for $env:TAG"
+          } catch {
+            if ([int]$_.Exception.Response.StatusCode -ne 404) { throw }
+          }
+
+          if (-not $release) {
+            # The body defaults to the commit's subject, which is what both hand-made releases
+            # carry; `notes` overrides it when a release deserves more than one line.
+            $notes = "$env:NOTES".Trim()
+            if (-not $notes) { $notes = ($commit.commit.message -split "`n")[0].Trim() }
+
+            $body = @{
+              tag_name         = $env:TAG
+              target_commitish = $env:SHA
+              name             = $env:TAG
+              body             = $notes
+              draft            = $false
+              prerelease       = ($env:PRERELEASE -eq 'true')
+            } | ConvertTo-Json -Compress
+            # Sent as bytes so that the encoding is ours and not the console's.
+            $release = Invoke-RestMethod -Method Post -Uri "$repo/releases" -Headers $headers `
+              -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
+            Write-Host "created release $($release.id) at $($release.html_url)"
+          }
+
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT,
+            "id=$($release.id)`nurl=$($release.html_url)`n", $utf8)
+
+      # DELETE before POST, for the reason the registry upload does the same: an asset name that
+      # already exists on the release is a 422, so a re-run would fail at the last step having done
+      # everything else.
+      - name: Attach the package to the release
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          RELEASE_ID: ${{ steps.gh.outputs.id }}
+          RELEASE_URL: ${{ steps.gh.outputs.url }}
+          ASSET: ${{ steps.release.outputs.asset }}
+          ASSET_PATH: ${{ steps.package.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          $headers = @{
+            Authorization          = "Bearer $env:GH_TOKEN"
+            Accept                 = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+            'User-Agent'           = 'audio-vibe-gitea-actions'
+          }
+          $repo = "$env:GH_API/repos/$env:GH_REPO"
+
+          $existing = Invoke-RestMethod -Uri "$repo/releases/$env:RELEASE_ID/assets" -Headers $headers
+          foreach ($a in @($existing)) {
+            if ($a.name -eq $env:ASSET) {
+              Invoke-RestMethod -Method Delete -Uri "$repo/releases/assets/$($a.id)" -Headers $headers | Out-Null
+              Write-Host "removed an existing $($a.name) from the release"
+            }
+          }
+
+          # Uploads go to a different host than the rest of the API; the release's own upload_url
+          # is the same thing with a template on the end.
+          $target = "$env:GH_UPLOADS/repos/$env:GH_REPO/releases/$env:RELEASE_ID/assets?name=$([uri]::EscapeDataString($env:ASSET))"
+          $bytes = (Get-Item $env:ASSET_PATH).Length
+          Write-Host "uploading $([math]::Round($bytes / 1MB, 1)) MiB to $target"
+          Invoke-WebRequest -Method Post -Uri $target -Headers $headers `
+            -InFile $env:ASSET_PATH -ContentType 'application/zip' -UseBasicParsing | Out-Null
+
+          Write-Host "released $env:ASSET at $env:RELEASE_URL"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          $line = "Released [$env:ASSET]($env:RELEASE_URL) on GitHub`n"
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $line, $utf8)

@@ -1,6 +1,6 @@
 # The suite on every push to main and every PR targeting main -- and, on a push to main only, the
 # portable package built from that same tree and published to this instance's generic package
-# registry.
+# registry, and then that same commit pushed to the public GitHub mirror.
 #
 # **One workflow and one job, deliberately.** The checkout below ends in `git clean -ffdx`, which
 # takes `build/` with it, so every run is a cold build of the whole tree -- the VST3 SDK included.
@@ -12,11 +12,11 @@
 # So `pixi run package` here reuses the tree `pixi run test` just built: the packaging steps are
 # the zip and the upload, not a second compile.
 #
-# **Publishing is gated three ways** (see the `if:` on the last three steps): the event is a push,
+# **Publishing is gated three ways** (see the `if:` on the last four steps): the event is a push,
 # the ref is main, and every earlier step succeeded. The third is what a step's `if:` means by
 # default and is written out anyway, because it is the whole reason these steps sit after the
-# suite rather than in a workflow of their own -- nothing reaches the registry from a tree whose
-# tests are red.
+# suite rather than in a workflow of their own -- nothing reaches the registry, or the public
+# mirror, from a tree whose tests are red.
 #
 # The runner is a bare Windows host (labels: windows-amd64, pixi) with no Node.js, so no
 # JavaScript action can run here -- `actions/checkout` included. Every step is a plain `run:`
@@ -29,6 +29,8 @@
 # The publishing half is named for the registry it targets rather than for the act. If a second
 # package format ever ships -- an MSI feed, winget, Chocolatey -- it gets a workflow of its own
 # beside this one, because it would have its own trigger, versioning rules and credentials.
+# `publish-github-release.yaml` is the first of those: a public release is cut by hand, out of a
+# version this workflow has already published, so it has all three.
 name: test-and-publish
 
 on:
@@ -56,6 +58,13 @@ jobs:
       # PR; both are fetchable from the base repository, so fork PRs work too. The token is passed
       # per-command via http.extraheader instead of being baked into the remote URL, because the
       # workspace survives between runs on a self-hosted runner and .git/config would keep it.
+      #
+      # The fetch is deliberately not `--depth=1`. This clone is the one the mirror step at the
+      # bottom pushes from, and a server refuses a push out of a shallow repository outright
+      # ("shallow update not allowed") -- there is no per-push way around it, the repository has to
+      # carry its history. Only the first run after this line changed pays for that: `git clean`
+      # below leaves `.git` alone, so the workspace keeps the objects and every later fetch is
+      # incremental.
       - name: Checkout ${{ github.ref }}
         env:
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +83,7 @@ jobs:
             Invoke-Git remote add origin $url
           }
 
-          Invoke-Git -c "http.extraheader=$header" fetch --force --depth=1 origin "+$($env:GITHUB_REF):refs/ci/head"
+          Invoke-Git -c "http.extraheader=$header" fetch --force origin "+$($env:GITHUB_REF):refs/ci/head"
           Invoke-Git checkout --force --detach refs/ci/head
           # Wipe leftovers from the previous run, including ignored files -- but keep the pixi
           # environment, which is expensive to recreate and is validated by `pixi install --locked`.
@@ -205,4 +214,56 @@ jobs:
           Write-Host "published $env:PKG_NAME $env:PKG_VERSION"
           $utf8 = New-Object System.Text.UTF8Encoding $false
           $line = "Published ``$env:PKG_NAME`` **$env:PKG_VERSION** -- [$env:ASSET]($target)`n"
+          [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $line, $utf8)
+
+      # The public mirror, github.com/kykc/audio-vibe. This exists so that keeping it current is not
+      # a thing anybody has to remember: it used to be a second `git push` by hand, and the mirror
+      # was a commit behind for exactly that reason.
+      #
+      # **One refspec, and no more.** `HEAD:refs/heads/main` publishes the commit that was just
+      # tested and nothing else -- not other branches, not tags, not deletions. That is the whole
+      # point of doing this here rather than with Gitea's own push mirror: a push mirror takes no
+      # ref filter, it force-pushes every ref and prunes what this side does not have, so every
+      # work-in-progress branch would become public the moment it was pushed internally. A secret
+      # committed on a side branch by accident should stay on the internal instance until somebody
+      # decides to merge it.
+      #
+      # No `--force` either. Nothing but this step writes to that branch, so a rejected
+      # non-fast-forward means the public repository has diverged from this one, which is worth
+      # stopping for rather than overwriting.
+      #
+      # Release tags are not pushed from here. `publish-github-release.yaml` cuts those, and the
+      # GitHub release API creates the GitHub-side tag itself from the commit sha -- which is on
+      # GitHub because this step put it there. That is the ordering between the two workflows: this
+      # one publishes commits, that one publishes releases of commits already published.
+      #
+      # Gated like the two steps above, so the mirror carries only trees whose suite is green, and
+      # placed last so it never shows a commit whose package failed to reach the registry.
+      - name: Mirror main to GitHub
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          # A fine-grained PAT on kykc/audio-vibe with Contents: read and write. The same token the
+          # release workflow uses; it is the only credential this instance holds for GitHub.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_REMOTE: https://github.com/kykc/audio-vibe.git
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Git { git @args; if ($LASTEXITCODE -ne 0) { throw "git $args failed ($LASTEXITCODE)" } }
+
+          if (-not $env:GH_TOKEN) {
+            throw 'GH_TOKEN not set on this repository; mirroring to GitHub needs it'
+          }
+
+          # Same shape as the checkout above, and for the same reason: passed per-command so that
+          # nothing lands in the .git/config of a workspace that outlives this run. GitHub accepts
+          # a PAT as the basic-auth password with any username; x-access-token is its own convention.
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$env:GH_TOKEN"))
+          $header = "AUTHORIZATION: basic $auth"
+
+          $sha = (git rev-parse HEAD).Trim()
+          Write-Host "pushing $sha to $env:GH_REMOTE main"
+          Invoke-Git -c "http.extraheader=$header" push $env:GH_REMOTE 'HEAD:refs/heads/main'
+
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          $line = "Mirrored **$sha** to [kykc/audio-vibe](https://github.com/kykc/audio-vibe/commits/main)`n"
           [System.IO.File]::AppendAllText($env:GITHUB_STEP_SUMMARY, $line, $utf8)
