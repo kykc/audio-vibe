@@ -34,6 +34,12 @@
 // first. What it does after that is what a session restore does: the same `config::apply`, and
 // therefore the same treatment of a plugin that has been uninstalled since.
 //
+// One thing in this panel is not about the rack at all: the output meter between the list and the
+// buttons. It is the loudness of what this application is handing back to the endpoint, it goes on
+// reading with an empty rack and a bypassed chain, and it is the only thing on screen that can
+// tell a chain that is working from one that is silently outputting nothing. It is documented, and
+// owned as a concept, in level_meter.h and engine/output_meter.h.
+//
 // The engine's rack API is already the API a UI wants (status.md sec. 5): positions are rack
 // positions, they are stable across a rebuild, and every mutation takes effect immediately with
 // audio still flowing. What this panel adds is the ordering obligation the engine cannot enforce

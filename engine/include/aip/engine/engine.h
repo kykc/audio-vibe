@@ -24,6 +24,7 @@
 
 #include "aip/engine/chain_processor.h"
 #include "aip/engine/component_handler.h"
+#include "aip/engine/output_meter.h"
 #include "aip/engine/plugin_instance.h"
 #include "aip/engine/plugin_module.h"
 #include "aip/engine/stream_format.h"
@@ -51,6 +52,16 @@ public:
     [[nodiscard]] ipc::BlockProcessor& blockProcessor() noexcept { return processor_; }
 
     [[nodiscard]] ChainProcessor& chainProcessor() noexcept { return processor_; }
+
+    // --------------------------------------------------------------------- output meter ------
+    //
+    // The loudness of what the valet hands back, measured on the audio thread and read by one
+    // reader on this one (output_meter.h). It lives in ChainProcessor because that is the object
+    // the audio thread already holds; it is surfaced here because Engine is what the shell talks
+    // to. Nothing about it is saved -- a meter is a view of what is happening now, and there is
+    // no setting on it to remember.
+
+    [[nodiscard]] OutputMeter& outputMeter() noexcept { return processor_.outputMeter(); }
 
     // ------------------------------------------------------------------------- the rack -------
     // Positions are rack positions, bypassed entries included, and stay stable across a rebuild.

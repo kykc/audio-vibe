@@ -1,5 +1,20 @@
 # Project status
 
+**Updated:** 2026-08-30. **The shell has an output loudness meter, between the rack list and its
+buttons.** EBU R128 momentary: ITU-R BS.1770 K-weighting, a 400 ms sliding window, one bar per
+channel and two bars at most (section 7 item 97). It is the only thing on screen that can tell a
+chain that is working from one that is silently outputting nothing -- every other display in the
+window proves blocks are *flowing*, and none of them proves there is any audio in them. It reads
+on every path out of dispatch, the bypassed one included, because all of them are the endpoint's
+audio going back.
+
+The filter is derived from the standard's analog prototype rather than pasted from its 48 kHz
+table, so 44.1 and 96 kHz are right too, and the calibration is checked against a test that is not
+ours: **EBU Tech 3341's first test signal reads -23.0 LUFS** at all three rates, inside the
+standard's own 0.1 LU tolerance. Nothing is measured or drawn while the window is off the screen
+-- minimized, hidden, or on another virtual desktop -- which takes the shell from 94 ms of CPU per
+six seconds to none that the clock can resolve (item 97). 173 tests, up from 157.
+
 **Updated:** 2026-08-29, later. **Three decisions closed, and the first audio-quality pass is done.**
 No DSP of our own: the predecessor's parametric EQ is not reimplemented, because ZL Equalizer 2 --
 free, and open source -- already does that job and is the plugin everything here was verified
@@ -296,7 +311,9 @@ engine/     audio_thread.h (which-thread-am-I marker), plugin_module (load a .vs
             component_handler (IComponentHandler, lock-free from the audio thread),
             plugin_chain (a *borrowed* ordered view + ping-pong scratch banks),
             chain_processor (the BlockProcessor: atomic pointer, format check, epoch-based
-            retirement), engine (owns the rack; insert/remove/move/bypass, rebuild, publish,
+            retirement), output_meter (BS.1770 K-weighting and R128 momentary loudness over what
+            goes back to the king -- the only signal processing of our own anywhere, item 97),
+            engine (owns the rack; insert/remove/move/bypass, rebuild, publish,
             service). plugin_instance also carries the parameter ring that delivers an editor's
             edits to the processor (item 26)
 config/     session.h (the Session struct -- rack entries, cached scan report, window geometry,
@@ -321,6 +338,8 @@ ui/         src/ only -- an executable, nothing links it. main (OLE apartment, c
             Save and Load Preset are the whole chain to and from a file of the user's choosing),
             rack_list (that list: it intercepts the drop so the engine reorders the rack and the
             view never reorders itself),
+            level_meter (the output meter in that same row -- the bars, and the ballistics and
+            colours that are a display decision rather than a standard's, item 97),
             plugin_catalog (the scan report, carried across
             runs in the session file and re-probed per entry only where a bundle's stamp has
             changed, plus the progress dialog that fills it),
@@ -2931,6 +2950,116 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
     The bucket needs no change: the `checkver` regex `vibeaudio \(([\w.\-]+)\)` already matches
     dots and hyphens, and the `autoupdate` URL template substitutes `$version` verbatim.
+
+97. **The output meter measures loudness, not amplitude, and it is calibrated against somebody
+    else's test.** Feature request, project owner, 2026-08-30, with the place on screen marked in a
+    screenshot -- between the rack list and the rack's buttons -- and the measurement named in a
+    follow-up: LUFS, with an integration window short enough to watch.
+
+    That is ITU-R BS.1770-4 / EBU R128, and the window is **400 ms**, which is R128's *momentary*
+    loudness. Short-term is 3 s and integrated is gated over a whole programme; neither moves fast
+    enough to be a meter. The window and the refresh rate are different things and are treated as
+    such: Tech 3341 computes M every 100 ms, which is a measurement cadence, so `engine/`
+    slides the same 400 ms window in 10 ms hops and the widget reads it at 30 Hz on its own timer
+    rather than on EngineHost's 100 ms servicing tick.
+
+    **The coefficients are derived, not pasted.** The standard publishes its K-weighting table at
+    48 kHz. A meter that copies that table is right at 48 kHz and wrong at 44.1, which is the rate
+    a great deal of this machine's audio is actually at -- and the endpoint can change rate under
+    us at any moment and announces it nowhere (sec. 4.5). So both biquads are designed from the
+    standard's analog prototype at whatever rate the block header says, and a rate change rebuilds
+    the filter and restarts the window, because a K-weighting filter is only correct for the rate
+    it was designed at and a window spanning a format change describes neither format.
+
+    **The calibration is checked against a test that is not ours.** EBU Tech 3341's first test
+    signal -- a stereo 1 kHz sine at -23 dBFS -- must read -23.0 LUFS within 0.1. It does, at
+    48, 44.1 and 96 kHz. That one number checks the filter, the window, the channel sum and
+    BS.1770's -0.691 offset at once, and it works because the K-weighting's +0.691 dB at 1 kHz and
+    that offset cancel exactly. A meter is either calibrated or decorative and the difference is
+    not visible by looking at it: a wrong constant, a filter at the wrong rate, or a window one hop
+    short all produce a bar that moves plausibly with the music and reads the wrong number.
+
+    **Measured on every path out of dispatch**, the bypassed one included, because all of them are
+    the endpoint's audio being handed back and the level of it is the same question either way.
+    Metering reads the payload and never writes it, so a passed-through block is still bit-exact
+    and the conformance harness's round-trip claim is untouched -- there is a test for exactly
+    that, because the meter now sits on that path.
+
+    **Two channels, following the stream** (project owner, asked and answered during the change):
+    one bar for a mono endpoint, two for anything wider, and on an endpoint with more than two
+    channels the bars are channels 0 and 1 with the rest neither measured nor summed. So on 5.1 the
+    programme figure is the front pair's loudness and not the programme's. That is the honest
+    reading of a two-bar meter, and the test named "channels past the second are neither metered
+    nor summed" is the one that is supposed to fail when the panel grows a bar per channel.
+
+    **Real-time.** Fixed storage sized at construction, one pass over at most two channels, four
+    multiply-accumulates per sample, a handful of relaxed atomic stores per block. The logarithms
+    are all on the reader's side. The one arithmetic-heavy path is redesigning the filter for a new
+    rate -- a few calls to `tan` and `pow`, no heap and no lock, once per format change, which is
+    already a transition sec. 7.4.3 permits to be audible. The sample peak the over-indicator uses
+    is published without a compare-exchange loop, and the race that allows is harmless in one
+    direction only: a read landing mid-update can cost one block's peak, but only when that peak
+    was *lower* than the value the reader just took, so a transient can never be lost.
+
+    Three things about the display are decisions rather than standard, and are in `level_meter.h`
+    because the standard says what to measure and nothing about how a meter should look while
+    measuring it. **No decay on the bar** -- the 400 ms window *is* the ballistic, and a second one
+    on top would make it lag the standard it implements. **A stalled stream falls to silence rather
+    than freezing**, because a sliding window with nothing going into it holds its last value
+    forever and a meter stuck at -14 LUFS after a detach is worse than no meter; `Reading::blocks`
+    is what makes that detectable. And **the colours are keyed to headroom, not to R128's target**:
+    -23 LUFS is a broadcast delivery figure, consumer audio sits nearer -14 and a mastered-loud
+    record nearer -8, so a meter that turned amber at -23 would be amber all day and would be
+    saying nothing. The -23 mark is still drawn on the scale, as the reference it is.
+
+    **Loudness cannot see clipping, so something else does.** A plugin that pushes past full scale
+    is clipped by the audio engine on the way to the device and nothing anywhere says so. The
+    sample peak from the same pass over the block drives a latch at the top of each bar, held for a
+    couple of seconds so it is seen by somebody who was looking elsewhere when it happened.
+
+    Nothing about the meter is saved. It is a view of what is happening now and has no setting on
+    it to remember, which is the whole difference between it and everything else in `config/`.
+
+    **Nothing is measured or drawn while the window is off the screen** (project owner,
+    2026-08-30, as an optimization once the meter existed). Minimized, hidden, or on a virtual
+    desktop the user is not looking at: in all three the 30 Hz refresh stops *and*
+    `OutputMeter::setEnabled(false)` switches the K-weighting off, so the work stops on the audio
+    thread too. Measured on the real shell, detached: 93.8 ms of CPU over six seconds with the
+    window up, none the process clock can resolve while minimized -- its granularity is 15.6 ms --
+    and back to 62.5 ms on restore.
+
+    Two details make it correct rather than merely cheaper. **Switching back on restarts the
+    measurement**: the 400 ms window would otherwise still hold hops from before the minimize and
+    the filter state from a signal minutes old, and the first thing shown after a restore would be
+    a blend of then and now, read as though it were now. The restart is asked for by the control
+    thread and done by the audio thread on its next block, because that is the thread that owns
+    the window and the filter. And `measure` returns **before** advancing `blocks`, so a reader
+    that looks while it is off sees a stalled stream rather than a frozen level -- which is the
+    truth, and which the panel already knows how to display.
+
+    It is a poll -- 200 ms while idle -- and not an event, and that is the decision worth
+    recording. The event route needs a `WindowStateChange` filter for minimize, show and hide
+    events for a hidden widget, and *still* a poll for the virtual desktop, which Qt does not
+    report at all: `isVisible()` is true and `isMinimized()` false throughout. One slow timer
+    covers all three, costs five cheap Win32 calls a second, and self-heals if an event is ever
+    missed. Resuming within 200 ms is inside the 400 ms the window needs to refill anyway.
+
+    The virtual desktop case is `DwmGetWindowAttribute(DWMWA_CLOAKED)`, which is the only thing
+    that answers it -- hence `dwmapi` on the link line. A failed query is read as *visible*: an
+    extra refresh costs microseconds, where a meter blanked by a failed query is a defect nobody
+    could explain.
+
+    What is deliberately **not** covered is a window on screen but entirely behind another one.
+    There is no cheap or reliable way to ask Windows that -- the browsers that do it maintain a
+    region tree off accessibility hooks -- and a wrong answer would blank a meter someone is
+    watching. The project owner named this as optional for that reason.
+
+    One trap on the way, worth a line because it costs an hour to recognise: `windows.h` typedefs
+    `small` to `char`, so a local `QFont small` in a file that includes it fails with
+    `C2628: 'QFont' followed by 'char' is illegal`. Renaming the local is the fix; an `#undef`
+    would only hide it from the next reader. `NOMINMAX` is already set project-wide
+    (`CMakeLists.txt`), so `std::max` in the same file is safe -- without it, that would have been
+    the second collision in the same three lines.
 
 
 ---

@@ -68,6 +68,15 @@ void ChainProcessor::processBlock(ipc::BlockInfo& block) noexcept {
     const AudioThreadMarker onAudio;
     const EpochScope inChain(epoch_);
 
+    dispatch(block);
+
+    // Last, and on every path out of `dispatch` -- processed, bypassed, no chain, wrong format.
+    // What the meter is asked is "what is going back to the king", and that has an answer in all
+    // four cases. It reads the payload and never writes it (output_meter.h).
+    meter_.measure(block.audio, block.sampleRate);
+}
+
+void ChainProcessor::dispatch(ipc::BlockInfo& block) noexcept {
     // Recorded unconditionally, and before anything else can return early: the control thread
     // needs the geometry to build the *first* chain as much as to rebuild a stale one, and on a
     // fresh attach there is no chain to mismatch against. One compare, one conditional store.

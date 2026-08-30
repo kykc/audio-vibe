@@ -1,5 +1,6 @@
 #include "rack_panel.h"
 
+#include "level_meter.h"
 #include "plugin_picker.h"
 #include "qt_paths.h"
 #include "rack_list.h"
@@ -49,6 +50,12 @@ RackPanel::RackPanel(EngineHost& host, EditorManager& editors, QWidget* parent)
     list_->setToolTip(QStringLiteral("Drag a plugin up or down to reorder the chain. The check "
                                      "box takes it out of the chain without removing it."));
     row->addWidget(list_, 1);
+
+    // The output meter, between the chain and the buttons that act on it (project owner,
+    // 2026-08-30). Built here because this is the panel that owns the row -- but it is not part
+    // of the rack and does not go through `refresh()`: it is a view of `engine::OutputMeter`,
+    // which it reads on its own timer. See level_meter.h.
+    row->addWidget(new MeterPanel(host_, this));
 
     auto* buttons = new QVBoxLayout();
     row->addLayout(buttons);

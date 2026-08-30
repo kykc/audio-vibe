@@ -5,6 +5,7 @@ add_library(aip_engine STATIC
     src/chain_processor.cpp
     src/component_handler.cpp
     src/engine.cpp
+    src/output_meter.cpp
     src/plugin_chain.cpp
     src/plugin_instance.cpp
     src/plugin_module.cpp
@@ -44,6 +45,7 @@ target_sources(aip_engine PUBLIC
         include/aip/engine/chain_processor.h
         include/aip/engine/component_handler.h
         include/aip/engine/engine.h
+        include/aip/engine/output_meter.h
         include/aip/engine/plugin_chain.h
         include/aip/engine/plugin_instance.h
         include/aip/engine/plugin_module.h

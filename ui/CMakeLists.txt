@@ -31,6 +31,8 @@ add_executable(vibeaudio WIN32
     src/rack_list.h
     src/rack_panel.cpp
     src/rack_panel.h
+    src/level_meter.cpp
+    src/level_meter.h
     src/plugin_catalog.cpp
     src/plugin_catalog.h
     src/plugin_picker.cpp
@@ -90,6 +92,9 @@ target_link_libraries(vibeaudio PRIVATE
     Qt6::Gui
     # GetProcessMemoryInfo, for the resident-set half of the sec. 7.4.3 criterion on screen.
     psapi
+    # DwmGetWindowAttribute(DWMWA_CLOAKED), which is the only way to find out that a window is on
+    # a virtual desktop nobody is looking at -- see level_meter.h.
+    dwmapi
 )
 
 # vibeaudio starts aip_scan; nothing links it, so nothing would otherwise build it first.

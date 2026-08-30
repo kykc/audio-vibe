@@ -35,6 +35,7 @@ add_executable(aip_tests
     config_test.cpp
     conformance_test.cpp
     engine_test.cpp
+    output_meter_test.cpp
     planar_test.cpp
     protocol_layout_test.cpp
     realtime_safety_test.cpp

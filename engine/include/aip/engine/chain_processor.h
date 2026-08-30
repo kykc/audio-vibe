@@ -2,7 +2,7 @@
 //
 // This class is the entire audio-thread surface of `engine/`, and it is deliberately tiny. Per
 // block it does: mark the thread, bump an epoch, read one atomic pointer, compare the block's
-// geometry against the chain's, and dispatch. Sec. 7.4.3 says that if what runs on the audio
+// geometry against the chain's, dispatch, and measure what came out. Sec. 7.4.3 says that if what runs on the audio
 // thread amounts to more than a pointer read, the work was not pushed far enough upstream -- so
 // everything else lives on the control thread, in Engine.
 //
@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include "aip/engine/output_meter.h"
 #include "aip/engine/plugin_chain.h"
 #include "aip/engine/stream_format.h"
 #include "aip/ipc/valet_thread.h"
@@ -41,7 +42,21 @@ public:
     /// chain was built for. Passing through is the only safe response to a format change:
     /// rebuilding is control-plane work (sec. 7.4.3) and the change is reported through
     /// `observedFormat`.
+    ///
+    /// The block is metered afterwards on every one of those paths, because all of them are the
+    /// endpoint's audio being handed back and the level of it is the same question either way.
+    /// Metering reads the payload and never writes it, so a passed-through block is still
+    /// bit-exact (output_meter.h).
     void processBlock(ipc::BlockInfo& block) noexcept override;
+
+    // ------------------------------------------------------------------- output meter --------
+    //
+    // Either thread, each through its own half of OutputMeter's interface: the audio thread
+    // measures, one control-thread reader reads. Held here rather than in Engine because this is
+    // the object the audio thread already has a pointer to, and because it has to go on
+    // measuring when there is no chain for Engine to hang it off.
+
+    [[nodiscard]] OutputMeter& outputMeter() noexcept { return meter_; }
 
     // ------------------------------------------------------------------- chain bypass --------
     //
@@ -111,6 +126,11 @@ public:
     }
 
 private:
+    /// The chain half of `processBlock`, split out so the meter can be applied on every path out
+    /// of it without four copies of the call. Audio thread; the caller holds the thread marker
+    /// and the epoch.
+    void dispatch(ipc::BlockInfo& block) noexcept;
+
     /// Even means the audio thread is outside `processBlock`; odd means it is inside. The audio
     /// thread raises it *before* loading `current_`, which is what makes an even reading taken
     /// after a store to `current_` a proof that the next entry will see the new pointer.
@@ -122,6 +142,8 @@ private:
     /// worst a stale read can cost is one block processed either side of the user's click, which
     /// is well inside what sec. 7.4.3 already permits a user-initiated transition to sound like.
     std::atomic<bool> bypassed_{false};
+    /// See outputMeter(). Its own real-time contract, documented on `measure`.
+    OutputMeter meter_;
 
     std::unique_ptr<PluginChain> owned_;
     std::vector<std::unique_ptr<PluginChain>> parked_;
