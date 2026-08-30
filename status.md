@@ -2769,10 +2769,20 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
 
     **The release workflow is separate because it meets the test the sibling file already states
     for splitting one off**: its own trigger, its own versioning rule, its own credential.
-    `.gitea/workflows/publish-github-release.yaml`, `workflow_dispatch`, one required input -- the
-    version string of a package already in the registry. Cutting a release is a decision and not a
-    consequence of pushing: every push to `main` publishes a package, and only some are worth
-    announcing (`939f330`, a README-only commit, is not).
+    `.gitea/workflows/publish-github-release.yaml`, `workflow_dispatch`. Cutting a release is a
+    decision and not a consequence of pushing -- every push to `main` publishes a package and only
+    some are worth announcing (`939f330`, a README-only commit, is not) -- so it fires by hand.
+
+    **But it asks for nothing that can be worked out.** Project owner, on reading the first draft:
+    the version is not a decision, it is `<project version>-<short commit>`. So the input is the ref
+    to release, defaulting to `main`, and the ordinary release is a dispatch with every field left
+    alone. The version is then **looked up in the registry rather than recomputed**: rebuilding it
+    would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
+    whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
+    automatic and grows with the object count. It is 7 today; a release workflow is the worst place
+    to discover it is no longer 7. Matching each published version's suffix against the full sha as
+    a prefix does not care how long the abbreviation is, and what the registry holds is by
+    definition what CI published.
 
     **It builds nothing.** The zip it attaches is fetched back out of
     `audist/generic/vibeaudio`, so what ships is byte for byte the artifact its suite was green
@@ -2795,7 +2805,15 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     error if it does not -- a tag that moved means a version string that no longer identifies one
     commit.
 
-    Three details that are each a quiet failure otherwise. **Every HTTP status is compared as
+    **`target_commitish` must be a full sha**, which cost the first dispatch (run 904). Fed the
+    abbreviated commit out of the version string, GitHub answers 422 with
+    `{"field":"target_commitish","code":"invalid"}` and a second error saying `tag_name is not a
+    valid tag` -- which is the consequence, not the cause, and points at the wrong field. The commit
+    lookup that precedes it does accept an abbreviated ref, which is why nothing failed earlier and
+    why the full sha was already in hand. It is resolved once now, in the first step, and carried as
+    the full sha throughout.
+
+    Three more details that are each a quiet failure otherwise. **Every HTTP status is compared as
     `[int]`**, because `HttpStatusCode` on .NET Framework -- which is what Windows PowerShell 5.1
     runs on -- has no member for 422, so comparing the enum against a name fails as a type
     conversion error and hides the real status; `[int]` is also `$null`-safe for a request that

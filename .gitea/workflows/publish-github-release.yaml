@@ -9,8 +9,9 @@
 #
 # **Cutting a release is a decision, so the trigger is a dispatch.** Every push to main publishes a
 # package; only some of those are worth a release (939f330, a README-only commit, is not). So this
-# takes the version to release as an input -- the string the registry and the About box both show,
-# `<project version>-<short commit>` -- rather than firing on its own.
+# fires by hand rather than on its own -- but it asks for nothing that can be worked out. The input
+# is the ref to release and it defaults to main, so the ordinary release is a dispatch with every
+# field left alone; the version, `<project version>-<short commit>`, is looked up from the commit.
 #
 # **No checkout, and no git.** Nothing here needs the tree, and the workspace on this self-hosted
 # runner is shared per repository: a checkout like the sibling workflow's ends in `git clean -ffdx`,
@@ -25,9 +26,10 @@ name: publish-github-release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Package version to release, e.g. 0.1.0-3313cac'
-        required: true
+      ref:
+        description: 'What to release -- a branch, a tag, or a commit (default: main)'
+        required: false
+        default: main
       prerelease:
         description: 'Mark the release as a pre-release'
         type: boolean
@@ -58,30 +60,99 @@ jobs:
       GH_UPLOADS: https://uploads.github.com
 
     steps:
+      # Nothing to type: what gets released is a commit, and the version is a fact about that
+      # commit rather than a decision -- `<project version>-<short commit>`, made by
+      # write_version_header.cmake at build time and published under exactly that string. So the
+      # input is the ref, defaulting to the tip of main, and the version is looked up.
+      #
+      # **Looked up in the registry, not recomputed.** Rebuilding the string here would mean
+      # reading the project version out of `CMakeLists.txt` and abbreviating the sha to the same
+      # length `git rev-parse --short` chose -- and that length is git's `core.abbrev`, which is
+      # automatic and grows with the object count. It is 7 for this repository today and there is
+      # no reason to make a release workflow the thing that discovers it is no longer 7. What the
+      # registry holds is what CI published, so the registry is asked.
+      #
       # `inputs.*` is the modern context; if this instance ever answers it empty, the equivalent is
       # `github.event.inputs.*`, which has meant the same thing for longer.
       - name: Work out what is being released
         id: release
         env:
-          VERSION: ${{ inputs.version }}
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CI_USER: ${{ secrets.CI_USER }}
+          CI_TOKEN: ${{ secrets.CI_TOKEN }}
+          # `audist` is the organisation every package on this instance lives under, whatever
+          # repository built it, so it is a literal and not this repository's owner.
+          PKG_OWNER: audist
+          PKG_NAME: vibeaudio
+          REF: ${{ inputs.ref }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Exactly the shape write_version_header.cmake produces and the sibling workflow
-          # publishes: a three-part project version, then the abbreviated commit. Anything else is
-          # rejected here rather than three requests later -- which also catches the two strings
-          # that must never reach a release, `-dirty` and `unknown`.
-          $version = "$env:VERSION".Trim()
-          $m = [regex]::Match($version, '^(\d+\.\d+\.\d+)-([0-9a-f]{7,40})$')
-          if (-not $m.Success) {
-            throw "'$version' is not a package version; expected <major>.<minor>.<patch>-<short commit>, e.g. 0.1.0-3313cac"
+          $missing = @()
+          if (-not $env:CI_USER)  { $missing += 'CI_USER' }
+          if (-not $env:CI_TOKEN) { $missing += 'CI_TOKEN' }
+          if ($missing.Count) {
+            throw "$($missing -join ' and ') not set on this repository; reading the registry needs both"
           }
-          $sha = $m.Groups[2].Value
+
+          # An empty input is main: a dispatch with nothing filled in releases the tip.
+          $ref = "$env:REF".Trim()
+          if (-not $ref) { $ref = 'main' }
+
+          $api = "$env:GITHUB_SERVER_URL/api/v1"
+          $gitea = @{ Authorization = "token $env:GITEA_TOKEN" }
+
+          # Resolves whatever was typed -- a branch, a tag, a full or abbreviated sha -- to the one
+          # commit it means, and yields the *full* sha, which matters twice below.
+          try {
+            $commit = Invoke-RestMethod -Headers $gitea `
+              -Uri "$api/repos/$env:GITHUB_REPOSITORY/commits/$([uri]::EscapeDataString($ref))"
+          } catch {
+            # Compared as a number, everywhere in this file. `HttpStatusCode` on .NET Framework --
+            # which is what Windows PowerShell 5.1 runs on -- has no member for 422, so comparing
+            # the enum against a name fails as a type conversion error and hides the real status.
+            # `[int]` is also $null-safe: a connection that never got a response gives 0, matches
+            # nothing, and rethrows, which is what should happen to it.
+            if ([int]$_.Exception.Response.StatusCode -eq 404) {
+              throw "no commit '$ref' in $env:GITHUB_REPOSITORY"
+            }
+            throw
+          }
+          $sha = $commit.sha
+          Write-Host "$ref is $sha"
+
+          # The published version for that commit, found by matching each version's suffix against
+          # the full sha as a prefix -- which is the comparison that does not care how many
+          # characters the abbreviation has. Paged because the listing is newest-first and a commit
+          # worth releasing is not always a recent one; bounded because an unbounded loop against a
+          # paginated API is how a workflow hangs.
+          $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
+          $registry = @{ Authorization = "Basic $auth" }
+          $version = $null
+          $pages = 20
+          for ($page = 1; $page -le $pages -and -not $version; $page++) {
+            $batch = @(Invoke-RestMethod -Headers $registry `
+              -Uri "$api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME?page=$page&limit=50")
+            if ($batch.Count -eq 0) { break }
+            foreach ($published in $batch) {
+              $suffix = $published.version -replace '^\d+\.\d+\.\d+-', ''
+              # The length floor rejects a version with no commit suffix at all, and `StartsWith`
+              # rejects `-dirty` and `unknown` without naming either.
+              if ($suffix.Length -ge 7 -and $sha.StartsWith($suffix)) {
+                $version = $published.version
+                break
+              }
+            }
+          }
+          if (-not $version) {
+            throw "no $env:PKG_NAME package for $sha in the registry; either the push that built it was not green, or it has not finished, or it is older than the last $($pages * 50) versions"
+          }
+
           $tag = "v$version"
           # The same expression the sibling workflow builds when it uploads. One architecture, so
           # one asset (design_doc.md sec. 11.5).
           $asset = "VibeAudio-$version-windows-amd64.zip"
-          Write-Host "version $version, commit $sha, tag $tag, asset $asset"
+          Write-Host "version $version, tag $tag, asset $asset"
 
           # Written through .NET with an explicit BOM-less encoding. Windows PowerShell's
           # `Out-File -Encoding utf8` emits a BOM, and a BOM at the head of GITHUB_OUTPUT is read
@@ -90,12 +161,13 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_OUTPUT,
             "version=$version`nsha=$sha`ntag=$tag`nasset=$asset`n", $utf8)
 
-      # Proves the version exists as much as it fetches it: a 404 here is the whole answer to "why
-      # did my release fail", so it is reported as itself and not as a transport error.
+      # The version is known to exist -- the step above found it in the listing -- so a 404 here is
+      # a different thing: the version record is there and the file under it is not, which is what a
+      # half-finished upload looks like. Reported as itself either way.
       #
-      # CI_USER and CI_TOKEN, both required and with no fallback, for the reason the sibling
-      # workflow spells out at its upload step: the built-in Actions token carries no package
-      # registry access, so a run that reached for it would fail confusingly rather than by name.
+      # CI_USER and CI_TOKEN are re-declared and re-checked rather than assumed from the step above:
+      # a step's `env:` does not carry, and a missing secret should fail at the first line of every
+      # step that needs it, which is the shape the sibling workflow argues for at its upload step.
       - name: Fetch the package from the generic registry
         id: package
         env:
@@ -129,13 +201,8 @@ jobs:
           try {
             Invoke-WebRequest -Uri $source -Headers $headers -OutFile $path -UseBasicParsing
           } catch {
-            # Compared as a number, everywhere in this file. `HttpStatusCode` on .NET Framework --
-            # which is what Windows PowerShell 5.1 runs on -- has no member for 422, so comparing
-            # the enum against a name fails as a type conversion error and hides the real status.
-            # `[int]` is also $null-safe: a connection that never got a response gives 0, matches
-            # nothing, and rethrows, which is what should happen to it.
             if ([int]$_.Exception.Response.StatusCode -eq 404) {
-              throw "no $env:PKG_NAME $env:PKG_VERSION in the generic registry; only versions a green push to main published can be released"
+              throw "$env:PKG_NAME $env:PKG_VERSION exists in the registry but holds no $env:ASSET; the upload that created it did not finish"
             }
             throw
           }
@@ -183,7 +250,7 @@ jobs:
             # and a hard stop if it does not: a tag that moved is somebody releasing a version
             # string that no longer identifies one commit.
             $existing = Invoke-RestMethod -Uri "$api/$([uri]::EscapeDataString($env:TAG))" -Headers $headers
-            if ($existing.commit.sha -notlike "$env:SHA*") {
+            if ($existing.commit.sha -ne $env:SHA) {
               throw "$env:TAG already exists on Gitea at $($existing.commit.sha), not at $env:SHA"
             }
             Write-Host "$env:TAG already points at $env:SHA"
@@ -245,6 +312,11 @@ jobs:
             $notes = "$env:NOTES".Trim()
             if (-not $notes) { $notes = ($commit.commit.message -split "`n")[0].Trim() }
 
+            # `target_commitish` must be a full sha. An abbreviated one -- which is what the
+            # version string carries, and what this step was first given -- is refused with a 422,
+            # `{"field":"target_commitish","code":"invalid"}`, alongside a second error blaming
+            # `tag_name` that is a consequence and not the cause. SHA is the full sha the first
+            # step resolved, and it has to stay that way.
             $body = @{
               tag_name         = $env:TAG
               target_commitish = $env:SHA
