@@ -2789,20 +2789,31 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     and the first entry is what it resolved to. Being a query parameter it survives escaping, which
     a path segment holding a branch name with a slash in it would not.
 
-    **And the version listing is `GET /packages/{owner}` filtered by `type` alone**, because Gitea
-    has no route that lists the versions of one package either: `/packages/{owner}/{type}/{name}`
-    answers `GetPackageByName: package does not exist` (run 910), which reads like a missing package
-    and means a missing path. That endpoint returns an entry per name-and-version pair. Adding
-    `q=vibeaudio` to narrow it matched nothing against a version that had been in the registry for
-    two minutes (run 912), so whatever `q` searches there it is not the package name; the name is
-    compared in the loop instead, exactly, which is what was wanted anyway. The URL and the
-    per-page counts are logged now, because three failures in a row were a request returning
-    nothing for a reason the log did not show.
+    **The version is then worked out without Gitea's package listing at all.** Two attempts went
+    through it and both died on that endpoint's own semantics: `/packages/{owner}/{type}/{name}`
+    answers `GetPackageByName: package does not exist` (run 910) because Gitea has no route that
+    lists one package's versions; `/packages/{owner}?type=generic&q=vibeaudio` matched nothing
+    against a version that had been published for two minutes (run 912), so whatever `q` searches
+    there it is not the name; and with `q` dropped, `limit=50` was ignored and every page came back
+    holding a single entry (run 914). What settled it was logging the URL and the per-page counts --
+    three failures in a row had been a request returning nothing for a reason the log did not show,
+    and the fourth diagnosed itself in one line.
 
-    The general lesson, having now paid for it three times in one file: the two APIs this workflow
-    speaks are *not* the same API, and a route guessed from one at the other fails as a 404 or an
-    "it does not exist" that reads like missing data rather than a missing path. Check the swagger,
-    or call it once before writing it down. The version is then **looked up in the registry rather than recomputed**: rebuilding it
+    So the step asks its two questions directly instead. The project version comes from
+    `project(... VERSION ...)` in `CMakeLists.txt` read *at that commit*, through the contents API,
+    so releasing an older commit uses the number that commit carried. The abbreviation is not
+    guessed at: `git rev-parse --short` is `core.abbrev`, automatic and growing with the object
+    count, so the step tries lengths 7 through 12 against the registry and takes the one that
+    answers. The ask is the download itself -- the request the release has to make anyway, and the
+    one registry route these credentials had already succeeded against. It costs one extra 404 in
+    the ordinary case and it removed the whole class of failure above.
+
+    The general lesson, having paid for it four times in one file: the two APIs this workflow speaks
+    are *not* the same API, a route or parameter guessed from one at the other fails as a 404, an
+    empty result or an "it does not exist" that all read like missing data rather than a wrong
+    request, and a tool that wraps an API is not evidence about the API -- the MCP client that made
+    `q` and `limit` look right filters and pages on its own side. Call the endpoint the way the
+    workflow will call it, or prefer a route the workflow already depends on. The version is then **looked up in the registry rather than recomputed**: rebuilding it
     would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
     whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
     automatic and grows with the object count. It is 7 today; a release workflow is the worst place
