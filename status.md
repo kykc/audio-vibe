@@ -2774,9 +2774,13 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     some are worth announcing (`939f330`, a README-only commit, is not) -- so it fires by hand.
 
     **But it asks for nothing that can be worked out.** Project owner, on reading the first draft:
-    the version is not a decision, it is `<project version>-<short commit>`. So the input is the ref
-    to release, defaulting to `main`, and the ordinary release is a dispatch with every field left
-    alone. The version is then **looked up in the registry rather than recomputed**: rebuilding it
+    the version is not a decision, it is `<project version>-<short commit>`. So the input is the
+    commit to release, defaulting to `main`, and the ordinary release is a dispatch with every field
+    left alone. It is named `commit` and not `ref` because **a dispatch payload carries its own
+    `ref`** -- the branch the workflow is run from -- and an input of that name is silently
+    overwritten by it: run 906 reached the job with `main` turned into `refs/heads/main`, which the
+    commit endpoint then refused. The value is stripped of a `refs/heads/` or `refs/tags/` prefix
+    anyway, so a ref pasted out of a git output also works. The version is then **looked up in the registry rather than recomputed**: rebuilding it
     would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
     whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
     automatic and grows with the object count. It is 7 today; a release workflow is the worst place

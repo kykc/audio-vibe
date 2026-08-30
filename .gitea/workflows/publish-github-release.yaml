@@ -26,7 +26,10 @@ name: publish-github-release
 on:
   workflow_dispatch:
     inputs:
-      ref:
+      # Named `commit` and not `ref`: a dispatch payload carries its own `ref` -- the branch the
+      # workflow itself is run from -- and an input of that name is overwritten by it. That is how
+      # a default of `main` arrived at the job as `refs/heads/main` (run 906).
+      commit:
         description: 'What to release -- a branch, a tag, or a commit (default: main)'
         required: false
         default: main
@@ -84,7 +87,7 @@ jobs:
           # repository built it, so it is a literal and not this repository's owner.
           PKG_OWNER: audist
           PKG_NAME: vibeaudio
-          REF: ${{ inputs.ref }}
+          COMMIT: ${{ inputs.commit }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -96,17 +99,23 @@ jobs:
           }
 
           # An empty input is main: a dispatch with nothing filled in releases the tip.
-          $ref = "$env:REF".Trim()
+          $ref = "$env:COMMIT".Trim()
           if (-not $ref) { $ref = 'main' }
+          # A fully-qualified ref is accepted and reduced to the short name this API wants. Belt
+          # and braces after run 906, and it also means a value pasted out of a git output works.
+          $ref = $ref -replace '^refs/(heads|tags)/', ''
 
           $api = "$env:GITHUB_SERVER_URL/api/v1"
           $gitea = @{ Authorization = "token $env:GITEA_TOKEN" }
 
           # Resolves whatever was typed -- a branch, a tag, a full or abbreviated sha -- to the one
           # commit it means, and yields the *full* sha, which matters twice below.
+          # Not URI-escaped: the ref is the last path segment and escaping would turn the slash
+          # of a branch like `topic/thing` into `%2F`, which this route does not decode. A branch
+          # name containing a slash is the one thing that does not work here.
           try {
             $commit = Invoke-RestMethod -Headers $gitea `
-              -Uri "$api/repos/$env:GITHUB_REPOSITORY/commits/$([uri]::EscapeDataString($ref))"
+              -Uri "$api/repos/$env:GITHUB_REPOSITORY/commits/$ref"
           } catch {
             # Compared as a number, everywhere in this file. `HttpStatusCode` on .NET Framework --
             # which is what Windows PowerShell 5.1 runs on -- has no member for 422, so comparing
@@ -114,7 +123,7 @@ jobs:
             # `[int]` is also $null-safe: a connection that never got a response gives 0, matches
             # nothing, and rethrows, which is what should happen to it.
             if ([int]$_.Exception.Response.StatusCode -eq 404) {
-              throw "no commit '$ref' in $env:GITHUB_REPOSITORY"
+              throw "no commit '$ref' in $env:GITHUB_REPOSITORY; expected a branch, a tag or a commit sha"
             }
             throw
           }
