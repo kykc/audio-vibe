@@ -11,7 +11,8 @@
 # package; only some of those are worth a release (939f330, a README-only commit, is not). So this
 # fires by hand rather than on its own -- but it asks for nothing that can be worked out. The input
 # is the ref to release and it defaults to main, so the ordinary release is a dispatch with every
-# field left alone; the version, `<project version>-<short commit>`, is looked up from the commit.
+# field left alone; the version, `<project version>-<committer epoch>.<commit>`, is worked out from
+# the commit.
 #
 # **No checkout, and no git.** Nothing here needs the tree, and the workspace on this self-hosted
 # runner is shared per repository: a checkout like the sibling workflow's ends in `git clean -ffdx`,
@@ -64,17 +65,21 @@ jobs:
 
     steps:
       # Nothing to type: what gets released is a commit, and the version is a fact about that
-      # commit rather than a decision -- `<project version>-<short commit>`, made by
+      # commit rather than a decision -- `<project version>-<committer epoch>.<commit>`, made by
       # write_version_header.cmake at build time and published under exactly that string. So the
       # input is the commit, defaulting to the tip of main, and the version is worked out here.
       #
-      # **This step only speaks routes that have already answered these credentials.** Two attempts
-      # at finding the version through Gitea's package *listing* failed on that endpoint's own
-      # semantics rather than on anything about this repository: `q=vibeaudio` matched nothing
-      # against a version that had been published for two minutes (run 912), and with `q` dropped,
-      # `limit=50` was ignored and every page came back holding one entry (run 914). Rather than
-      # keep guessing at it, this asks the two questions directly, of the file API and of the
-      # download URL the next steps use anyway.
+      # **The version is reconstructed, not searched for.** It is
+      # `<project version>-<committer epoch>.<commit abbreviated to ten>`, and every one of those
+      # three comes from the commit -- so this step builds the string and fetches it, in one
+      # request that is also the proof it exists. Searching was tried first and was a mistake:
+      # Gitea's package listing answered `q=vibeaudio` with nothing against a version published two
+      # minutes earlier (run 912), and with `q` dropped it ignored `limit=50` and returned one
+      # entry per page (run 914). None of that matters now, and none of these routes is guessed at.
+      #
+      # It works because the pieces were made reconstructible on purpose: the epoch is the
+      # *commit's* and not the build's, and `--short=10` is pinned in the generator rather than
+      # left to `core.abbrev`.
       #
       # `inputs.*` is the modern context; if this instance ever answers it empty, the equivalent is
       # `github.event.inputs.*`, which has meant the same thing for longer.
@@ -139,7 +144,18 @@ jobs:
           $sha = $found[0].sha
           Write-Host "$ref is $sha"
 
-          # The project version, read out of the tree *at that commit* rather than out of the
+          # Everything the version is made of, taken from the commit itself.
+          #
+          # The committer date as epoch seconds, which is the same integer `git show -s --format=%ct`
+          # gave the build. Epoch is why this is one line and not a formatting agreement to keep in
+          # step with CMake. `commit.committer.date` is the exact counterpart of `%ct`; `created`
+          # is the fallback for a payload that does not carry the nested object.
+          $when = $found[0].commit.committer.date
+          if (-not $when) { $when = $found[0].created }
+          if (-not $when) { throw "the commit payload for $sha carries no date to version it by" }
+          $committed = [DateTimeOffset]::Parse($when, [Globalization.CultureInfo]::InvariantCulture).ToUnixTimeSeconds()
+
+          # The project version, read out of the tree *at that commit* rather than out of any
           # checked-out one, so releasing an older commit uses the number that commit carried.
           # This is the same `project(... VERSION ...)` that reaches version.h, and `\s` spans the
           # newline between the two, which is how CMakeLists.txt actually writes it.
@@ -148,42 +164,30 @@ jobs:
           $number = [regex]::Match($cmakelists, 'project\s*\(\s*\S+\s+VERSION\s+(\d+\.\d+\.\d+)').Groups[1].Value
           if (-not $number) { throw "could not read project(VERSION) out of CMakeLists.txt at $sha" }
 
-          # What is left is the abbreviation, which is `git rev-parse --short` and therefore git's
-          # `core.abbrev` -- automatic, and growing with the object count. It is 7 today and this
-          # does not assume that: it asks the registry for each plausible length and takes the one
-          # that answers. The ask is the download itself, because that is the request the release
-          # needs made anyway, and because it is the one registry route these credentials have
-          # already succeeded against (run 904).
+          # And the abbreviation, which is a fixed ten because write_version_header.cmake pins
+          # `--short=10` -- precisely so that this line can exist. With `core.abbrev` the length
+          # would be a property of the repository on the day of the build and this would be reduced
+          # to guessing at it.
+          $version = "$number-$committed.$($sha.Substring(0, 10))"
+          $asset = "VibeAudio-$version-windows-amd64.zip"
+
+          # The download, which is also the proof that the version exists. A 404 here names the
+          # string that was looked for, so a mismatch between what CI published and what this
+          # reconstructs is one line to read rather than something to go hunting for.
           $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
           $registry = @{ Authorization = "Basic $auth" }
-          $version = $null
-          $asset = $null
-          $path = $null
+          $source = "$env:GITHUB_SERVER_URL/api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME/$version/$asset"
+          $path = Join-Path $env:RUNNER_TEMP $asset
+          if (Test-Path $path) { Remove-Item $path -Force }
 
-          foreach ($length in 7..12) {
-            $candidate = "$number-$($sha.Substring(0, $length))"
-            $file = "VibeAudio-$candidate-windows-amd64.zip"
-            $source = "$env:GITHUB_SERVER_URL/api/packages/$env:PKG_OWNER/generic/$env:PKG_NAME/$candidate/$file"
-            $target = Join-Path $env:RUNNER_TEMP $file
-            if (Test-Path $target) { Remove-Item $target -Force }
-            try {
-              Invoke-WebRequest -Uri $source -Headers $registry -OutFile $target -UseBasicParsing
-            } catch {
-              # A 404 is the ordinary answer for a length this repository does not use.
-              if ([int]$_.Exception.Response.StatusCode -ne 404) { throw }
-              # -OutFile can leave an empty file behind on a failed request.
-              if (Test-Path $target) { Remove-Item $target -Force }
-              Write-Host "no $candidate"
-              continue
+          Write-Host "fetching $source"
+          try {
+            Invoke-WebRequest -Uri $source -Headers $registry -OutFile $path -UseBasicParsing
+          } catch {
+            if ([int]$_.Exception.Response.StatusCode -eq 404) {
+              throw "no $env:PKG_NAME $version under $env:PKG_OWNER; either the push that built $sha was not green, or it has not finished"
             }
-            $version = $candidate
-            $asset = $file
-            $path = $target
-            break
-          }
-
-          if (-not $version) {
-            throw "no $env:PKG_NAME package for $sha under $env:PKG_OWNER; either the push that built it was not green, or it has not finished"
+            throw
           }
 
           # A registry that answers an HTML error page with a 200 would otherwise be discovered by

@@ -2498,8 +2498,9 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     the only one in the tree and it never reached C++.
 
     `cmake/version.cmake` declares an always-run target that shells out to
-    `cmake/write_version_header.cmake`, which runs `git rev-parse --short HEAD`, appends `-dirty`
-    when `git status --porcelain -uno` is non-empty, and `copy_if_different`s the result into
+    `cmake/write_version_header.cmake`, which runs `git rev-parse --short HEAD` -- `--short=10`
+    since item 96 -- appends `-dirty` when `git status --porcelain -uno` is non-empty, and
+    `copy_if_different`s the result into
     `aip/version.h` in the build tree. The obvious alternative -- `execute_process` at configure
     time -- captures the hash **once**, so the next commit and rebuild produce a binary that
     confidently names the previous commit. That is worse than naming none, because the only
@@ -2694,11 +2695,14 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     live after the suite instead of in a workflow of their own -- nothing reaches the registry
     from a tree whose tests are red.
 
-    **The version is `0.1.0-<short sha>`, read out of the generated header** rather than out of
-    `CMakeLists.txt`, so the version in the registry and the string the About box shows are the
-    same string by construction (item 89). A build that could not resolve its commit refuses to
-    publish: `unknown` in an About box is a curiosity, `vibeaudio 0.1.0-unknown` in a registry is
-    a version nobody can trace back to a source tree.
+    **The version is read out of the generated header** rather than composed in the workflow or
+    read out of `CMakeLists.txt`, so one file owns its shape (item 89). It was `0.1.0-<short sha>`,
+    identical to the string the About box shows; item 96 changed it to
+    `0.1.0-<committer epoch>.<commit>` because that string has to sort and a bare hash does not.
+    The About box still shows the short form, so the two now name the same commit without being
+    the same string. A build that could not resolve its commit refuses to publish: `unknown` in an
+    About box is a curiosity, `vibeaudio 0.1.0-unknown` in a registry is a version nobody can
+    trace back to a source tree.
 
     **The publishing half is named for the registry it targets** and not for the act. A second
     package format -- an MSI feed, winget, Chocolatey -- would get a workflow of its own beside
@@ -2774,7 +2778,7 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     some are worth announcing (`939f330`, a README-only commit, is not) -- so it fires by hand.
 
     **But it asks for nothing that can be worked out.** Project owner, on reading the first draft:
-    the version is not a decision, it is `<project version>-<short commit>`. So the input is the
+    the version is not a decision, it is a fact about the commit. So the input is the
     commit to release, defaulting to `main`, and the ordinary release is a dispatch with every field
     left alone. It is named `commit` and not `ref` because **a dispatch payload carries its own
     `ref`** -- the branch the workflow is run from -- and an input of that name is silently
@@ -2789,37 +2793,30 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     and the first entry is what it resolved to. Being a query parameter it survives escaping, which
     a path segment holding a branch name with a slash in it would not.
 
-    **The version is then worked out without Gitea's package listing at all.** Two attempts went
-    through it and both died on that endpoint's own semantics: `/packages/{owner}/{type}/{name}`
-    answers `GetPackageByName: package does not exist` (run 910) because Gitea has no route that
-    lists one package's versions; `/packages/{owner}?type=generic&q=vibeaudio` matched nothing
-    against a version that had been published for two minutes (run 912), so whatever `q` searches
-    there it is not the name; and with `q` dropped, `limit=50` was ignored and every page came back
-    holding a single entry (run 914). What settled it was logging the URL and the per-page counts --
-    three failures in a row had been a request returning nothing for a reason the log did not show,
-    and the fourth diagnosed itself in one line.
+    **The version is reconstructed from the commit, not searched for.** Two attempts went through
+    Gitea's package listing and both died on that endpoint's own semantics:
+    `/packages/{owner}/{type}/{name}` answers `GetPackageByName: package does not exist` (run 910)
+    because Gitea has no route that lists one package's versions; `/packages/{owner}?type=generic&q=vibeaudio`
+    matched nothing against a version that had been published for two minutes (run 912), so
+    whatever `q` searches there it is not the name; and with `q` dropped, `limit=50` was ignored
+    and every page came back holding a single entry (run 914). What settled it was logging the URL
+    and the per-page counts -- three failures in a row had been a request returning nothing for a
+    reason the log did not show, and the fourth diagnosed itself in one line.
 
-    So the step asks its two questions directly instead. The project version comes from
-    `project(... VERSION ...)` in `CMakeLists.txt` read *at that commit*, through the contents API,
-    so releasing an older commit uses the number that commit carried. The abbreviation is not
-    guessed at: `git rev-parse --short` is `core.abbrev`, automatic and growing with the object
-    count, so the step tries lengths 7 through 12 against the registry and takes the one that
-    answers. The ask is the download itself -- the request the release has to make anyway, and the
-    one registry route these credentials had already succeeded against. It costs one extra 404 in
-    the ordinary case and it removed the whole class of failure above.
+    Searching was the wrong shape anyway. Every part of the version is a fact about the commit, so
+    the step builds the string instead: the project version from `project(... VERSION ...)` read at
+    that commit through the contents API, the committer epoch from the commit's own date, and the
+    abbreviation from the sha. That is only possible because item 96 made both halves
+    reconstructible on purpose -- the epoch is the commit's and not the build's, and `--short=10`
+    is pinned in the generator rather than left to `core.abbrev`. The download is then one request
+    that is also the proof the version exists, and a 404 names the string that was looked for.
 
     The general lesson, having paid for it four times in one file: the two APIs this workflow speaks
     are *not* the same API, a route or parameter guessed from one at the other fails as a 404, an
     empty result or an "it does not exist" that all read like missing data rather than a wrong
     request, and a tool that wraps an API is not evidence about the API -- the MCP client that made
     `q` and `limit` look right filters and pages on its own side. Call the endpoint the way the
-    workflow will call it, or prefer a route the workflow already depends on. The version is then **looked up in the registry rather than recomputed**: rebuilding it
-    would mean reading the project version out of `CMakeLists.txt` and abbreviating the sha to
-    whatever length `git rev-parse --short` chose, and that length is `core.abbrev`, which is
-    automatic and grows with the object count. It is 7 today; a release workflow is the worst place
-    to discover it is no longer 7. Matching each published version's suffix against the full sha as
-    a prefix does not care how long the abbreviation is, and what the registry holds is by
-    definition what CI published.
+    workflow will call it, or prefer a route the workflow already depends on.
 
     **It builds nothing.** The zip it attaches is fetched back out of
     `audist/generic/vibeaudio`, so what ships is byte for byte the artifact its suite was green
@@ -2867,6 +2864,73 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     The two releases that predate this were tagged on Gitea by hand on 2026-08-30 --
     `v0.1.0-202d05e` and `v0.1.0-3313cac`, at the commits their GitHub tags already point at -- so
     that the internal instance is the complete record from here rather than from the next release.
+
+
+96. **The published version carries the committer epoch, because `0.1.0-<hash>` does not sort.**
+    Gitea issue #3, 2026-08-30. Scoop compares a pre-release suffix by splitting it into digit runs
+    and letter runs and comparing the digit runs *numerically*. A git short hash has no monotonic
+    property under that rule:
+
+    ```
+    SplitVersion '3313cac'  ->  3313 [Int64], 'cac' [String]
+    SplitVersion '77fbaf9'  ->    77 [Int64], 'fbaf' [String], 9 [Int64]
+    ```
+
+    The first component decides, `77 < 3313`, and so `Compare-Version '0.1.0-3313cac'
+    '0.1.0-77fbaf9'` returns -1: the newer build is a downgrade. `scoop-update.ps1` only updates
+    apps whose `app_status` says `outdated`, so it reported `0.1.0-3313cac (latest version)` and
+    skipped the release silently. `scoop status` did not list it either. The three earlier bumps
+    worked by coincidence -- their leading digit runs happened to ascend. Roughly half of all
+    releases were a coin flip, and nothing was wrong with the bucket manifest, the `checkver`
+    block or the excavator; the defect was in the string the release pipeline minted.
+
+    **The fix is a monotonic component in front, with the hash after a `.` so that it never
+    participates in the ordering**: `0.1.0-1788097302.77fbaf9098`. The leading digit run is then a
+    timestamp and always ascends. It also clears the transition, which mattered: the first version
+    published under the new scheme had to sort above `0.1.0-3313cac` or everyone on that build
+    would have needed a one-time `scoop update -f`.
+
+    Checked rather than assumed. `SplitVersion`/`Compare-Version` were re-implemented and run over
+    the real history first, and they reproduce the issue's three reported results exactly --
+    `0c9e80c -> 202d05e` and `202d05e -> 3313cac` upgrade, `3313cac -> 77fbaf9` is seen as a
+    downgrade. Against that, every one of the four published builds upgrades cleanly to
+    `0.1.0-1788097302.77fbaf9098`, `0.1.0-77fbaf9` included, so nobody needs a forced update; and
+    consecutive versions under the new scheme always upgrade.
+
+    One case survives and is worth knowing about: two commits sharing a committer second tie on the
+    epoch, and the comparison falls back to the hashes -- the original coin flip, in the one
+    situation that needs two commits in the same second. A formatted date would have had the same
+    hole a whole day wide, which is why the issue rejected a bare `YYYYMMDD`.
+
+    **The commit's time, not the build's.** Project owner's call, and the one that keeps everything
+    else working: one commit is one version however often it is rebuilt, so the registry still keys
+    on a commit, a re-run of a publish is still idempotent, and a release can be cut *for a commit*
+    -- which is exactly what `publish-github-release.yaml` does when it reconstructs the version
+    months later with no clone to ask. A build timestamp would have ordered just as well and broken
+    all three.
+
+    **Epoch seconds, not a formatted date.** Also the project owner's call. `git show -s
+    --format=%ct` hands it over as one integer with no timezone, and anything rebuilding the string
+    elsewhere converts a commit date to it in one line. A formatted `YYYYMMDDHHMMSS` reads better
+    in a release list and costs a formatting-and-timezone agreement between CMake and PowerShell
+    that has to stay in step forever; the hash is what identifies the build anyway.
+
+    **`--short=10` is pinned in the same change**, and that is not cosmetic. A bare `--short` is
+    git's `core.abbrev`, which is automatic and grows with the object count -- so the length is a
+    property of the repository on the day of the build, and a workflow reconstructing the version
+    from a commit would be guessing at it. It was guessing at it, over lengths 7 to 12, until this
+    made the guess unnecessary. Ten hex digits stays unambiguous well past any size this repository
+    will reach.
+
+    **The About box does not change.** It still shows `0.1.0 (<commit>)`, and every binary's
+    VERSIONINFO still carries that same short string. The two name the same commit without being
+    the same string, which is what a bug report actually needs; a fourteen-digit epoch in an About
+    box is noise to the one person who reads it. Item 94's claim that the registry version and the
+    About box string are identical was true when written and is not any more, and is corrected
+    there.
+
+    The bucket needs no change: the `checkver` regex `vibeaudio \(([\w.\-]+)\)` already matches
+    dots and hyphens, and the `autoupdate` URL template substitutes `$version` verbatim.
 
 
 ---

@@ -831,9 +831,11 @@ Project owner, 2026-08-29. Sec. 6.1 keeps WiX v7 as the choice for the day that 
 scheduled, and sec. 7.1's component tree no longer lists an `installer/`.
 
 Every push to main publishes that archive to the instance's `audist` package organisation as the
-generic package `vibeaudio`, versioned `<project version>-<short commit>`, once the suite is green
-on the same build -- `.gitea/workflows/test-and-publish.yaml`, and status.md sec. 7 item 94. So
-"the current build" is a URL rather than a folder somebody has to be sent.
+generic package `vibeaudio`, versioned `<project version>-<committer epoch>.<commit>`, once the
+suite is green on the same build -- `.gitea/workflows/test-and-publish.yaml`, and status.md sec. 7
+items 94 and 96. So "the current build" is a URL rather than a folder somebody has to be sent. The
+epoch is in there because that version has to sort and a bare hash does not; the About box shows
+the shorter `<project version> (<commit>)`.
 
 The whole job is done from the shell, in the order a first-time user meets it:
 

@@ -10,10 +10,17 @@ if(NOT DEFINED AIP_VERSION_RC_HEADER)
 endif()
 
 set(description "unknown")
+set(committed "")
 
 if(GIT_EXECUTABLE)
+    # `--short=10` and not a bare `--short`. A bare one is git's `core.abbrev`, which is automatic
+    # and grows with the object count, so the length is a property of the repository's size on the
+    # day of the build. That is fine for a string a person reads and wrong for one a machine has to
+    # reconstruct: `.gitea/workflows/publish-github-release.yaml` builds this same version out of a
+    # commit, months later, with no clone to ask. Ten hex digits is deterministic and stays
+    # unambiguous well past any size this repository will reach.
     execute_process(
-        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=10 HEAD
         WORKING_DIRECTORY "${AIP_VERSION_SOURCE_DIR}"
         OUTPUT_VARIABLE hash
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -22,6 +29,22 @@ if(GIT_EXECUTABLE)
 
     if(hashStatus EQUAL 0 AND NOT hash STREQUAL "")
         set(description "${hash}")
+
+        # The committer date as epoch seconds, which is what orders the published version below.
+        # `%ct` and not a formatted date on purpose: it is one integer, it has no timezone to
+        # reproduce, and anything rebuilding this string elsewhere gets it from a commit's date
+        # with one conversion and no formatting agreement to keep.
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" show -s --format=%ct HEAD
+            WORKING_DIRECTORY "${AIP_VERSION_SOURCE_DIR}"
+            OUTPUT_VARIABLE committed
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE committedStatus)
+
+        if(NOT committedStatus EQUAL 0)
+            set(committed "")
+        endif()
 
         # Tracked files only. An untracked scratch file in the tree is not a different build.
         execute_process(
@@ -44,6 +67,27 @@ endif()
 # Explorer and a user reading the About box are quoting the same thing.
 set(versionString "${AIP_VERSION_NUMBER} (${description})")
 
+# The version the *package* is published under, which is a different string from the one above and
+# deliberately so. It has to sort, and the one above does not: Scoop compares a pre-release suffix
+# by splitting it into digit runs and letter runs and comparing the digit runs numerically, so
+# `0.1.0-<hash>` orders by whatever number the hash happens to start with. `3313cac` beat
+# `77fbaf9` -- 3313 against 77 -- and `scoop update` reported the newer build as already current
+# and skipped it. Roughly half of all releases were coin-flip downgrades.
+#
+# Putting the committer epoch in front of the hash, with the hash after a `.` so it never
+# participates in the ordering, fixes it: the leading digit run is then a timestamp and always
+# ascends. It is the *commit's* time and not the build's, so one commit is one version however
+# often it is rebuilt -- which is what lets a release be cut for a commit rather than for a build,
+# and what keeps a re-run of a publish idempotent.
+#
+# Empty when the commit could not be resolved, which is the whole test the publishing step makes:
+# `0.1.0-unknown` in a registry is a version nobody can trace back to a source tree. A dirty tree
+# still publishes and still says so, because seeing that happen is the point of recording it.
+set(packageVersion "")
+if(NOT description STREQUAL "unknown" AND NOT committed STREQUAL "")
+    set(packageVersion "${AIP_VERSION_NUMBER}-${committed}.${description}")
+endif()
+
 set(content
 "// Generated on every build by cmake/write_version_header.cmake. It lives in the build tree; do
 // not edit it and do not commit it.
@@ -64,6 +108,13 @@ inline constexpr const char* kGitDescription = \"${description}\";
 /// -- byte for byte -- what every binary's VERSIONINFO resource carries as FileVersion. Composed
 /// in the generator so that Explorer and the dialog cannot disagree.
 inline constexpr const char* kVersionString = \"${versionString}\";
+
+/// The string this build is published under: the project version, the committer date as epoch
+/// seconds, and the commit -- `0.1.0-1756557590.d25a1070b0`. Unlike the two above it is built to
+/// *sort*, because Scoop orders a pre-release suffix by its leading digit run and a bare hash has
+/// no monotonic property under that rule. Empty when the commit could not be resolved, and the
+/// workflow refuses to publish on that.
+inline constexpr const char* kPackageVersion = \"${packageVersion}\";
 
 } // namespace aip
 ")

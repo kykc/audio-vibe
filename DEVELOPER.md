@@ -290,8 +290,11 @@ folder free to move. The shipped `README.txt` has all of it, in the order somebo
 
 Nobody has to build it to have it: **every push to `main` publishes that zip** as the generic
 package `vibeaudio` under the instance's `audist` organisation -- where every package on the
-instance lives, whatever repository built it -- versioned `<project version>-<short commit>`, the
-same string the About box shows, so a bug report that names a version names a commit. One workflow
+instance lives, whatever repository built it -- versioned
+`<project version>-<committer epoch>.<commit>`, so a bug report that names a version names a
+commit. The About box shows the shorter `0.1.0 (<commit>)`: the two name the same commit without
+being the same string, and the timestamp is in the package version because that one has to
+*sort* (status.md sec. 7 item 96). One workflow
 does both halves, `.gitea/workflows/test-and-publish.yaml`: it runs the suite on every push and
 every PR, and packages and publishes only on a push to `main`, only after the suite is green. It
 needs a self-hosted Windows runner labelled `windows-amd64, pixi`, and it can use no JavaScript
