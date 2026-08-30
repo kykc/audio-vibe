@@ -144,20 +144,31 @@ jobs:
           # worth releasing is not always a recent one; bounded because an unbounded loop against a
           # paginated API is how a workflow hangs.
           #
-          # `/packages/{owner}` with filters, because Gitea has no route that lists the versions of
-          # one package: `/packages/{owner}/{type}/{name}` answers `GetPackageByName: package does
-          # not exist` (run 910), which reads like the package is missing and means the path is.
-          # This one returns an entry per name-and-version pair, so `q` narrows it and the name is
-          # then checked exactly -- `q` is a substring search across an organisation that holds
-          # every package on the instance, and a future `vibeaudio-something` would match it.
+          # `/packages/{owner}`, because Gitea has no route that lists the versions of one package:
+          # `/packages/{owner}/{type}/{name}` answers `GetPackageByName: package does not exist`
+          # (run 910), which reads like the package is missing and means the path is. This one
+          # returns an entry per name-and-version pair.
+          #
+          # Filtered by `type` only, and by name in this loop rather than by `q`. Run 912 passed
+          # `q=vibeaudio` and matched nothing against a version that had been in the registry for
+          # two minutes, so whatever that parameter searches it is not the name. The organisation
+          # holds every package on the instance, so the name is compared here instead -- exactly,
+          # which a substring search would not have been anyway.
+          #
+          # The URL and the counts are printed because three of this workflow's failures have been
+          # a request that returned nothing for a reason the log did not show.
           $auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($env:CI_USER):$($env:CI_TOKEN)"))
           $registry = @{ Authorization = "Basic $auth" }
           $version = $null
           $pages = 20
+          $seen = 0
           for ($page = 1; $page -le $pages -and -not $version; $page++) {
-            $batch = @(Invoke-RestMethod -Headers $registry `
-              -Uri "$api/packages/$($env:PKG_OWNER)?type=generic&q=$($env:PKG_NAME)&page=$page&limit=50")
+            $listing = "$api/packages/$($env:PKG_OWNER)?type=generic&page=$page&limit=50"
+            if ($page -eq 1) { Write-Host "listing $listing" }
+            $batch = @(Invoke-RestMethod -Headers $registry -Uri $listing)
+            Write-Host "page $page returned $($batch.Count)"
             if ($batch.Count -eq 0) { break }
+            $seen += $batch.Count
             foreach ($published in $batch) {
               if ($published.name -ne $env:PKG_NAME) { continue }
               $suffix = $published.version -replace '^\d+\.\d+\.\d+-', ''
@@ -170,7 +181,7 @@ jobs:
             }
           }
           if (-not $version) {
-            throw "no $env:PKG_NAME package for $sha in the registry; either the push that built it was not green, or it has not finished, or it is older than the last $($pages * 50) versions"
+            throw "no $env:PKG_NAME package for $sha in $env:PKG_OWNER, having looked at $seen entries; either the push that built it was not green, or it has not finished"
           }
 
           $tag = "v$version"

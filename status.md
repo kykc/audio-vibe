@@ -2789,12 +2789,15 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     and the first entry is what it resolved to. Being a query parameter it survives escaping, which
     a path segment holding a branch name with a slash in it would not.
 
-    **And the version listing is `GET /packages/{owner}` with `type` and `q`**, because Gitea has no
-    route that lists the versions of one package either: `/packages/{owner}/{type}/{name}` answers
-    `GetPackageByName: package does not exist` (run 910), which reads like a missing package and
-    means a missing path. That endpoint returns an entry per name-and-version pair, so `q` narrows
-    it and the name is then compared exactly -- `q` is a substring search across an organisation
-    that holds every package on the instance.
+    **And the version listing is `GET /packages/{owner}` filtered by `type` alone**, because Gitea
+    has no route that lists the versions of one package either: `/packages/{owner}/{type}/{name}`
+    answers `GetPackageByName: package does not exist` (run 910), which reads like a missing package
+    and means a missing path. That endpoint returns an entry per name-and-version pair. Adding
+    `q=vibeaudio` to narrow it matched nothing against a version that had been in the registry for
+    two minutes (run 912), so whatever `q` searches there it is not the package name; the name is
+    compared in the loop instead, exactly, which is what was wanted anyway. The URL and the
+    per-page counts are logged now, because three failures in a row were a request returning
+    nothing for a reason the log did not show.
 
     The general lesson, having now paid for it three times in one file: the two APIs this workflow
     speaks are *not* the same API, and a route guessed from one at the other fails as a 404 or an
