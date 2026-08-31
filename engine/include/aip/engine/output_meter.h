@@ -73,7 +73,7 @@ public:
     /// The bottom of the scale a meter drawn from this should use, and the top. Not enforced here
     /// -- `read` reports what it measured -- but they are the one place the numbers are written
     /// down, so the widget and any test agree on where silence and full scale are.
-    static constexpr float kFloorLufs = -60.0f;
+    static constexpr float kFloorLufs = -78.0f;
     static constexpr float kFullScaleLufs = 0.0f;
 
     /// EBU R128's programme target, and the one number on this scale that means something to
