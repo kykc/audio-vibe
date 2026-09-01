@@ -98,7 +98,33 @@ private:
     /// endpoint selection. Called at the end of construction, once there is a log view for it to
     /// report through.
     void loadSession();
-    void saveSession();
+
+    /// Writes the session to `configurationFile()`. False when nothing was written -- because
+    /// saving is blocked, or because the write failed, in which case it has already said so in
+    /// the log. The two shutdown callers ignore the answer; the File menu does not, because a
+    /// save the user asked for out loud has to say whether it happened.
+    bool saveSession();
+
+    /// The file the three File-menu entries below all act on: the one this session was read
+    /// from, or the one it would be written to when it was read from nowhere. Empty only when
+    /// Windows will not say where either location is.
+    [[nodiscard]] std::filesystem::path configurationFile() const;
+
+    /// File -> Save Configuration (Ctrl+S). The same write the shell does on the way out, done
+    /// now. Two reasons it is worth a menu entry of its own: it is what makes Edit Configuration
+    /// open a file that describes the rack currently on screen, and a chain that took ten minutes
+    /// to build should not need the application closed to be safe on disk.
+    void saveConfiguration();
+
+    /// File -> Load Configuration. Reads the file back and replaces the rack with what is in it.
+    /// The other half of Edit Configuration -- the file is read at startup and never again, so
+    /// without this a hand edit means a restart. Deliberately not automatic: see the definition
+    /// for what it restores and what it leaves alone, and why.
+    void loadConfiguration();
+
+    /// File -> Edit Configuration. Saves, then hands the file to whatever Windows opens a `.yaml`
+    /// with. Nothing watches the file afterwards; reading an edit back is Load Configuration.
+    void editConfiguration();
 
     /// `saveSession`, but at most once per shutdown sequence. What needs guarding is not a
     /// hypothetical: Windows sends `WM_QUERYENDSESSION` to *every* top-level window in the

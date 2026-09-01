@@ -25,6 +25,17 @@ stable, memory footprint constant, no crash and no hang. What turns up from here
 handled as one, not a milestone waiting to be finished (section 4). ARM64 is deferred and no
 longer tracked either (sec. 11.5): there is no ARM64 Windows machine here to test a build on.
 
+**Updated:** 2026-09-02. **The configuration file is reachable from the File menu**: Save
+Configuration (Ctrl+S), Load Configuration and Edit Configuration, above the separator the install
+entries already sat below. Asked for as one entry -- open the yaml in the default text editor --
+and it is three, because a file the shell reads only at startup and rewrites on close is a file
+nobody can edit: the edit is discarded when the window closes and nothing says so. Save makes the
+file describe the rack on screen, Edit hands it to the shell, and Load reads an edit back into the
+rack, which is also what stops the save on the way out from throwing it away. Reloading is the
+user's rather than a file watcher's, and Load restores the rack and the chain bypass only -- the
+window position, the endpoint and the attach state describe a start, not a running shell. See
+section 7 item 98. 180 tests.
+
 **Updated:** 2026-08-29. **The shell has a menu bar, an About box that names the commit it was
 built from, and an Audio Device Settings dialog** -- so installing the APO on an endpoint no
 longer needs an elevated console. The dialog is the project's first Qt Designer `.ui` file, a
@@ -1699,7 +1710,9 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     mutation costs a `getState` per plugin, and a plugin's `getState` is a real serialization --
     doing it on every click would put that work behind the mouse. The cost is that a crash loses
     whatever changed since the last clean exit, which is recorded in section 4 rather than
-    designed around.
+    designed around. **Amended by item 98**, which adds `File -> Save Configuration` (Ctrl+S): a
+    second write point, and one that leaves this decision intact, because what is refused here is
+    a write nobody asked for and that is a write somebody did.
 
 53. **The saved window geometry is checked against the screens that exist now.** A rectangle whose
     centre is on no current screen is discarded and the default size used instead. An external
@@ -3060,6 +3073,53 @@ frozen protocol, but a fresh session would otherwise have to re-derive them.
     would only hide it from the next reader. `NOMINMAX` is already set project-wide
     (`CMakeLists.txt`), so `std::max` in the same file is safe -- without it, that would have been
     the second collision in the same three lines.
+
+98. **The configuration file is on the File menu as three entries, not one.** Feature request,
+    project owner, 2026-09-02: open the yaml in the default text editor from `File`. Asked as one
+    menu item, and it cannot be one, because the file the entry would open is a file nobody can
+    edit. The shell reads it at startup and writes it on the way out, so an edit made while it is
+    running is overwritten when the window closes, silently, with no way for the user to find out
+    that is what happened. Opening an editor on it without addressing that ships a trap rather
+    than a feature. Put to the project owner, who specified the set: **Save Configuration**
+    (Ctrl+S), **Load Configuration**, **Edit Configuration**, then the existing separator.
+
+    Each is half of another. Save writes the rack that is on screen, which is what makes Edit open
+    a file describing *this* session rather than the one the shell started with. Load reads the
+    file back into the rack, which is the only way an edit reaches a running shell -- and it is
+    also what stops the save on the way out from throwing that edit away, because after a Load the
+    rack is what the file says. Edit is the shell call and on its own would be the trap.
+
+    **Reloading is the user's, not a file watcher's** (project owner, explicitly). Replacing the
+    rack destroys every plugin in it and every parameter in those, with audio flowing through the
+    chain being replaced; that is a thing to do when somebody asks, not because an editor
+    auto-saved. Edit says so in the log rather than leaving it to be discovered.
+
+    **Load restores the rack and the chain bypass and nothing else.** The window geometry, the
+    endpoint and the attach state are in the same file and are deliberately left alone: each
+    describes how a *start* should go, and acting on them mid-run would move the window out from
+    under the user's mouse and could take the machine's audio away or hand it over. It says which
+    half it did in the log, because a reload looks like it should have done both. The cached scan
+    report is skipped for a different reason -- it is a cache, not configuration, and
+    `PluginCatalog::adopt` marks what it takes as unverified, so adopting the file's copy could
+    only discard a catalog this run has already checked against the file system.
+
+    **`sessionSaveBlocked_` is what these two entries had to be reasoned about against.** A
+    session file that will not parse blocks every write for the rest of the run, because what is
+    on disk is then the only copy of a rack the shell never loaded (item 51). Save lifts
+    that only behind a question naming the file, since an explicit Ctrl+S is a different act from
+    the automatic save it protects against but still not obviously an instruction to destroy
+    something. Load clears it outright once the file parses *and* the user has confirmed the
+    replacement -- that is the recovery path the startup message points at, and a cancelled load
+    leaves the rack disagreeing with the file exactly as before, so the flag stays up. Edit is the
+    one that must not write at all in that state: the unreadable file is precisely what somebody
+    opens an editor to repair.
+
+    Two mechanics worth the line. `ShellExecuteW` with no verb is the double-click, and a stock
+    Windows has nothing registered for `.yaml` -- so `SE_ERR_NOASSOC` retries with `openas`, which
+    is the "How do you want to open this file?" dialog, and the answer is one choice away instead
+    of an error about a file extension. And a reload gets a `LoadGuard`, where a preset load
+    deliberately gets none (item 72): what is being loaded here *is* the session file, so a
+    plugin that faults on the way in leaves its name where the next start comes looking.
 
 
 ---

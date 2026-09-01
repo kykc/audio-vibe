@@ -29,6 +29,18 @@ A system-wide VST3 host for Windows. Allows you to process sound coming from any
 
 NOTE: currently, by enabling VibeAudio you will lose all built-in audio "enhancements" shipped with your device. I find them useless in 99% of cases anyway.
 
+## Configuration file
+
+Your chain, the window position and the device you were last attached to are kept in a single yaml file: `vibeaudio.yaml`, in `%APPDATA%\vibe-audio\`, or next to `vibeaudio.exe` if you put a copy there (that is how you ask for a portable install -- an empty file is enough). `--config <path>` overrides both.
+
+The `File` menu has three entries for it, and they work together:
+
+* `Save Configuration` (Ctrl+S) writes the current chain out now, instead of waiting for the application to close
+* `Edit Configuration` saves, then opens the file in whatever you have `.yaml` associated with
+* `Load Configuration` reads the file back and replaces the chain with what is in it
+
+Use `Load Configuration` after editing by hand. Nothing is picked up automatically, and the file is rewritten when the window closes -- so an edit you do not load back is lost. Loading restores the chain and the bypass state only; it will not move your window or change the device you are attached to.
+
 ## Troubleshooting
 
 Wiring into an arbitrary audio device can be somewhat messy, so here I will collect a list of known gotchas:

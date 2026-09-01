@@ -20,6 +20,7 @@
 #include <QEventLoop>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -32,6 +33,10 @@
 #include <QTime>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <windows.h>
+
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -307,6 +312,27 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
 
 void MainWindow::buildMenuBar() {
     auto* file = menuBar()->addMenu(QStringLiteral("&File"));
+
+    // The configuration file first, and its three entries together, because they are one subject
+    // and each is half of another: Edit opens a file that only describes the rack on screen
+    // because Save has just written it, and an edit made in that editor only reaches the shell
+    // because Load reads it back. Separated from what follows -- the two entries below the rule
+    // are about installing this application on the machine, which is a different thing to be
+    // doing and one that is done once.
+    QAction* saveConfigAction = file->addAction(QStringLiteral("&Save Configuration"));
+    // The standard sequence rather than a literal Ctrl+S, which is the same key here and the
+    // right one wherever it is not. Window context, deliberately left at the default: a plugin
+    // editor is a top-level window of its own, and Ctrl+S in one belongs to the plugin drawing
+    // it -- plenty of them save presets with it.
+    saveConfigAction->setShortcut(QKeySequence::Save);
+    connect(saveConfigAction, &QAction::triggered, this, &MainWindow::saveConfiguration);
+
+    QAction* loadConfigAction = file->addAction(QStringLiteral("&Load Configuration"));
+    connect(loadConfigAction, &QAction::triggered, this, &MainWindow::loadConfiguration);
+
+    QAction* editConfigAction = file->addAction(QStringLiteral("&Edit Configuration"));
+    connect(editConfigAction, &QAction::triggered, this, &MainWindow::editConfiguration);
+    file->addSeparator();
 
     // The one a user reaches for is first, and the one they touch once is under it. Not the order
     // an installation is performed in -- registering has to happen before an effect slot means
@@ -787,12 +813,12 @@ void MainWindow::saveSessionOnce() {
     saveSession();
 }
 
-void MainWindow::saveSession() {
+bool MainWindow::saveSession() {
     if (sessionSaveBlocked_) {
-        return;
+        return false;
     }
 
-    const std::filesystem::path target = config::resolveSavePath(sessionPath_);
+    const std::filesystem::path target = configurationFile();
 
     config::Session session;
     config::capture(host_.engine(), session);
@@ -829,7 +855,244 @@ void MainWindow::saveSession() {
     std::string error;
     if (!config::writeSession(target, session, error)) {
         log(QStringLiteral("session not saved: %1").arg(QString::fromStdString(error)));
+        return false;
     }
+    return true;
+}
+
+// ------------------------------------------------------------------------ the configuration file
+//
+// The session file has been written on the way out and read on the way in since it existed, and
+// nothing in between. These three put it on the File menu, because a text file the application
+// owns exclusively for the length of a run is a text file nobody can edit: the shell overwrites
+// it when it closes, so an edit made while it is running is discarded without anyone being told.
+//
+// So they come as a set, and each is half of another. Save writes the rack that is on screen, so
+// that Edit opens a file describing this session rather than the one it started from. Load reads
+// the file back into the rack, which is the only way an edit reaches a running shell -- and it is
+// also what stops the save on the way out from throwing that edit away, because after a Load the
+// rack *is* what the file says. Edit is the shell part, and on its own it would be a trap.
+//
+// Reloading is left to the user rather than done by watching the file, deliberately. Replacing
+// the rack destroys every plugin in it and every parameter in those, with audio flowing through
+// the chain being replaced; that is a thing to do when someone asks for it, not one to do because
+// an editor auto-saved.
+
+std::filesystem::path MainWindow::configurationFile() const {
+    // `resolveSavePath` rather than `sessionPath_` itself. The two name the same file whenever
+    // one was read, and when none was -- a clean install -- `sessionPath_` is empty while the
+    // file this session is going to be written to is perfectly well known. Going through the one
+    // function is what makes Save, Load and Edit provably talk about the same file.
+    return config::resolveSavePath(sessionPath_);
+}
+
+void MainWindow::saveConfiguration() {
+    const std::filesystem::path target = configurationFile();
+    if (target.empty()) {
+        log(QStringLiteral("configuration not saved: there is nowhere to put it"));
+        QMessageBox::warning(this, QStringLiteral("Save Configuration"),
+            QStringLiteral("There is nowhere to save the configuration: Windows did not say where this "
+                           "application's data folder is."));
+        return;
+    }
+
+    // The one case where saving is refused, and the one request that is allowed to lift the
+    // refusal. `sessionSaveBlocked_` means the file on disk could not be read, so it is the only
+    // copy of a rack this shell never managed to load, and the automatic save on the way out must
+    // not destroy it (see `loadSession`). An explicit Save is a different act -- but it is still
+    // not obviously an instruction to overwrite work the user may want back, so it is asked.
+    if (sessionSaveBlocked_ &&
+        QMessageBox::question(this, QStringLiteral("Save Configuration"),
+            QStringLiteral("%1 could not be read when this shell started, so nothing has been written "
+                           "over it.\n\n"
+                           "Saving now replaces it with the rack currently in this window. Whatever is "
+                           "in the file cannot be recovered afterwards.")
+                .arg(fromPath(target)),
+            QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Save) {
+        return;
+    }
+    // Cleared before the write rather than after it: `saveSession` is the thing that refuses, so
+    // leaving the flag up would make it refuse the save that has just been confirmed.
+    sessionSaveBlocked_ = false;
+
+    if (saveSession()) {
+        log(QStringLiteral("configuration saved to %1").arg(fromPath(target)));
+    }
+}
+
+/// Replaces the rack with the one in the file, and nothing else.
+///
+/// **What it restores is the rack and the chain bypass.** The window's position, the endpoint and
+/// the attach state are in the file too and are deliberately left alone: each of them describes
+/// how a *start* should go, and acting on them here would move the window out from under the
+/// user's mouse and could take the machine's audio away or hand it over. What a person edits that
+/// file by hand to change is the chain, and the chain is what this loads.
+///
+/// The cached scan report is left alone for a different reason. It is a cache rather than
+/// configuration, `PluginCatalog::adopt` marks whatever it takes as unverified, and this run's
+/// catalog has already been checked against the file system -- so adopting the file's copy could
+/// only lose that and make the next Add re-probe every plugin on the machine.
+void MainWindow::loadConfiguration() {
+    const std::filesystem::path target = configurationFile();
+
+    std::error_code ec;
+    if (target.empty() || !std::filesystem::exists(target, ec)) {
+        log(QStringLiteral("no configuration file to load"));
+        QMessageBox::information(this, QStringLiteral("Load Configuration"),
+            QStringLiteral("There is no configuration file yet. Save Configuration writes one."));
+        return;
+    }
+
+    // Read and checked in full before anything is touched, the same way a preset is: a file that
+    // is not understood has to cost the user nothing at all, and the rack in this window is the
+    // only other copy of what the file is meant to hold.
+    config::Session session;
+    std::string error;
+    if (!config::readSession(target, session, error)) {
+        const QString text = QString::fromStdString(error);
+        log(QStringLiteral("configuration not loaded: %1").arg(text));
+        QMessageBox::warning(this, QStringLiteral("That configuration could not be read"),
+            text + QStringLiteral("\n\nThe rack has not been changed."));
+        return;
+    }
+
+    // Asked once, and only when there is something to lose. What is about to go is not just an
+    // order of plugins: it is every parameter in them, and there is no undo for it. The same
+    // question `RackPanel::loadPreset` asks, for the same reason.
+    if (host_.engine().pluginCount() != 0 &&
+        QMessageBox::question(this, QStringLiteral("Replace the current chain?"),
+            QStringLiteral("Loading the configuration removes the %1 plugin(s) in the rack, and their "
+                           "settings, and replaces them with the %2 in %3.\n\n"
+                           "This cannot be undone.")
+                .arg(host_.engine().pluginCount())
+                .arg(session.rack.size())
+                .arg(fromPath(target)),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+
+    // The file parses and the rack is about to become what it says, so the reason this run was
+    // refusing to write -- that saving would destroy a rack the shell never managed to load -- is
+    // over. This is the recovery path the startup message points at: fix the file, load it, and
+    // the shell saves over it again. Set after the question, because a cancelled load leaves the
+    // rack disagreeing with the file exactly as it did before.
+    sessionSaveBlocked_ = false;
+
+    // Before the rack is cleared, because it decides what is not going to be loaded; after the
+    // confirmation, because it writes what it decided into the log.
+    blockDangerousEntries(session);
+
+    // Editors first, and all of them: `clearPlugins` destroys every instance, and an editor
+    // outliving the plugin behind it is the one ordering mistake this shell exists to prevent
+    // (editor_manager.h).
+    editors_.closeAll();
+    host_.engine().clearPlugins();
+
+    // The breadcrumb, for exactly the reason the start has one: what is being loaded here *is*
+    // the session file, so a plugin that takes the shell down on the way in leaves its name where
+    // the next start comes looking. This is the difference from a preset load, which writes no
+    // breadcrumb because the file it read is not the file the next start reads.
+    config::LoadGuard guard(target);
+
+    std::vector<std::string> problems;
+    const std::size_t restored = config::apply(session, host_.engine(), problems, &guard);
+
+    // Held so that saving puts them back where they were, the same as at startup: a blocked entry
+    // is still part of the chain the user built, and dropping it would make a plugin that crashed
+    // once vanish from their setup with no record of why.
+    blockedEntries_.clear();
+    for (std::size_t i = 0; i < session.rack.size(); ++i) {
+        if (session.rack[i].blocked) {
+            blockedEntries_.emplace_back(i, session.rack[i]);
+        }
+    }
+    for (const std::string& problem : problems) {
+        log(QStringLiteral("configuration: %1").arg(QString::fromStdString(problem)));
+    }
+    rack_->refresh();
+    log(QStringLiteral("configuration: %1 of %2 plugin(s) loaded from %3")
+            .arg(restored)
+            .arg(session.rack.size())
+            .arg(fromPath(target)));
+    if (session.chainBypassed) {
+        log(QStringLiteral("configuration: the chain is bypassed -- audio passes through unprocessed "
+                           "until Bypass is released"));
+    }
+    // Said out loud, because a reload looks like it should have done it. See the note on this
+    // function for why it does not.
+    log(QStringLiteral("configuration: the window position, the endpoint and the attach state are left "
+                       "as they are"));
+}
+
+/// Hands the file to whatever Windows opens a `.yaml` with, after writing this session into it.
+///
+/// The save is what makes the entry worth having: without it the editor opens a description of
+/// the rack this shell *started* with, and a user who has added two plugins since would be
+/// editing a file that is about to be overwritten with something else. The one exception is the
+/// file that could not be read, which is precisely the file somebody opens an editor to repair --
+/// writing over it on the way to editing it would destroy the thing they came to fix.
+///
+/// Nothing watches the file afterwards. It is read back by Load Configuration, and the log says
+/// so, because the alternative -- an edit silently discarded when this window closes -- is the
+/// trap this whole group of entries exists to remove.
+void MainWindow::editConfiguration() {
+    const std::filesystem::path target = configurationFile();
+    if (target.empty()) {
+        log(QStringLiteral("no configuration file to edit: Windows did not say where it would live"));
+        QMessageBox::warning(this, QStringLiteral("Edit Configuration"),
+            QStringLiteral("There is no configuration file to edit: Windows did not say where this "
+                           "application's data folder is."));
+        return;
+    }
+
+    if (sessionSaveBlocked_) {
+        log(QStringLiteral("the configuration could not be read at startup, so it is opened exactly as "
+                           "it is and nothing has been written over it"));
+    } else {
+        // A failed save has already said why in the log, and is not a reason to refuse to open the
+        // file -- an editor on a stale configuration is still an editor on the configuration.
+        (void)saveSession();
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::exists(target, ec)) {
+        log(QStringLiteral("no configuration file to edit at %1").arg(fromPath(target)));
+        QMessageBox::warning(this, QStringLiteral("Edit Configuration"),
+            QStringLiteral("There is no configuration file at %1 to open.").arg(fromPath(target)));
+        return;
+    }
+
+    // The window handle, so that whatever the shell puts up -- the association dialog below, or an
+    // error about an application that would not start -- is modal to this window rather than loose
+    // on the desktop.
+    auto* owner = reinterpret_cast<HWND>(winId());
+    // No verb: the default one, which is what a double-click in Explorer would do.
+    auto result = reinterpret_cast<INT_PTR>(
+        ::ShellExecuteW(owner, nullptr, target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+
+    // `.yaml` has no handler on a Windows that has never had a developer's tools installed on it,
+    // which is most of the machines this is going to run on. `openas` is the "How do you want to
+    // open this file?" dialog -- the same one Explorer shows -- so the answer is one choice away
+    // rather than an error message about a file extension.
+    if (result == SE_ERR_NOASSOC || result == SE_ERR_ASSOCINCOMPLETE) {
+        result = reinterpret_cast<INT_PTR>(
+            ::ShellExecuteW(owner, L"openas", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    }
+
+    // Success is the values *above* 32, which is a historical wart rather than a typo here: the
+    // return is an HINSTANCE-shaped thing and everything at or below 32 is an error code.
+    if (result <= 32) {
+        log(QStringLiteral("could not open %1 for editing (error %2)").arg(fromPath(target)).arg(result));
+        QMessageBox::warning(this, QStringLiteral("Edit Configuration"),
+            QStringLiteral("Windows could not open %1. Either nothing is registered to open a .yaml "
+                           "file, or the application that is failed to start.")
+                .arg(fromPath(target)));
+        return;
+    }
+
+    log(QStringLiteral("opened %1 for editing").arg(fromPath(target)));
+    log(QStringLiteral("nothing is read back automatically: use Load Configuration after saving the "
+                       "file, or the edit will be overwritten when this window closes"));
 }
 
 void MainWindow::applySavedGeometry(const config::WindowGeometry& geometry) {
