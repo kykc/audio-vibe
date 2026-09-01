@@ -46,6 +46,13 @@ namespace {
 /// Written by CMake; there is no way for the test to work the bundle path out at run time.
 const std::string kTestPluginPath = AIP_TEST_PLUGIN_PATH;
 
+/// The other fixture module: a mono effect first, a stereo one after it, shaped like the LSP
+/// bundle. See `tests/fixtures/aip_multi_plugin` for why it is a separate module.
+const std::string kMultiPluginPath = AIP_MULTI_PLUGIN_PATH;
+
+constexpr const char* kMonoOnlyName = "AIP Mono Only Plugin";
+constexpr const char* kMultiStereoName = "AIP Multi Stereo Plugin";
+
 constexpr Steinberg::Vst::ParamID kGainParam = 0;
 constexpr Steinberg::Vst::ParamID kEditsParam = 1;
 constexpr Steinberg::Vst::ParamID kOffsetParam = 3;
@@ -1118,6 +1125,133 @@ TEST_CASE("a plugin narrower than the stream is still refused", "[engine][busses
     CHECK(host.chainProcessor().current() == nullptr);
     REQUIRE(host.rebuild(stereoFormat(), error));
     CHECK(host.chainProcessor().current() != nullptr);
+}
+
+// ------------------------------------------------------ one bundle, more than one plugin in it -
+//
+// A `.vst3` is a module and may expose any number of audio effects. `aip_multi_plugin` is shaped
+// like the specimen -- `lsp-plugins.vst3`, whose mono effect comes before its stereo one -- and
+// the tests below are the difference between a host that resolves a path to the module's first
+// class and one that resolves it to a class it can actually run.
+
+TEST_CASE("a bundle holding two effects reports both, in factory order", "[engine][module][multi]") {
+    std::string error;
+    engine::PluginModule::Ptr module = engine::PluginModule::load(kMultiPluginPath, error);
+
+    INFO("path: " << kMultiPluginPath << " error: " << error);
+    REQUIRE(module != nullptr);
+    REQUIRE(module->audioEffects().size() == 2);
+    // Mono first, which is the ordering the whole fixture exists for.
+    CHECK(module->audioEffects()[0].name == kMonoOnlyName);
+    CHECK(module->audioEffects()[1].name == kMultiStereoName);
+}
+
+TEST_CASE("a bundle path resolves past a class the stream is too wide for", "[engine][module][multi]") {
+    // The bug, in one case. Taking the module's first audio effect gets the mono one, which then
+    // refuses a stereo stream -- and the stereo effect in the same file is never reached.
+    constexpr std::int32_t kFrames = 32;
+
+    engine::Engine host;
+    std::string error;
+    // The format first, so the insert below has something to judge a class by. This is the state
+    // the shell is in whenever a plugin is added to an attached endpoint.
+    REQUIRE(host.rebuild(stereoFormat(), error));
+    REQUIRE(host.appendPlugin(kMultiPluginPath, error));
+
+    engine::PluginInstance* plugin = host.pluginAt(0);
+    REQUIRE(plugin != nullptr);
+    CHECK(plugin->name() == kMultiStereoName);
+    CHECK(plugin->prepared());
+
+    // And by the numbers, not only by the name: the stereo class doubles its input, the mono one
+    // passes it through.
+    Rig rig(host.blockProcessor(), L"engine-multi-skip");
+    const std::vector<float> in = signedRamp(kFrames);
+    const std::vector<float> out = rig.run(in);
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        REQUIRE(out[i] == Approx(2.f * in[i]));
+    }
+}
+
+TEST_CASE("a bundle whose every effect refuses the format says so once", "[engine][module][multi]") {
+    // Sixteen channels: too wide for the mono class and past the stereo class's eight-channel
+    // ceiling. The report has to name the module rather than repeat one class's refusal as though
+    // it were the whole story.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.rebuild(engine::StreamFormat{48000, 16, engine::kDefaultMaxFrames}, error));
+
+    CHECK_FALSE(host.appendPlugin(kMultiPluginPath, error));
+    INFO("refusal: " << error);
+    CHECK(error.find("none of its 2 audio effects") != std::string::npos);
+    CHECK(host.pluginCount() == 0);
+}
+
+TEST_CASE("a class in a bundle can be named, by id or by name", "[engine][module][multi]") {
+    std::string error;
+    engine::PluginModule::Ptr module = engine::PluginModule::load(kMultiPluginPath, error);
+    REQUIRE(module != nullptr);
+    const std::string monoId = module->audioEffects().front().id.toString();
+
+    SECTION("by class id, which is the form everything stored uses") {
+        engine::Engine host;
+        REQUIRE(host.insertPluginByClassId(0, kMultiPluginPath, monoId, error));
+        REQUIRE(host.pluginAt(0) != nullptr);
+        CHECK(host.pluginAt(0)->name() == kMonoOnlyName);
+    }
+
+    SECTION("by class name, which is the form a command line uses") {
+        engine::Engine host;
+        REQUIRE(host.insertPluginByClassId(0, kMultiPluginPath, kMonoOnlyName, error));
+        REQUIRE(host.pluginAt(0) != nullptr);
+        CHECK(host.pluginAt(0)->name() == kMonoOnlyName);
+    }
+
+    SECTION("by class name, without regard to case") {
+        engine::Engine host;
+        REQUIRE(host.insertPluginByClassId(0, kMultiPluginPath, "aip MONO only plugin", error));
+        REQUIRE(host.pluginAt(0) != nullptr);
+        CHECK(host.pluginAt(0)->name() == kMonoOnlyName);
+    }
+
+    SECTION("naming one that is not there is a refusal, not a fallback to another") {
+        // The distinction that matters: a typo must not quietly load a different plugin.
+        engine::Engine host;
+        CHECK_FALSE(host.insertPluginByClassId(0, kMultiPluginPath, "AIP No Such Plugin", error));
+        CHECK_FALSE(error.empty());
+        CHECK(host.pluginCount() == 0);
+    }
+}
+
+TEST_CASE("naming a class overrides what the format would have chosen", "[engine][module][multi]") {
+    // Asking for the mono class on a stereo stream is a refusal and not a silent substitution of
+    // the stereo one. A host that fell back here would make the class id in a session file
+    // advisory, and a rack would come back holding a different plugin than it was saved with.
+    engine::Engine host;
+    std::string error;
+    REQUIRE(host.rebuild(stereoFormat(), error));
+
+    CHECK_FALSE(host.insertPluginByClassId(0, kMultiPluginPath, kMonoOnlyName, error));
+    INFO("refusal: " << error);
+    CHECK(error.find("accepts at most") != std::string::npos);
+    CHECK(host.pluginCount() == 0);
+}
+
+TEST_CASE("a plugin reference splits at the class separator and nowhere else", "[engine][module][multi]") {
+    // `?` is one of the characters Windows forbids in a path, which is the whole reason it is the
+    // separator: a path that names no class comes back byte for byte.
+    const engine::PluginReference plain = engine::parsePluginReference("C:\\Program Files\\x.vst3");
+    CHECK(plain.path == "C:\\Program Files\\x.vst3");
+    CHECK(plain.classRef.empty());
+
+    const engine::PluginReference named = engine::parsePluginReference("C:\\x.vst3?Impulse Responses Stereo");
+    CHECK(named.path == "C:\\x.vst3");
+    CHECK(named.classRef == "Impulse Responses Stereo");
+
+    // First separator wins, so a class name containing one keeps it rather than being truncated.
+    const engine::PluginReference odd = engine::parsePluginReference("x.vst3?a?b");
+    CHECK(odd.path == "x.vst3");
+    CHECK(odd.classRef == "a?b");
 }
 
 // -------------------------------------------------------------- the host's own parameter path -

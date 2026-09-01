@@ -43,6 +43,13 @@ regsvr32 aip_apo.dll                          # make the class loadable; touches
 `valet_probe` also takes `--plugin <path to a .vst3>` (repeatable) to run a real VST3 chain
 against the real APO, and `--list` / `--endpoint N` to pick a different endpoint.
 
+A `.vst3` is a *module* and may hold any number of audio effects -- `lsp-plugins.vst3` holds a
+mono one and a stereo one -- so every command line that names a plugin takes
+`<path>?<class name or id>` to say which (`--vst3`, `valet_probe --plugin`,
+`editor_spike --plugin`). Without a class the engine takes whichever one it can run at the format
+it has built, which at start-up is none, so name the class when the bundle holds more than one.
+`?` is the separator because Windows forbids it in a path. See status.md sec. 8 item 33.
+
 `--scan` is the one mode that loads no plugin into the probe itself: it drives `scanner/`,
 which starts `aip_scan.exe` and probes out of process. Use it, not `--inspect`, on a plugin
 you have no reason to trust -- `--inspect` does the same work *in* the probe, and a plugin

@@ -83,6 +83,77 @@ void explainRefusal(QWidget* parent, const scanner::ScannedModule& probed) {
     QMessageBox::warning(parent, QStringLiteral("Cannot add this plugin"), describe(probed));
 }
 
+/// The label the list gives one class, in the picker and in the chooser below.
+[[nodiscard]] QString labelFor(const scanner::ScannedClass& info) {
+    QString label = QString::fromStdString(info.name);
+    if (!info.vendor.empty()) {
+        label += QStringLiteral("  --  %1").arg(QString::fromStdString(info.vendor));
+    }
+    if (!info.prepared) {
+        label += QStringLiteral("  (wrong channel count)");
+    }
+    return label;
+}
+
+/// Which effect inside a browsed bundle the user meant. Empty means they said none.
+///
+/// The path is what the two hand-picking routes have; a class is what the engine needs, and the
+/// two are not the same question. `lsp-plugins.vst3` holds a mono effect and a stereo one, and the
+/// whole LSP distribution ships as one bundle holding dozens -- so taking the first class in a
+/// browsed bundle is not a shortcut, it is a wrong answer that happens to be right for the plugins
+/// that only have one. A bundle with one class is still not asked about; there is nothing to ask.
+///
+/// The classes have already been probed by the time this runs, which is what makes the dialog
+/// worth showing rather than a bare list of names: it can say which of them will take the stream
+/// and which will not, before the user picks one.
+[[nodiscard]] QString chooseClassIn(QWidget* parent, const scanner::ScannedModule& module) {
+    if (module.classes.empty()) {
+        return {};
+    }
+    if (module.classes.size() == 1) {
+        return QString::fromStdString(module.classes.front().id);
+    }
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("Which plugin?"));
+    dialog.resize(520, 400);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addWidget(new QLabel(QStringLiteral("%1 contains %2 plugins. Which one do you want to add?")
+                                     .arg(QFileInfo(QString::fromStdString(module.path)).completeBaseName())
+                                     .arg(module.classes.size()),
+        &dialog));
+
+    auto* list = new QListWidget(&dialog);
+    layout->addWidget(list, 1);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Add"));
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(list, &QListWidget::itemDoubleClicked, &dialog, &QDialog::accept);
+
+    // Selected on the first class that took the probe format rather than on the first class. For
+    // the specimen that means the stereo effect is offered and the mono one has to be asked for,
+    // which is the right way round on a stereo endpoint.
+    int preferred = -1;
+    for (const scanner::ScannedClass& info : module.classes) {
+        auto* item = new QListWidgetItem(labelFor(info), list);
+        item->setToolTip(describe(info));
+        item->setData(kClassRole, QString::fromStdString(info.id));
+        if (preferred < 0 && info.prepared) {
+            preferred = list->count() - 1;
+        }
+    }
+    list->setCurrentRow(preferred < 0 ? 0 : preferred);
+
+    if (dialog.exec() != QDialog::Accepted || list->currentItem() == nullptr) {
+        return {};
+    }
+    return list->currentItem()->data(kClassRole).toString();
+}
+
 [[nodiscard]] const char* statusWord(scanner::ScanStatus status) {
     switch (status) {
     case scanner::ScanStatus::Crashed:
@@ -109,15 +180,8 @@ void explainRefusal(QWidget* parent, const scanner::ScannedModule& probed) {
             continue;
         }
         for (const scanner::ScannedClass& info : module.classes) {
-            QString label = QString::fromStdString(info.name);
-            if (!info.vendor.empty()) {
-                label += QStringLiteral("  --  %1").arg(QString::fromStdString(info.vendor));
-            }
-            if (!info.prepared) {
-                label += QStringLiteral("  (wrong channel count)");
-            }
-            usable.push_back(
-                Row{label, describe(info), QString::fromStdString(module.path), QString::fromStdString(info.id), true});
+            usable.push_back(Row{labelFor(info), describe(info), QString::fromStdString(module.path),
+                QString::fromStdString(info.id), true});
         }
     }
 
@@ -173,7 +237,7 @@ public:
 
     [[nodiscard]] PluginChoice chosen() const {
         if (!browsed_.isEmpty()) {
-            return PluginChoice{browsed_, QString()};
+            return PluginChoice{browsed_, browsedClassId_};
         }
         const QListWidgetItem* item = list_->currentItem();
         if (item == nullptr || (item->flags() & Qt::ItemIsSelectable) == 0) {
@@ -253,6 +317,13 @@ private:
             explainRefusal(this, probed);
             return;
         }
+        // A bundle is not a plugin. Naming a file that holds several effects leaves one question
+        // still open, and it is asked here rather than answered by taking the first.
+        const QString classId = chooseClassIn(this, probed);
+        if (classId.isEmpty()) {
+            return;
+        }
+        browsedClassId_ = classId;
         browsed_ = path;
         accept();
     }
@@ -263,6 +334,7 @@ private:
     QListWidget* list_ = nullptr;
     QPushButton* addButton_ = nullptr;
     QString browsed_;
+    QString browsedClassId_;
 };
 
 } // namespace
@@ -306,9 +378,13 @@ PluginChoice chooseVst3File(QWidget* parent, PluginCatalog& catalog, QString& di
         explainRefusal(parent, probed);
         return {};
     }
-    // No class id, for the same reason a browsed bundle carries none: the module was named, not one
-    // class in it, so the engine takes the first audio effect it offers.
-    return PluginChoice{path, QString()};
+    // Same open question as the picker's Browse, asked the same way: the file was named, and a
+    // file can hold more than one effect.
+    const QString classId = chooseClassIn(parent, probed);
+    if (classId.isEmpty()) {
+        return {};
+    }
+    return PluginChoice{path, classId};
 }
 
 } // namespace aip::ui

@@ -16,6 +16,51 @@ PluginModule::PluginModule(VST3::Hosting::Module::Ptr module) : module_(std::mov
     }
 }
 
+namespace {
+
+/// Case-insensitive equality over ASCII, which is what a class name someone typed is compared
+/// with. Deliberately not `_stricmp` or a locale-aware fold: a plugin name is third-party text
+/// under no obligation to be ASCII at all (scan_record.h), and a fold that changed the meaning of
+/// the bytes above 0x7F would make matching depend on the machine's locale.
+[[nodiscard]] bool equalNoCase(const std::string& a, const std::string& b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    const auto lower = [](char c) noexcept { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+    return std::equal(a.begin(), a.end(), b.begin(), [&lower](char x, char y) { return lower(x) == lower(y); });
+}
+
+} // namespace
+
+const PluginClass* findAudioEffect(const std::vector<PluginClass>& classes, const std::string& ref) {
+    if (const VST3::Optional<VST3::UID> id = VST3::UID::fromString(ref)) {
+        for (const PluginClass& info : classes) {
+            if (info.id == *id) {
+                return &info;
+            }
+        }
+    }
+    for (const PluginClass& info : classes) {
+        if (info.name == ref) {
+            return &info;
+        }
+    }
+    for (const PluginClass& info : classes) {
+        if (equalNoCase(info.name, ref)) {
+            return &info;
+        }
+    }
+    return nullptr;
+}
+
+PluginReference parsePluginReference(const std::string& text) {
+    const std::size_t separator = text.find('?');
+    if (separator == std::string::npos) {
+        return PluginReference{text, std::string()};
+    }
+    return PluginReference{text.substr(0, separator), text.substr(separator + 1)};
+}
+
 PluginModule::Ptr PluginModule::load(const std::string& path, std::string& error) {
     error.clear();
     VST3::Hosting::Module::Ptr module = VST3::Hosting::Module::create(path, error);

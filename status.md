@@ -3324,6 +3324,47 @@ integration. These are the ones found while implementing. Re-discovering any is 
     double-click routed to `EditorKind::Generic` for one build) -- and say plainly in section 4 that
     the gesture is unclicked.
 
+33. **A `.vst3` is a module, not a plugin, and half this project assumed otherwise.** A bundle's
+    factory may expose any number of `kVstAudioEffectClass` classes. `lsp-plugins.vst3` exposes
+    `Impulse Responses Mono` and then `Impulse Responses Stereo`; the full LSP distribution ships
+    dozens of effects in one file. The scanner, its wire format, the session file and the picker's
+    list were all per class already and were right. Everything that resolved a *path* was not: it
+    took `audioEffects().front()`, so the specimen loaded the mono effect, that effect then refused
+    a stereo stream with "accepts at most 1 channels and the stream carries 2", and the stereo
+    effect sitting in the same file was unreachable by path alone. It reads as "the scanner
+    rejected my plugin", which is why it was reported that way.
+
+    Four routes were wrong and are fixed differently, because a path means different things in
+    them:
+
+    - **The picker's Browse and Ctrl+Add** had probed the bundle -- they were holding every class
+      and its probe result -- and then threw the answer away. They now ask which effect was meant,
+      preselecting the first one that took the probe format. A bundle with one class is not asked
+      about.
+    - **`Engine::insertPlugin(index, path, error)`** now means "whichever class this host can
+      run": the classes are tried in factory order and the first that instantiates, and prepares
+      for the built format when there is one, is inserted. With no format built there is nothing
+      to judge one by and it is still the first that instantiates.
+    - **The command lines** -- `vibeaudio --vst3`, `valet_probe --plugin`, `editor_spike --plugin`
+      -- take `<path>?<class name or id>`. `?` and no other separator: Windows forbids it in a
+      path outright, so a path carrying no class comes back byte for byte. This matters most at
+      start-up, where nothing is attached yet and so the format-aware default above has nothing to
+      work with.
+    - **`valet_probe --inspect`** counted a class refusing the nominal format as a module failure
+      and exited 1 on a perfectly good bundle. A refusal is an answer, not a defect (the scanner
+      has always said so in `scan_result.h`); only a module none of whose effects will run is a
+      failure now.
+
+    A class named explicitly is never substituted for another, even when it refuses the format. A
+    fallback there would make the class id in a session file advisory, and a rack would come back
+    holding a plugin it was not saved with.
+
+    `tests/fixtures/aip_multi_plugin` is the specimen's shape as a fixture -- a mono-only class
+    first, an ordinary stereo one second. It has to be a separate module: `aip_test_plugin`'s first
+    class takes a stereo stream perfectly well, so it cannot tell a host that picks the first class
+    from one that picks the first workable class, and reordering it would silently repoint the
+    sixty tests that say `appendPlugin` and mean `AIP Test Plugin`.
+
 ---
 
 ## 9. Keeping this file useful

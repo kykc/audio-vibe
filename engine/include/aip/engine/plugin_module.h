@@ -27,6 +27,35 @@ struct PluginClass {
     std::string subCategories;
 };
 
+/// A plugin as a person writes it down: a bundle path, optionally followed by `?` and the class
+/// inside it.
+///
+/// A `.vst3` can hold any number of audio effects -- the LSP bundle holds a mono one and a stereo
+/// one -- so a path alone does not always name a plugin, and on a command line there is no picker
+/// to disambiguate with. `--vst3 "...\lsp-plugins.vst3?Impulse Responses Stereo"` is how that is
+/// said. Nothing *stored* uses this form: the session file keeps a path and a class id in separate
+/// fields, which is the right shape for a file and the wrong one for an argument.
+struct PluginReference {
+    std::string path;
+    /// A class id or a class name, in the form `Engine::insertPluginByClassId` takes. Empty when
+    /// the text named a bundle and nothing else, which means "whichever effect in it can be run".
+    std::string classRef;
+};
+
+/// Splits at the first `?`. That character and no other, because `?` is one of the few Windows
+/// forbids in a path outright -- so the separator can never be part of a real one, and a path
+/// that has been through here is unchanged whenever it contains no class at all.
+[[nodiscard]] PluginReference parsePluginReference(const std::string& text);
+
+/// The class `ref` names, or null. `ref` is a `VST3::UID::toString()` form or a class name.
+///
+/// The id is tried first and is the only form anything *stored* uses -- the session file, the
+/// picker's rows, the scan cache -- so a stored reference can never be shadowed by a plugin that
+/// happens to be named like a UID. The name is for a person writing one down; exact before
+/// case-insensitive, so a module holding two classes whose names differ only in case still
+/// resolves to the one that was actually asked for.
+[[nodiscard]] const PluginClass* findAudioEffect(const std::vector<PluginClass>& classes, const std::string& ref);
+
 class PluginModule {
 public:
     using Ptr = std::shared_ptr<PluginModule>;

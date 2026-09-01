@@ -245,52 +245,30 @@ bool Engine::appendPlugin(const std::string& path, std::string& error) {
 }
 
 bool Engine::insertPlugin(std::size_t index, const std::string& path, std::string& error) {
-    PluginModule::Ptr module = moduleFor(path, error);
-    if (!module) {
-        return false;
-    }
-    return insertPlugin(index, path, module->audioEffects().front().id, error);
+    return insertPluginImpl(index, path, std::string(), nullptr, error);
 }
 
 bool Engine::insertPluginByClassId(
     std::size_t index, const std::string& path, const std::string& classId, std::string& error) {
-    error.clear();
-    // An empty id means "whichever class the module offers first", which is what a caller that
-    // never looked inside the module wants and what appendPlugin has always done.
-    if (classId.empty()) {
-        return insertPlugin(index, path, error);
-    }
-    const VST3::Optional<VST3::UID> parsed = VST3::UID::fromString(classId);
-    if (!parsed) {
-        error = classId + " is not a class id";
-        return false;
-    }
-    return insertPlugin(index, path, *parsed, error);
+    return insertPluginImpl(index, path, classId, nullptr, error);
+}
+
+bool Engine::appendPluginByClassId(const std::string& path, const std::string& classId, std::string& error) {
+    return insertPluginByClassId(rack_.size(), path, classId, error);
 }
 
 bool Engine::insertPluginWithState(std::size_t index, const std::string& path, const std::string& classId,
     const PluginState& state, std::string& error) {
-    error.clear();
-    if (classId.empty()) {
-        PluginModule::Ptr module = moduleFor(path, error);
-        if (!module) {
-            return false;
-        }
-        return insertPluginImpl(index, path, module->audioEffects().front().id, &state, error);
-    }
-    const VST3::Optional<VST3::UID> parsed = VST3::UID::fromString(classId);
-    if (!parsed) {
-        error = classId + " is not a class id";
-        return false;
-    }
-    return insertPluginImpl(index, path, *parsed, &state, error);
+    return insertPluginImpl(index, path, classId, &state, error);
 }
 
 bool Engine::insertPlugin(std::size_t index, const std::string& path, const VST3::UID& classId, std::string& error) {
-    return insertPluginImpl(index, path, classId, nullptr, error);
+    // Through the same text form every other caller uses. The round trip is exact -- it is the
+    // property `VST3::UID::toString` exists for -- and one resolution path beats two.
+    return insertPluginImpl(index, path, classId.toString(), nullptr, error);
 }
 
-bool Engine::insertPluginImpl(std::size_t index, const std::string& path, const VST3::UID& classId,
+bool Engine::insertPluginImpl(std::size_t index, const std::string& path, const std::string& classRef,
     const PluginState* state, std::string& error) {
     error.clear();
     PluginModule::Ptr module = moduleFor(path, error);
@@ -298,44 +276,84 @@ bool Engine::insertPluginImpl(std::size_t index, const std::string& path, const 
         return false;
     }
 
-    const auto& classes = module->audioEffects();
-    if (std::none_of(classes.begin(), classes.end(), [&](const PluginClass& c) { return c.id == classId; })) {
-        error = path + " exposes no audio effect with that class id";
-        return false;
-    }
-
-    std::unique_ptr<PluginInstance> instance = PluginInstance::create(module, classId, host_, error);
-    if (!instance) {
-        return false;
-    }
-
-    // State first, prepare second. That order is the plugin's to expect, not ours to choose
-    // (PluginInstance::loadState). A refusal is carried out to the caller and otherwise ignored:
-    // the plugin is loaded and simply starts from its defaults.
-    std::string stateWarning;
-    if (state != nullptr && !state->empty() && !instance->loadState(*state)) {
-        stateWarning = instance->name() + ": rejected its saved state";
-    }
-
-    // Prepared before it is inserted, and inserted before anything is published: a plugin that
-    // cannot take the current format is reported without disturbing what is already running.
-    if (builtFormat_.valid()) {
-        if (!instance->prepare(builtFormat_, channelMask_, error)) {
+    // Which of the module's classes are on the table. Naming one narrows this to that one and
+    // makes not finding it the error; naming none puts all of them up, because a bundle is not a
+    // plugin and a path on its own has not said which effect was meant (engine.h).
+    const std::vector<PluginClass>& classes = module->audioEffects();
+    std::vector<VST3::UID> candidates;
+    if (classRef.empty()) {
+        candidates.reserve(classes.size());
+        for (const PluginClass& info : classes) {
+            candidates.push_back(info.id);
+        }
+    } else {
+        const PluginClass* named = findAudioEffect(classes, classRef);
+        if (named == nullptr) {
+            error = path + " exposes no audio effect matching " + classRef;
             return false;
         }
-        // No retract needed for this one: the instance is not in the rack yet, so no published
-        // chain can name it and the audio thread has no way to reach it.
-        lastWarmUp_ = WarmUpReport{};
-        warmUpInstance(*instance);
+        candidates.push_back(named->id);
     }
 
-    rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),
-        RackEntry{std::move(instance), false});
-    const bool published = publishRack();
-    if (published) {
-        error = stateWarning;
+    // The first refusal, kept for the report. A later one says less: it is the diagnostic of a
+    // class nobody asked for, reached only because the ones before it were unusable.
+    std::string firstRefusal;
+    const auto refuse = [&firstRefusal](const std::string& why) {
+        if (firstRefusal.empty()) {
+            firstRefusal = why;
+        }
+    };
+
+    for (const VST3::UID& candidate : candidates) {
+        std::string attempt;
+        std::unique_ptr<PluginInstance> instance = PluginInstance::create(module, candidate, host_, attempt);
+        if (!instance) {
+            refuse(attempt);
+            continue;
+        }
+
+        // State first, prepare second. That order is the plugin's to expect, not ours to choose
+        // (PluginInstance::loadState). A refusal is carried out to the caller and otherwise ignored:
+        // the plugin is loaded and simply starts from its defaults.
+        std::string stateWarning;
+        if (state != nullptr && !state->empty() && !instance->loadState(*state)) {
+            stateWarning = instance->name() + ": rejected its saved state";
+        }
+
+        // Prepared before it is inserted, and inserted before anything is published: a plugin that
+        // cannot take the current format is reported without disturbing what is already running.
+        //
+        // It is also what decides between the classes of a multi-effect bundle. The mono half of
+        // lsp-plugins.vst3 refuses a stereo stream here and the stereo half does not, and that --
+        // not a guess made from names or bus counts -- is the whole of how one is chosen.
+        if (builtFormat_.valid()) {
+            if (!instance->prepare(builtFormat_, channelMask_, attempt)) {
+                refuse(attempt);
+                continue;
+            }
+            // No retract needed for this one: the instance is not in the rack yet, so no published
+            // chain can name it and the audio thread has no way to reach it.
+            lastWarmUp_ = WarmUpReport{};
+            warmUpInstance(*instance);
+        }
+
+        rack_.insert(rack_.begin() + static_cast<std::ptrdiff_t>(std::min(index, rack_.size())),
+            RackEntry{std::move(instance), false});
+        const bool published = publishRack();
+        if (published) {
+            error = stateWarning;
+        }
+        return published;
     }
-    return published;
+
+    // Only reachable with every candidate refused. One candidate is the ordinary case and its own
+    // diagnostic is the whole story; several means a bundle none of whose effects would load, and
+    // saying how many were tried is what separates that from one broken plugin.
+    error = candidates.size() == 1
+        ? firstRefusal
+        : path + ": none of its " + std::to_string(candidates.size()) + " audio effects could be loaded -- " +
+            firstRefusal;
+    return false;
 }
 
 bool Engine::removePlugin(std::size_t index) {

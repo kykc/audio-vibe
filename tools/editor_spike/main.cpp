@@ -415,7 +415,7 @@ struct Options {
     std::string capturePrefix;
 };
 
-const char* kUsage = "Usage: editor_spike --plugin PATH [--embed container|native]"
+const char* kUsage = "Usage: editor_spike --plugin PATH[?CLASS] [--embed container|native]"
                      " [--seconds S] [--capture PREFIX]";
 
 bool parseOptions(int argc, char** argv, Options& out) {
@@ -467,16 +467,29 @@ int main(int argc, char** argv) {
 
     Steinberg::IPtr<Vst::HostApplication> hostContext = Steinberg::owned(new Vst::HostApplication());
 
+    // `<path>?<class>`, as everywhere else a plugin is named on a command line: a bundle can hold
+    // more than one effect and each has its own editor (engine/plugin_module.h). Without a class
+    // this takes the first, which is all a spike about *embedding* one editor needs.
+    const aip::engine::PluginReference reference = aip::engine::parsePluginReference(options.plugin);
+
     std::string error;
-    aip::engine::PluginModule::Ptr module = aip::engine::PluginModule::load(options.plugin, error);
+    aip::engine::PluginModule::Ptr module = aip::engine::PluginModule::load(reference.path, error);
     if (!module) {
         std::printf("  FAILED     : %s\n", error.c_str());
         return 1;
     }
     module->setHostContext(hostContext);
 
+    const aip::engine::PluginClass* chosen = reference.classRef.empty()
+        ? &module->audioEffects().front()
+        : aip::engine::findAudioEffect(module->audioEffects(), reference.classRef);
+    if (chosen == nullptr) {
+        std::printf("  FAILED     : no audio effect matching %s\n", reference.classRef.c_str());
+        return 1;
+    }
+
     std::unique_ptr<aip::engine::PluginInstance> instance =
-        aip::engine::PluginInstance::create(module, module->audioEffects().front().id, hostContext, error);
+        aip::engine::PluginInstance::create(module, chosen->id, hostContext, error);
     if (!instance) {
         std::printf("  FAILED     : %s\n", error.c_str());
         return 1;

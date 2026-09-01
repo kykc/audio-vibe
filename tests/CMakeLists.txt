@@ -11,6 +11,10 @@ include(Catch)
 # The VST3 plugin the engine tests host. Sets AIP_TEST_PLUGIN_PATH in this scope.
 add_subdirectory(fixtures/aip_test_plugin)
 
+# The bundle shaped like LSP's -- a mono effect first, a stereo one after it. Sets
+# AIP_MULTI_PLUGIN_PATH.
+add_subdirectory(fixtures/aip_multi_plugin)
+
 # The two that misbehave on purpose, for the scanner. Sets AIP_CRASH_PLUGIN_PATH and
 # AIP_HANG_PLUGIN_PATH.
 add_subdirectory(fixtures/aip_hostile_plugin)
@@ -61,6 +65,7 @@ target_compile_definitions(aip_tests PRIVATE AIP_SOURCE_DIR="${CMAKE_SOURCE_DIR}
 # The engine tests load a real VST3 bundle; the path is a generator expression because the
 # output directory is per-configuration.
 target_compile_definitions(aip_tests PRIVATE AIP_TEST_PLUGIN_PATH="${AIP_TEST_PLUGIN_PATH}")
+target_compile_definitions(aip_tests PRIVATE AIP_MULTI_PLUGIN_PATH="${AIP_MULTI_PLUGIN_PATH}")
 
 target_compile_definitions(aip_tests PRIVATE
     AIP_CRASH_PLUGIN_PATH="${AIP_CRASH_PLUGIN_PATH}"
@@ -69,7 +74,7 @@ target_compile_definitions(aip_tests PRIVATE
 # Nothing links any of these, so nothing would otherwise build them before the tests run. aip_scan
 # is the one that would fail most confusingly: the scanner tests would report every plugin as
 # broken, which is precisely what a scanner reports when it cannot find its own child.
-add_dependencies(aip_tests aip_test_plugin aip_crash_plugin aip_hang_plugin aip_scan)
+add_dependencies(aip_tests aip_test_plugin aip_multi_plugin aip_crash_plugin aip_hang_plugin aip_scan)
 
 target_link_libraries(aip_tests PRIVATE
     aip_config

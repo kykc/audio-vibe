@@ -195,6 +195,33 @@ TEST_CASE("scanning a working plugin reports what the host would see", "[scanner
     REQUIRE(report.childProcesses == 1);
 }
 
+TEST_CASE("a class that refuses the probe format does not condemn the bundle", "[scanner]") {
+    // The LSP shape, on a fixture: a mono effect first, a stereo one after it. A scan of the
+    // bundle has to come back usable, with the refusal recorded on the class that made it -- the
+    // module is fine, and the class the picker should be offering is the second one.
+    const scanner::ScanReport report = scanner::scanModules({AIP_MULTI_PLUGIN_PATH});
+
+    REQUIRE(report.modules.size() == 1);
+    CAPTURE(report.modules[0].error);
+    REQUIRE(report.modules[0].status == scanner::ScanStatus::Ok);
+    REQUIRE(report.modules[0].classes.size() == 2);
+
+    // Mono, on a stereo probe format. Narrower than the stream, so not padded up to it and not
+    // prepared -- and the reason is on the class, in the words the user is shown.
+    const scanner::ScannedClass& mono = report.modules[0].classes[0];
+    CHECK(mono.name == "AIP Mono Only Plugin");
+    CHECK_FALSE(mono.prepared);
+    CHECK(mono.error.find("accepts at most") != std::string::npos);
+    CHECK(mono.mainInputChannels == 1);
+
+    const scanner::ScannedClass& stereo = report.modules[0].classes[1];
+    CHECK(stereo.name == "AIP Multi Stereo Plugin");
+    CAPTURE(stereo.error);
+    CHECK(stereo.prepared);
+    CHECK_FALSE(stereo.padded);
+    CHECK(stereo.mainInputChannels == 2);
+}
+
 TEST_CASE("a plugin that faults costs one entry, not the scan", "[scanner]") {
     // The claim the whole component exists to make. aip_crash_plugin dereferences null inside
     // GetPluginFactory, in the loader's own call.

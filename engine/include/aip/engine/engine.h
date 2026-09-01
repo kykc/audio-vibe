@@ -102,22 +102,46 @@ public:
     // there is no separate commit step. Sec. 7.4.3 permits these transitions to be audible; what
     // it does not permit is any of the work happening on the audio thread, and none of it does.
 
-    /// Appends the module's first audio-effect class.
+    /// Appends whichever of the module's audio-effect classes can be hosted -- see `insertPlugin`
+    /// below for what that means and why it is not simply the first one.
     [[nodiscard]] bool appendPlugin(const std::string& path, std::string& error);
 
     /// Inserts at `index` (clamped to the end). When a stream format is already known the new
     /// plugin is prepared for it here, so a failure is reported before anything is published.
+    ///
+    /// **A bundle is not a plugin.** A `.vst3` may hold any number of audio-effect classes -- the
+    /// LSP bundle holds a mono effect and a stereo one, the full LSP distribution holds dozens --
+    /// so a path on its own does not name one. Naming no class therefore means "whichever of them
+    /// this host can actually run": the classes are tried in factory order and the first that
+    /// instantiates, and prepares for the built format if there is one, is the one inserted. It
+    /// used to mean the first class outright, which made every class after a mono one unreachable
+    /// by path alone -- adding lsp-plugins.vst3 got the mono effect and then failed on a stereo
+    /// stream, with the stereo effect sitting unused in the same file.
+    ///
+    /// With no format built there is nothing to judge a class by, so this still resolves to the
+    /// first that instantiates. A caller that knows which one it wants should say so.
     [[nodiscard]] bool insertPlugin(std::size_t index, const std::string& path, std::string& error);
 
     [[nodiscard]] bool insertPlugin(
         std::size_t index, const std::string& path, const VST3::UID& classId, std::string& error);
 
-    /// Same, naming the class in its `VST3::UID::toString()` form -- which is what `scanner/`
-    /// reports, and the only form a caller that is deliberately not an SDK host can hold. Keeping
-    /// the parse here rather than at the call site is the point: `ui/` should not have to include
-    /// a VST3 header to say which of a module's classes it means.
+    /// Same, naming the class as text -- which is what `scanner/` reports, and the only form a
+    /// caller that is deliberately not an SDK host can hold. Keeping the parse here rather than at
+    /// the call site is the point: `ui/` should not have to include a VST3 header to say which of
+    /// a module's classes it means.
+    ///
+    /// `classId` is a `VST3::UID::toString()` form, or a class *name* as the scanner reports it
+    /// (matched exactly first, then without regard to case). The name is there for the command
+    /// line, where a person naming "Impulse Responses Stereo" is doing something a 32-digit UID
+    /// makes needlessly hard; everything stored -- the session file, the picker -- uses the UID,
+    /// which is unambiguous and is what a match is tried against first. Empty means what it means
+    /// for `insertPlugin` above.
     [[nodiscard]] bool insertPluginByClassId(
         std::size_t index, const std::string& path, const std::string& classId, std::string& error);
+
+    /// `insertPluginByClassId` at the end of the rack, which is what a command line naming a
+    /// plugin means.
+    [[nodiscard]] bool appendPluginByClassId(const std::string& path, const std::string& classId, std::string& error);
 
     /// Same again, handing the plugin back the state it was saved with. This exists as its own
     /// entry point rather than as something the caller does afterwards because of *when* the
@@ -329,9 +353,10 @@ private:
 
     [[nodiscard]] PluginModule::Ptr moduleFor(const std::string& path, std::string& error);
 
-    /// The one insertion path; everything public above narrows down to it. `state` is optional
-    /// and applied before `prepare`.
-    [[nodiscard]] bool insertPluginImpl(std::size_t index, const std::string& path, const VST3::UID& classId,
+    /// The one insertion path; everything public above narrows down to it. `classRef` is a class
+    /// id, a class name, or empty for "whichever one works" (see `insertPlugin`). `state` is
+    /// optional and applied before `prepare`.
+    [[nodiscard]] bool insertPluginImpl(std::size_t index, const std::string& path, const std::string& classRef,
         const PluginState* state, std::string& error);
 
     /// Publishes a view over every prepared, non-bypassed rack entry. Publishes nothing when no

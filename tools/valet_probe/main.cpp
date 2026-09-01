@@ -15,9 +15,16 @@
 //                               run by tools/apo_host instead of by audiodg.exe
 //   valet_probe --gain 0.5      apply a gain instead of passing through
 //   valet_probe --plugin P      run a VST3 plugin chain instead of a gain; repeatable
+//   valet_probe --plugin "P?C"  and name the effect inside the bundle, for one holding several
 //   valet_probe --inspect       load and prepare the plugins, report, and exit; no APO involved
 //   valet_probe --scan          probe every installed plugin out of process, report, and exit
 //   valet_probe --seconds 10    run for a fixed time instead of until Ctrl+C
+//
+// A `.vst3` is a module and may hold any number of audio effects -- `lsp-plugins.vst3` holds a
+// mono one and a stereo one -- so `--plugin` takes an optional `?<class name or id>` suffix to say
+// which. Without it the engine takes whichever class it can run at the endpoint's format. `?` is
+// the separator because Windows forbids it in a path outright (engine/plugin_module.h). `--scan`
+// ignores the suffix, having nothing to narrow: it reports every class in a bundle anyway.
 //
 // `--plugin` is the only mode in which anything from `engine/` is involved, and it is mutually
 // exclusive with `--gain`: they are different BlockProcessors and only one can be installed. The
@@ -229,7 +236,13 @@ int runInspection(const Options& options) {
 
     int failures = 0;
 
-    for (const std::string& path : options.plugins) {
+    for (const std::string& spec : options.plugins) {
+        // `<path>?<class>` narrows the report to one effect. Without it every effect in the bundle
+        // is inspected, which is the useful default: the question "what is in this file" is the
+        // one an inspection is for.
+        const engine::PluginReference reference = engine::parsePluginReference(spec);
+        const std::string& path = reference.path;
+
         std::string error;
         std::printf("Module   : %s\n", path.c_str());
 
@@ -242,7 +255,28 @@ int runInspection(const Options& options) {
         module->setHostContext(hostContext);
         std::printf("  name   : %s\n", module->name().c_str());
 
+        // Resolved once, so the loop below compares ids rather than re-matching a name against
+        // every class in turn.
+        const engine::PluginClass* only = reference.classRef.empty()
+            ? nullptr
+            : engine::findAudioEffect(module->audioEffects(), reference.classRef);
+        if (!reference.classRef.empty() && only == nullptr) {
+            std::printf("  FAILED : no audio effect matching %s\n\n", reference.classRef.c_str());
+            ++failures;
+            continue;
+        }
+
+        // Per module, not per class. A bundle holding a mono effect and a stereo one has every
+        // right to refuse the nominal stereo format with half of itself -- the scanner records
+        // that as an answer rather than a defect (scan_result.h) and so does this. What would be
+        // a defect is a bundle none of whose effects will run.
+        int preparedHere = 0;
+        int refusedHere = 0;
+
         for (const engine::PluginClass& info : module->audioEffects()) {
+            if (only != nullptr && !(info.id == only->id)) {
+                continue;
+            }
             std::printf("  effect : %s  [%s %s]  %s\n", info.name.c_str(), info.vendor.c_str(), info.version.c_str(),
                 info.subCategories.c_str());
 
@@ -275,10 +309,10 @@ int runInspection(const Options& options) {
             // would make the report describe a device the user never named. The engine falls back
             // to a guess of the right cardinality, which is what an inspection wants anyway.
             if (!instance->prepare(format, 0, error)) {
-                std::printf("       PREPARE FAILED at %u Hz x%u ch: %s\n", format.sampleRate, format.channelCount,
-                    error.c_str());
-                ++failures;
+                std::printf("       refused %u Hz x%u ch: %s\n", format.sampleRate, format.channelCount, error.c_str());
+                ++refusedHere;
             } else {
+                ++preparedHere;
                 std::printf("       prepared at %u Hz x%u ch, up to %d frames  (%s)\n", format.sampleRate,
                     format.channelCount, format.maxFrames,
                     instance->fullBusNegotiation() ? "all busses negotiated"
@@ -286,6 +320,16 @@ int runInspection(const Options& options) {
                 std::puts("       -- as prepared --");
                 reportBusses(*component, processor);
             }
+        }
+
+        // The verdict on the bundle, which is not the verdict on any one of its effects.
+        if (preparedHere == 0 && refusedHere != 0) {
+            std::printf("  FAILED : nothing in this module would take %u Hz x%u ch\n", format.sampleRate,
+                format.channelCount);
+            ++failures;
+        } else if (refusedHere != 0) {
+            std::printf("  note   : %d of its effects would not take this format; %d would\n", refusedHere,
+                preparedHere);
         }
         std::puts("");
     }
@@ -305,8 +349,16 @@ int runInspection(const Options& options) {
 /// probing *in this process*, which is fine for a plugin already known to be sound and fatal for
 /// one that is not -- and "which of my plugins is not" is exactly the question a scan answers.
 int runScan(const Options& options) {
-    const std::vector<std::string> paths =
-        options.plugins.empty() ? engine::PluginModule::installedModulePaths() : options.plugins;
+    // A scan is per bundle and reports every class in one, so a `?<class>` suffix has nothing to
+    // narrow here and is dropped rather than refused: the same `--plugin` argument should work
+    // whichever mode it is handed to.
+    std::vector<std::string> paths;
+    for (const std::string& spec : options.plugins) {
+        paths.push_back(engine::parsePluginReference(spec).path);
+    }
+    if (paths.empty()) {
+        paths = engine::PluginModule::installedModulePaths();
+    }
     if (paths.empty()) {
         std::puts("No VST3 plugins found in the standard search locations.");
         return 0;
@@ -435,8 +487,11 @@ int main(int argc, char** argv) {
     host.setChannelMask(target.channelMask);
 
     for (const std::string& path : options.plugins) {
+        // `<path>?<class>`: a bundle can hold more than one effect and the path alone has not said
+        // which (engine/plugin_module.h).
+        const engine::PluginReference reference = engine::parsePluginReference(path);
         std::string error;
-        if (!host.appendPlugin(path, error)) {
+        if (!host.appendPluginByClassId(reference.path, reference.classRef, error)) {
             std::printf("Failed to load %s: %s\n", path.c_str(), error.c_str());
             return 1;
         }

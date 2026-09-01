@@ -11,6 +11,11 @@
 // die. A plugin the scanner could not load is still shown, greyed out, with the reason: silently
 // omitting it would leave a user hunting for a plugin they know they installed.
 //
+// The list is per *class*, not per file, because a `.vst3` is a module and a module may expose any
+// number of audio effects: `lsp-plugins.vst3` holds a mono effect and a stereo one, and the full
+// LSP distribution is one bundle holding dozens. Both routes that name a file by hand end in the
+// same question -- which of them did you mean -- and both ask it rather than taking the first.
+//
 // There is a second way in, for the case the list cannot serve: `chooseVst3File`, behind Ctrl on
 // the rack's Add button. It is the platform's own open dialog, and what it selects is the *binary*
 // -- the DLL inside the bundle (`Contents/x86_64-win/Name.vst3`), or a bare pre-bundle `.vst3` --
@@ -32,8 +37,11 @@ class PluginCatalog;
 /// What the user picked.
 struct PluginChoice {
     QString path;
-    /// `VST3::UID::toString()` form. Empty means "whichever audio-effect class the module offers
-    /// first", which is what a browsed bundle resolves to and what the engine has always assumed.
+    /// `VST3::UID::toString()` form. Every route that returns a non-empty `path` fills this in,
+    /// including the two that name a file by hand: a `.vst3` may hold any number of audio effects
+    /// -- the LSP bundle holds a mono one and a stereo one -- so a path is not yet an answer, and
+    /// a bundle with more than one is put back to the user rather than resolved by taking the
+    /// first. Empty would mean "whichever one the engine can run" (aip/engine/engine.h).
     QString classId;
 
     [[nodiscard]] bool isEmpty() const noexcept { return path.isEmpty(); }

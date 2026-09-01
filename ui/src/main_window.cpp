@@ -9,6 +9,7 @@
 #include "aip/config/attach_guard.h"
 #include "aip/config/load_guard.h"
 #include "aip/config/session_file.h"
+#include "aip/engine/plugin_module.h"
 
 #include "aip/scanner/scan_result.h"
 
@@ -258,8 +259,13 @@ void MainWindow::applyStartupOptions(const QStringList& pluginPaths, bool openEd
     }
 
     for (const QString& path : pluginPaths) {
+        // `<path>?<class>`, because a bundle may hold several effects and there is no picker on a
+        // command line to choose between them (engine/plugin_module.h). Without the suffix the
+        // engine picks whichever one it can run, which is the right default and not always the
+        // right answer -- nothing is attached this early, so there is no stream width to judge by.
+        const engine::PluginReference reference = engine::parsePluginReference(path.toStdString());
         std::string error;
-        if (!host_.engine().appendPlugin(path.toStdString(), error)) {
+        if (!host_.engine().appendPluginByClassId(reference.path, reference.classRef, error)) {
             log(QStringLiteral("could not load %1: %2").arg(path, QString::fromStdString(error)));
             continue;
         }

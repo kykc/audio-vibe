@@ -7,10 +7,19 @@
 //
 //   vibeaudio                                 the saved session, detached
 //   vibeaudio --vst3 <path.vst3>              load into the rack at startup; repeatable
+//   vibeaudio --vst3 <path.vst3?Class Name>   and say which effect in it, for a bundle with several
 //   vibeaudio --vst3 <path> --editors         and open each one's editor
 //   vibeaudio --vst3 <path> --attach          and attach to the default render endpoint
 //   vibeaudio --config <path.yaml>            use this session file instead of the usual two
 //   vibeaudio --scan                          bring the plugin catalog up to date and report
+//
+// The `?<class>` suffix is there because a `.vst3` is a module, not a plugin: `lsp-plugins.vst3`
+// holds a mono effect and a stereo one, and the full LSP distribution is one bundle holding
+// dozens. Without it the engine takes whichever class it can run -- but nothing is attached this
+// early, so at start-up there is no stream width for it to judge one by, and the first class wins
+// by default. The suffix takes a class name as the picker shows it, or a class id; `?` and no
+// other character, because it is one Windows forbids in a path outright
+// (engine/plugin_module.h). Quote the whole thing -- names have spaces in them.
 //
 // `--config` is also the way out of a session that will not load. It is **`--config` and not the
 // obvious `--session`** for the same reason as `--vst3` below: `-session` is on Qt's reserved
@@ -64,7 +73,9 @@ int main(int argc, char** argv) {
         parser.addHelpOption();
         // Not "plugin": see the note at the top of this file. Qt would eat it.
         const QCommandLineOption pluginOption(QStringLiteral("vst3"),
-            QStringLiteral("Load a .vst3 into the rack at startup. Repeatable."), QStringLiteral("path"));
+            QStringLiteral("Load a .vst3 into the rack at startup, optionally as <path>?<class>."
+                           " Repeatable."),
+            QStringLiteral("path"));
         const QCommandLineOption editorsOption(
             QStringLiteral("editors"), QStringLiteral("Open an editor for every loaded plugin."));
         const QCommandLineOption attachOption(
