@@ -259,6 +259,12 @@ public:
     /// negotiated its busses is a needlessly hostile way to find out which plugins disagree.
     /// `Engine::insertPluginWithState` is the path that gets this right; asserted here so a
     /// second caller cannot get it wrong quietly.
+    ///
+    /// Unprepared is not the same as un-set-up. `create` runs one provisional `setupProcessing`
+    /// at a plausible format, because a plugin handed its state at sample rate zero is entitled
+    /// to divide by it, and one does (`provisionallySetUp` in the .cpp). So the instance this is
+    /// called on has a sample rate and no negotiated arrangement, which is the combination every
+    /// plugin tested here expects at state-restore time.
     [[nodiscard]] bool loadState(const PluginState& state);
 
     /// Null when the plugin exposes no edit controller, which is legal for an effect with no

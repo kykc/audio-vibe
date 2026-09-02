@@ -54,6 +54,13 @@
 // Engine::insertPluginWithState's "loaded, but would not take its state" path at, and that path
 // is the one a user meets after updating a plugin.
 //
+// `setState` also refuses outright before `setupProcessing` has run. That is the fixture's model
+// of a defect that cost a working session: LSP-Plugins recomputes its DSP settings at the end of
+// `setState` and, with no sample rate yet, divides by a count derived from it and takes the host
+// process down (status.md sec. 6 item 7). A fixture that crashed would only take the test runner
+// with it, so it refuses instead -- and the refusal is what a host that hands over state too
+// early runs into.
+//
 // Offset exists so that two instances do not commute: gain-then-offset and offset-then-gain give
 // different numbers, which is what lets a test tell a correctly ordered chain from a reversed
 // one. Two gains alone cannot -- multiplication does not care about order, so a rack that ran
@@ -199,6 +206,18 @@ public:
         return symbolicSampleSize == kSample32 ? kResultTrue : kResultFalse;
     }
 
+    // Recorded rather than read back out of `processSetup`, which the SDK's constructor fills
+    // with 44100 -- so the base class cannot tell "the host said 44100" from "the host has said
+    // nothing". A plugin that computes anything from the sample rate keeps its own copy for
+    // exactly that reason, and this fixture keeps one so that `setState` can refuse below.
+    tresult PLUGIN_API setupProcessing(ProcessSetup& newSetup) SMTG_OVERRIDE {
+        const tresult result = SingleComponentEffect::setupProcessing(newSetup);
+        if (result == kResultOk) {
+            setUpDone = true;
+        }
+        return result;
+    }
+
     tresult PLUGIN_API setBusArrangements(
         SpeakerArrangement* inputs, int32 numIns, SpeakerArrangement* outputs, int32 numOuts) SMTG_OVERRIDE {
         if (numOuts != 1 || numIns < 1 || numIns > 2 || inputs[0] != outputs[0]) {
@@ -250,6 +269,17 @@ public:
     tresult PLUGIN_API setState(IBStream* state) SMTG_OVERRIDE {
         if (state == nullptr) {
             return kInvalidArgument;
+        }
+        // Refused before `setupProcessing`, which is the fixture's stand-in for a real and
+        // expensive defect: LSP-Plugins recomputes its DSP settings at the end of `setState`,
+        // divides by a count derived from the sample rate, and at sample rate zero takes the
+        // host process down with an integer division by zero (status.md sec. 6 item 7). A
+        // fixture cannot usefully crash, so it refuses instead -- what matters is that a host
+        // which hands over state before the plugin has been told a format can be caught here
+        // rather than by a user losing a session. `PluginInstance::create` runs a provisional
+        // `setupProcessing` so that this never happens.
+        if (!setUpDone) {
+            return kResultFalse;
         }
 
         int32 magic = 0;
@@ -435,6 +465,10 @@ private:
         }
         componentHandler->restartComponent(flags);
     }
+
+    /// Whether the host has told this instance a format yet. Control thread only -- both
+    /// `setupProcessing` and `setState` are control-thread calls.
+    bool setUpDone = false;
 
     /// See the top of `process`. Not atomic: written once, on whichever thread gets there first,
     /// and read by nothing that matters.

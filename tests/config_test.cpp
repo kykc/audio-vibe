@@ -753,6 +753,36 @@ TEST_CASE("a plugin comes back holding what it held", "[config][engine]") {
     REQUIRE(restored.chainBypassed());
 }
 
+TEST_CASE("a plugin is told a format before it is handed its state", "[config][engine]") {
+    // The regression for status.md sec. 6 item 7. Restoring a session hands a plugin its state
+    // before `prepare` -- and while the shell is detached there is no format to prepare *for*, so
+    // `prepare` never runs at all. A plugin asked to restore itself at sample rate zero is
+    // entitled to do something unfortunate, and LSP-Plugins does: it divides by a count derived
+    // from the rate and takes the process down where it stands. `PluginInstance::create`
+    // therefore runs one provisional `setupProcessing`, and the fixture refuses its state if that
+    // has not happened (aip_test_plugin.cpp).
+    //
+    // Detached throughout: no `serviceFormatChange`, no `prepare`, which is the shape of the
+    // start that used to die.
+    engine::Engine engine;
+    std::string error;
+    REQUIRE(engine.appendPlugin(kTestPluginPath, error));
+    engine.pluginAt(0)->controller()->setParamNormalized(kGainParam, 0.75);
+
+    config::Session session;
+    config::capture(engine, session);
+    REQUIRE(session.rack.size() == 1);
+    REQUIRE_FALSE(session.rack[0].state.component.empty());
+
+    engine::Engine restored;
+    std::vector<std::string> problems;
+    REQUIRE(config::apply(session, restored, problems) == 1);
+    // The state was taken, not merely survived: a refusal would leave the plugin loaded at its
+    // defaults and put "rejected its saved state" here.
+    REQUIRE(problems.empty());
+    REQUIRE(restored.pluginAt(0)->controller()->getParamNormalized(kGainParam) == 0.75);
+}
+
 TEST_CASE("a plugin that refuses its state is still loaded, and says so", "[config][engine]") {
     config::Session session;
     config::RackEntry entry;

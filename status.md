@@ -1220,8 +1220,51 @@ with that change stashed:
 | 4 | ARM64 | project owner | -- | **Closed as untracked** 2026-08-29: deferred until there is demand, and not tracked until then -- there is no ARM64 Windows machine here to test a build on (sec. 11.5) |
 | 5 | Reimplement the predecessor's parametric EQ | project owner | -- | **Closed** 2026-08-29: not reimplemented, and no DSP of our own is written at all (sec. 5.7) |
 | 6 | Build an installer | project owner | -- | **Postponed** 2026-08-29 until one is proven necessary; a zip of the portable folder, installed from the shell (sec. 6.8) |
+| 7 | `setState` before `setupProcessing` kills LSP-Plugins | -- | restoring a session that names an LSP plugin | **Closed** 2026-09-02: one provisional `setupProcessing` in `PluginInstance::create`, so no plugin is ever handed state at sample rate zero. Diagnosis below, because the trap is not obvious and the next host-side ordering change could walk back into it |
 
-Nothing is blocking. The APO runs inside a live `audiodg.exe` -- see section 4a.
+**Blocker 7, in full.** Any LSP-Plugins effect (`lsp-plugins.vst3`, tested at 1.2.35) faults with
+`STATUS_INTEGER_DIVIDE_BY_ZERO` (`0xC0000094`) when `IComponent::setState` *succeeds* on an
+instance that has not had `setupProcessing` yet, which is exactly what
+`Engine::insertPluginWithState` -> `PluginInstance::loadState` does. Adding one from the picker is
+fine -- no state is handed over -- so the shell dies on the *next* start, before it draws, and the
+sec. 8 breadcrumb (`config/load_guard.h`) is what turns that into a start with the plugin blocked
+rather than an unusable application. `fail/vibeaudio.yaml` is a session in that state.
+
+The cause is in the plugin, not here. `vst3::Wrapper::setState` finishes with
+`if (check_parameters_updated()) apply_settings_update();`, and `apply_settings_update` calls
+`plug::Module::update_settings()` -- the plugin's DSP settings pass -- while its sample rate is
+still zero, so a count derived from it is zero and an integer division on it traps. It is
+per-plugin code, not the shared wrapper: the faulting address differs between
+`Parametric Equalizer x8` (`+0x22e81f`) and `Impulse Responses` (`+0x222bc9`).
+
+Two facts fix the shape of any answer:
+
+* Handing the same blob to the same instance *after* `prepare()` returns `kResultOk` and survives.
+* A bare `setupProcessing` (48 kHz, no bus arrangement, no `setActive`) before `setState` is
+  enough on its own -- the state then loads and both the component and the controller survive.
+
+**What was done.** `PluginInstance::create` runs one `setupProcessing` at 48 kHz immediately after
+the component is instantiated (`provisionallySetUp`), so no plugin is ever asked a question at
+sample rate zero. `prepare()` calls `unprepare()` and then `setupProcessing` again with the real
+format, and that is still the call that decides anything; this one only stops the plugin being
+asked about a format it has not been told. It is before the bus arrangement is negotiated and
+deliberately best-effort -- `setBusArrangements` has not run, so nothing here can settle which
+arrangement a plugin accepts, and a refusal is `prepare`'s to report properly.
+
+The thing that needed checking was the class-selection path in `Engine::insertPluginImpl`
+(sec. 8 item 33): a bundle's mono and stereo halves are told apart by which one `prepare` refuses,
+so an early `setupProcessing` changing that answer would silently pick a different effect out of a
+bundle. It does not. `valet_probe --scan` over the whole installed catalog before and after the
+change is identical -- 22 bundles, every class, every prepared / NOT PREPARED verdict, every
+channel count and every refusal message, down to `Parametric Equalizer x8 Mono: accepts at most 1
+channels and the stream carries 2`. The only line that differs is the wall-clock total.
+
+The regression is `a plugin is told a format before it is handed its state` in `config_test.cpp`,
+and it bites: `aip_test_plugin` now refuses `setState` before `setupProcessing`, which is the
+fixture's non-fatal model of what LSP does. Reverting the engine change fails that test and two
+existing round-trip tests with it.
+
+Nothing else is blocking. The APO runs inside a live `audiodg.exe` -- see section 4a.
 
 **State of the development VM.** The rewritten APO is currently **installed and active** on the
 only render endpoint, `{2a5dcb05-d67a-4182-af18-e506390658d1}`, with the modern slots cleared and

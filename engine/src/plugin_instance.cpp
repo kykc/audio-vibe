@@ -58,6 +58,39 @@ void warmParameterChanges(Vst::ParameterChanges& changes, Steinberg::int32 count
     changes.clearQueue();
 }
 
+// Gives a freshly instantiated plugin a sample rate before anything else touches it.
+//
+// A plugin that has been instantiated but not set up has no sample rate, and a plugin with no
+// sample rate has no meaningful value for anything derived from one -- block sizes, filter
+// coefficients, analyser step counts. VST3 does not say that is dangerous, and for most plugins
+// it is not: they compute nothing until `setupProcessing` arrives.
+//
+// LSP-Plugins is the counter-example that costs a process. Its VST3 wrapper ends `setState` by
+// running the plugin's own settings pass, which divides by a count derived from the sample rate;
+// at zero that is an integer division by zero and the host dies where it stands, with no
+// diagnostic and nothing to catch. `Engine::insertPluginWithState` loads state before `prepare`
+// deliberately (PluginInstance::loadState), and a session restored while detached never reaches
+// `prepare` at all -- so without this the sample rate is still zero at exactly the moment the
+// plugin is handed its state. See status.md sec. 6 item 7 for the diagnosis.
+//
+// So: one `setupProcessing` at a plausible format, immediately after instantiation, so no plugin
+// is ever asked a question at sample rate zero. `prepare()` calls `setupProcessing` again with
+// the real format once there is one, and that call is the one that decides anything -- this is
+// only about not leaving the plugin in a state it does not expect to be asked about.
+//
+// Deliberately before the bus arrangement is negotiated and best-effort: `setBusArrangements`
+// has not been called, so nothing here can settle which arrangement a plugin will accept, and a
+// refusal is not an error the caller has to hear about. A plugin that declines this is a plugin
+// that will decline `prepare` too, and `prepare` says so properly.
+void provisionallySetUp(Vst::IAudioProcessor& processor) {
+    Vst::ProcessSetup setup{};
+    setup.processMode = Vst::kRealtime;
+    setup.symbolicSampleSize = Vst::kSample32;
+    setup.maxSamplesPerBlock = kDefaultMaxFrames;
+    setup.sampleRate = 48000.0;
+    processor.setupProcessing(setup);
+}
+
 // Copies the component's state into its controller, which is what makes a separated controller
 // show the values the processor actually holds. Best-effort: a plugin that declines is still
 // perfectly loadable.
@@ -232,6 +265,8 @@ std::unique_ptr<PluginInstance> PluginInstance::create(
         error = instance->name_ + ": component does not implement IAudioProcessor";
         return nullptr;
     }
+
+    provisionallySetUp(*instance->processor_);
 
     // A plugin may be a single object implementing both interfaces, or a pair. Both are legal
     // and they differ in how they are connected and torn down.
